@@ -1,0 +1,18 @@
+<?php
+
+declare(strict_types=1);
+
+use App\Controllers\PostApprovalComplianceController;
+use App\Controllers\PostApprovalReviewController;
+
+return [
+    'GET /api/post-approval' => ['handler' => [PostApprovalComplianceController::class, 'index'], 'middleware' => ['auth', 'applicant']],
+    'GET /api/post-approval/task' => ['handler' => [PostApprovalComplianceController::class, 'show'], 'middleware' => ['auth', 'applicant']],
+    'POST /api/post-approval/save' => ['handler' => [PostApprovalComplianceController::class, 'save'], 'middleware' => ['auth', 'applicant']],
+    'POST /api/post-approval/submit' => ['handler' => [PostApprovalComplianceController::class, 'submit'], 'middleware' => ['auth', 'applicant']],
+    'POST /api/post-approval/upload' => ['handler' => [PostApprovalComplianceController::class, 'upload'], 'middleware' => ['auth', 'applicant']],
+    'GET /api/post-approval-review' => ['handler' => [PostApprovalReviewController::class, 'index'], 'middleware' => ['auth']],
+    'GET /api/post-approval-review/task' => ['handler' => [PostApprovalReviewController::class, 'task'], 'middleware' => ['auth']],
+    'POST /api/post-approval-review/review' => ['handler' => [PostApprovalReviewController::class, 'review'], 'middleware' => ['auth']],
+    'POST /api/post-approval-review/upload' => ['handler' => [PostApprovalReviewController::class, 'upload'], 'middleware' => ['auth']],
+];

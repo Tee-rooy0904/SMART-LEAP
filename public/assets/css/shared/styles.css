@@ -1,0 +1,262 @@
+:root {
+    --primary-color: #1e40af;
+    --secondary-color: #3b82f6;
+    --accent-color: #06b6d4;
+    --success-color: #10b981;
+    --warning-color: #f59e0b;
+    --danger-color: #ef4444;
+    --dark-color: #1f2937;
+    --light-color: #f8fafc;
+    --login-blue: #1e3a8a;
+  --login-white: #ffffff;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* -----------------------------
+   ButuanON Blue/Green Login Theme
+   ----------------------------- */
+/* Left panel: stack logo and title, subtle blue→green tint */
+.login-left-panel {
+  justify-content: center;
+  gap: 14px;
+  background: linear-gradient(180deg, rgba(11,102,195,0.06), rgba(54,201,106,0.06)), var(--login-white);
+}
+.logo-container { flex: 0 0 auto; order: 1; }
+.system-title { order: 2; text-align: center; }
+.system-title h2 {
+  background: linear-gradient(90deg, var(--butuan-blue-start, #0b66c3), var(--butuan-blue-end, #38b6ff), var(--butuan-green-start, #36c96a));
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: var(--primary-color);
+  font-weight: 800; letter-spacing: .5px; margin: 0;
+}
+
+/* Login button: blue→green accent */
+.login-btn {
+  background: linear-gradient(135deg, var(--butuan-blue-start, #0b66c3), var(--butuan-blue-end, #38b6ff), var(--butuan-green-start, #36c96a));
+  color: #fff; border: none; border-radius: 10px; font-weight: 700;
+  transition: filter .2s ease, box-shadow .2s ease;
+}
+.login-btn:hover {
+  filter: brightness(1.05);
+  box-shadow: 0 8px 18px rgba(11,102,195,0.2), 0 6px 14px rgba(54,201,106,0.15);
+}
+
+/* Inputs: twin blue/green glow on focus */
+.login-form .form-group input:focus {
+  border-color: var(--butuan-blue-end, #38b6ff);
+  box-shadow: 0 0 0 0.2rem rgba(56,182,255,0.25), 0 0 0 0.35rem rgba(54,201,106,0.12);
+}
+
+@media (max-width:768px){
+  .login-left-panel { justify-content: center; gap: 10px; }
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: var(--light-color);
+}
+
+.alert {
+    border-radius: 10px;
+    border: none;
+}
+
+.badge {
+    border-radius: 20px;
+    padding: 8px 16px;
+}
+
+/* Professional Login Page Styles */
+.login-page {
+    min-height: 100vh;
+    width: 100vw;
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    padding: 20px;
+    margin: 0;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 9999;
+}
+
+.login-container {
+    display: flex;
+    max-width: 1000px;
+    width: 100%;
+    background: white;
+    border-radius: 15px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    min-height: 600px;
+}
+
+/* Left Panel - White */
+.login-left-panel {
+    flex: 1;
+    background: var(--login-white);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    padding: 40px 30px;
+    position: relative;
+}
+
+
+
+.logo-container {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.cswdd-logo-img {
+    width: 200px;
+    height: 200px;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.1));
+}
+
+.system-title {
+    text-align: center;
+}
+
+.system-title h2 {
+    color: var(--primary-color);
+    font-size: 24px;
+    font-weight: bold;
+    margin: 0;
+}
+
+/* Right Panel - White */
+.login-right-panel {
+    flex: 1;
+    background: var(--login-white);
+    display: flex;
+    flex-direction: column;
+    padding: 60px 50px;
+    justify-content: center;
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 40px;
+    position: relative;
+}
+
+.login-header h1 {
+    font-size: 32px;
+    font-weight: bold;
+    color: var(--dark-color);
+    margin-bottom: 20px;
+}
+
+
+
+.login-form {
+    max-width: 400px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.form-group {
+    margin-bottom: 25px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    color: var(--dark-color);
+}
+
+.form-group input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 2px solid #e5e7eb;
+    border-radius: 8px;
+    font-size: 16px;
+    transition: border-color 0.3s ease;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.form-check {
+    margin-bottom: 30px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.form-check input {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+}
+
+.form-check label {
+    margin: 0;
+    font-size: 14px;
+    color: #6b7280;
+    cursor: pointer;
+}
+
+.login-btn {
+    width: 100%;
+    padding: 14px;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.login-btn:hover {
+    background: var(--secondary-color);
+}
+
+/* Main System styles were moved to admidashboard.css */
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    /* admin responsive rules moved to admidashboard.css */
+    
+    .login-container {
+        flex-direction: column;
+        max-width: 400px;
+    }
+    
+    .login-left-panel {
+        padding: 30px 20px;
+        min-height: 300px;
+    }
+    
+    .login-right-panel {
+        padding: 40px 30px;
+    }
+    
+    .cswdd-logo {
+        width: 150px;
+        height: 150px;
+    }
+}

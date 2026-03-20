@@ -1,0 +1,126 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Controllers;
+
+use App\Services\PostApprovalReviewService;
+
+class PostApprovalReviewController extends Controller
+{
+    public function show(): never
+    {
+        $user = $this->reviewerUser();
+        if ($user === null) {
+            abort(403);
+        }
+
+        $this->view('dashboards/post-approval-review', [
+            'authUser' => $user,
+        ]);
+    }
+
+    public function index(): never
+    {
+        $user = $this->reviewerUser();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $service = new PostApprovalReviewService();
+        $state = $service->stateForReviewer((int) $user['id']);
+        if (!($state['ok'] ?? false)) {
+            response_json(['ok' => false, 'message' => $state['message'] ?? 'Forbidden.'], 403);
+        }
+
+        response_json($state);
+    }
+
+    public function task(): never
+    {
+        $user = $this->reviewerUser();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $taskId = (int) ($_GET['task_id'] ?? 0);
+        if ($taskId <= 0) {
+            response_json(['ok' => false, 'message' => 'Task ID is required.'], 422);
+        }
+
+        $service = new PostApprovalReviewService();
+        $task = $service->taskForReviewer((int) $user['id'], $taskId);
+        if ($task === null) {
+            response_json(['ok' => false, 'message' => 'Review task not found.'], 404);
+        }
+
+        response_json(['ok' => true, 'task' => $task]);
+    }
+
+    public function review(): never
+    {
+        $user = $this->reviewerUser();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
+        if (!is_array($payload)) {
+            response_json(['ok' => false, 'message' => 'Invalid request payload.'], 422);
+        }
+
+        $taskId = (int) ($payload['taskId'] ?? 0);
+        $status = trim((string) ($payload['status'] ?? ''));
+        $remarks = trim((string) ($payload['remarks'] ?? ''));
+        $staffForm = is_array($payload['staffForm'] ?? null) ? $payload['staffForm'] : [];
+
+        $service = new PostApprovalReviewService();
+        $result = $service->reviewTask((int) $user['id'], $taskId, $status, $remarks, $staffForm);
+        if (!($result['ok'] ?? false)) {
+            response_json([
+                'ok' => false,
+                'message' => $result['errors']['general'] ?? 'Unable to save this review.',
+                'errors' => $result['errors'] ?? [],
+            ], 422);
+        }
+
+        response_json(['ok' => true]);
+    }
+
+    public function upload(): never
+    {
+        $user = $this->reviewerUser();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        $taskId = (int) ($_POST['taskId'] ?? 0);
+        $fieldKey = trim((string) ($_POST['fieldKey'] ?? ''));
+        $file = $_FILES['file'] ?? null;
+        if ($taskId <= 0 || $fieldKey === '' || !is_array($file)) {
+            response_json(['ok' => false, 'message' => 'Upload details are required.'], 422);
+        }
+
+        $service = new PostApprovalReviewService();
+        $result = $service->uploadTaskAsset((int) $user['id'], $taskId, $fieldKey, $file);
+        if (!($result['ok'] ?? false)) {
+            response_json([
+                'ok' => false,
+                'message' => $result['errors']['general'] ?? 'Unable to upload this file right now.',
+                'errors' => $result['errors'] ?? [],
+            ], 422);
+        }
+
+        response_json(['ok' => true, 'upload' => $result['upload'] ?? null]);
+    }
+
+    private function reviewerUser(): ?array
+    {
+        $user = auth_user();
+        if ($user === null) {
+            return null;
+        }
+
+        return has_role(ROLE_ADMIN, ROLE_PROJECT_OFFICER, ROLE_SOCIAL_WORKER) ? $user : null;
+    }
+}
