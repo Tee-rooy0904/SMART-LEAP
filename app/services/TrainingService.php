@@ -17,7 +17,7 @@ class TrainingService
         }
 
         $required = [
-            'training_programs' => ['what_to_bring', 'instructions'],
+            'training_programs' => ['speaker', 'what_to_bring', 'instructions'],
             'training_invitees' => ['applicant_profile_id', 'remarks', 'notified_at', 'last_notice_sent_at', 'updated_by_user_id', 'post_approval_unlocked_at'],
             'attendance_records' => ['training_invitee_id', 'applicant_profile_id', 'remarks', 'recorded_by_user_id'],
         ];
@@ -92,6 +92,7 @@ class TrainingService
                 training_programs.title,
                 training_programs.description,
                 training_programs.venue,
+                training_programs.speaker,
                 training_programs.starts_at,
                 training_programs.ends_at,
                 training_programs.what_to_bring,
@@ -156,8 +157,8 @@ class TrainingService
             return ['ok' => false, 'errors' => ['general' => $this->schemaError()]];
         }
 
-        if (!$this->isAdmin($actor)) {
-            return ['ok' => false, 'errors' => ['general' => 'Only administrators can manage training programs.']];
+        if (!$this->isAdmin($actor) && !$this->isProjectOfficer($actor)) {
+            return ['ok' => false, 'errors' => ['general' => 'Only authorized CSWDD staff can manage training programs.']];
         }
 
         $input = $this->validateProgramPayload($payload);
@@ -172,7 +173,7 @@ class TrainingService
             if ($programId !== null && $programId > 0) {
                 $statement = db()->prepare(
                     'UPDATE training_programs
-                     SET title = :title, description = :description, venue = :venue, starts_at = :starts_at, ends_at = :ends_at,
+                     SET title = :title, description = :description, venue = :venue, speaker = :speaker, starts_at = :starts_at, ends_at = :ends_at,
                          what_to_bring = :what_to_bring, instructions = :instructions, status = :status, updated_at = NOW()
                      WHERE id = :id'
                 );
@@ -180,6 +181,7 @@ class TrainingService
                     'title' => $input['data']['programName'],
                     'description' => $input['data']['description'] ?: null,
                     'venue' => $input['data']['venue'] ?: null,
+                    'speaker' => $input['data']['speaker'] ?: null,
                     'starts_at' => $startsAt,
                     'ends_at' => $endsAt,
                     'what_to_bring' => $input['data']['whatToBring'] ?: null,
@@ -190,13 +192,14 @@ class TrainingService
             } else {
                 $statement = db()->prepare(
                     'INSERT INTO training_programs
-                     (title, description, venue, starts_at, ends_at, what_to_bring, instructions, status, created_by_user_id)
-                     VALUES (:title, :description, :venue, :starts_at, :ends_at, :what_to_bring, :instructions, :status, :created_by_user_id)'
+                     (title, description, venue, speaker, starts_at, ends_at, what_to_bring, instructions, status, created_by_user_id)
+                     VALUES (:title, :description, :venue, :speaker, :starts_at, :ends_at, :what_to_bring, :instructions, :status, :created_by_user_id)'
                 );
                 $statement->execute([
                     'title' => $input['data']['programName'],
                     'description' => $input['data']['description'] ?: null,
                     'venue' => $input['data']['venue'] ?: null,
+                    'speaker' => $input['data']['speaker'] ?: null,
                     'starts_at' => $startsAt,
                     'ends_at' => $endsAt,
                     'what_to_bring' => $input['data']['whatToBring'] ?: null,
@@ -240,8 +243,8 @@ class TrainingService
             return ['ok' => false, 'errors' => ['general' => $this->schemaError()]];
         }
 
-        if (!$this->isAdmin($actor)) {
-            return ['ok' => false, 'errors' => ['general' => 'Only administrators can assign training participants.']];
+        if (!$this->isAdmin($actor) && !$this->isProjectOfficer($actor)) {
+            return ['ok' => false, 'errors' => ['general' => 'Only authorized CSWDD staff can assign training participants.']];
         }
 
         $program = $this->findProgram($programId, $actor);
@@ -626,6 +629,7 @@ class TrainingService
             'programName' => trim((string) ($payload['programName'] ?? '')),
             'description' => trim((string) ($payload['description'] ?? '')),
             'venue' => trim((string) ($payload['venue'] ?? '')),
+            'speaker' => trim((string) ($payload['speaker'] ?? '')),
             'date' => $normalizedDate,
             'startTime' => $normalizedStartTime,
             'endTime' => $normalizedEndTime,
@@ -746,6 +750,7 @@ class TrainingService
             'title' => $row['title'],
             'description' => $row['description'],
             'venue' => $row['venue'],
+            'speaker' => $row['speaker'] ?? null,
             'date' => $startsAt !== '' ? substr($startsAt, 0, 10) : null,
             'startTime' => $startsAt !== '' ? substr($startsAt, 11, 5) : null,
             'endTime' => $endsAt !== '' ? substr($endsAt, 11, 5) : null,

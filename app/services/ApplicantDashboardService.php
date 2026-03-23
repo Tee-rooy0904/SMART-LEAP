@@ -223,6 +223,7 @@ class ApplicantDashboardService
                 training_programs.title,
                 training_programs.description,
                 training_programs.venue,
+                training_programs.speaker,
                 training_programs.starts_at,
                 training_programs.ends_at,
                 training_programs.what_to_bring,
@@ -261,6 +262,7 @@ class ApplicantDashboardService
                     'programName' => $row['title'],
                     'description' => $row['description'],
                     'venue' => $row['venue'],
+                    'speaker' => $row['speaker'],
                     'startsAt' => $row['starts_at'],
                     'endsAt' => $row['ends_at'],
                     'whatToBring' => $row['what_to_bring'],
@@ -388,8 +390,8 @@ class ApplicantDashboardService
             return [
                 'title' => 'Complete your applicant profile',
                 'description' => 'Finish your SMART LEAP profile and submit the required documents for review.',
-                'actionLabel' => 'Open profile completion',
-                'actionPath' => 'profile-completion',
+                'actionLabel' => 'Edit Profile',
+                'actionPath' => 'applicant-dashboard#profile-page',
             ];
         }
 
@@ -399,8 +401,8 @@ class ApplicantDashboardService
             return [
                 'title' => 'Submit your application',
                 'description' => 'Your profile is still saved as a draft. Submit it to start CSWDD review.',
-                'actionLabel' => 'Finish profile completion',
-                'actionPath' => 'profile-completion',
+                'actionLabel' => 'Edit Profile',
+                'actionPath' => 'applicant-dashboard#profile-page',
             ];
         }
 
@@ -417,8 +419,8 @@ class ApplicantDashboardService
             return [
                 'title' => 'Review remarks and update your submission',
                 'description' => 'CSWDD needs corrections or additional clarification before your application can proceed.',
-                'actionLabel' => 'Open profile completion',
-                'actionPath' => 'profile-completion',
+                'actionLabel' => 'Edit Profile',
+                'actionPath' => 'applicant-dashboard#profile-page',
             ];
         }
 
@@ -451,13 +453,15 @@ class ApplicantDashboardService
                 ];
             }
 
+            $postApprovalUnlockedAt = $postApproval['unlockedAt'] ?? ($training['latestUnlockedAt'] ?? null);
             if (in_array($currentTrainingStatus, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_COMPLETED], true)
-                && (($postApproval['totalTasks'] ?? 0) > 0 || ($postApproval['isUnlocked'] ?? false))) {
+                && is_string($postApprovalUnlockedAt)
+                && trim($postApprovalUnlockedAt) !== '') {
                 return [
-                    'title' => 'Proceed to post-approval compliance',
-                    'description' => 'Your training attendance has unlocked the next compliance stage. Start with the Availment and Validation forms in your dashboard workspace.',
-                    'actionLabel' => 'Open post-approval tasks',
-                    'actionPath' => 'post-approval',
+                    'title' => 'Proceed to your application forms',
+                    'description' => 'Your training attendance has unlocked the next set of fillable application forms. Open the Application page to continue.',
+                    'actionLabel' => 'Open application forms',
+                    'actionPath' => 'applicant-dashboard#application-forms',
                 ];
             }
         }

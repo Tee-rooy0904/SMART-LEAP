@@ -187,7 +187,7 @@
 
             setFeedback('success', 'Account created successfully. Redirecting to profile completion...');
             window.setTimeout(() => {
-                window.location.href = routeUrl(payload.redirect || 'profile-completion?welcome=1');
+                window.location.href = routeUrl(payload.redirect || 'applicant-dashboard?welcome=1#profile-page');
             }, 1200);
         } catch (error) {
             console.error('Signup failed', error);

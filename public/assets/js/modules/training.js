@@ -190,6 +190,10 @@
           <input type="text" name="venue" value="${escapeHtml(editing?.venue || '')}" placeholder="CSWDD Training Hall">
         </label>
         <label>
+          <span>Speaker</span>
+          <input type="text" name="speaker" value="${escapeHtml(editing?.speaker || '')}" placeholder="Name of speaker or facilitator">
+        </label>
+        <label>
           <span>Date</span>
           <input type="date" name="date" value="${escapeHtml(editing?.date || '')}" required>
         </label>
@@ -241,6 +245,7 @@
         </td>
         <td>${formatDate(program.date)}</td>
         <td>${escapeHtml(program.venue || '--')}</td>
+        <td>${escapeHtml(program.speaker || '--')}</td>
         <td>${escapeHtml(program.startTime || '--')} - ${escapeHtml(program.endTime || '--')}</td>
         <td><span class="status-badge ${statusClass(program.status)}">${escapeHtml(program.status)}</span></td>
         <td>${program.participantCount || 0}</td>
@@ -268,6 +273,7 @@
               <th>Program</th>
               <th>Date</th>
               <th>Venue</th>
+              <th>Speaker</th>
               <th>Time</th>
               <th>Status</th>
               <th>Participants</th>
@@ -275,7 +281,7 @@
               <th class="actions">Actions</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="8"><div class="training-empty training-empty--inline">No training programs found yet.</div></td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="9"><div class="training-empty training-empty--inline">No training programs found yet.</div></td></tr>'}</tbody>
         </table>
       </div>
     `);
@@ -351,6 +357,11 @@
           <span class="training-overview-card__label">Venue</span>
           <strong>${escapeHtml(program.venue || '--')}</strong>
           <small>${escapeHtml(program.description || 'No description provided.')}</small>
+        </article>
+        <article class="training-overview-card">
+          <span class="training-overview-card__label">Speaker</span>
+          <strong>${escapeHtml(program.speaker || '--')}</strong>
+          <small>Assigned resource person or facilitator</small>
         </article>
         <article class="training-overview-card">
           <span class="training-overview-card__label">What to bring</span>

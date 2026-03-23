@@ -12,7 +12,12 @@ class ProfileCompletionController extends Controller
             $this->redirectTo('login');
         }
 
-        $this->view('public/profile-completion');
+        $target = 'applicant-dashboard#profile-page';
+        if (isset($_GET['welcome']) && trim((string) $_GET['welcome']) !== '') {
+            $target = 'applicant-dashboard?welcome=' . urlencode((string) $_GET['welcome']) . '#profile-page';
+        }
+
+        $this->redirectTo($target);
     }
 
     public function state(): never

@@ -281,11 +281,11 @@ class CertificateService
         }
 
         if ($postApprovalTotal === 0) {
-            return 'Post-approval verification must be completed before the certificate is released.';
+            return 'All required application forms must be completed before the certificate is released.';
         }
 
         if (!$postApprovalEligible) {
-            return 'All required post-approval forms must be verified before your certificate becomes available.';
+            return 'All required application forms must be verified before your certificate becomes available.';
         }
 
         return 'Your certificate of completion is ready for download.';

@@ -200,7 +200,7 @@
                     return;
                 }
 
-                window.location.href = routeUrl(payload.redirect || 'profile-completion');
+                window.location.href = routeUrl(payload.redirect || 'applicant-dashboard#profile-page');
             } catch (error) {
                 console.error('Portal login failed', error);
                 if (authError) {

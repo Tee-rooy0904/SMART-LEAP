@@ -160,7 +160,7 @@ class AuthService
                 'role' => ROLE_APPLICANT,
                 'verification_status' => 'pending',
             ],
-            'redirect' => 'profile-completion?welcome=1',
+            'redirect' => 'applicant-dashboard?welcome=1#profile-page',
         ];
     }
 
@@ -185,7 +185,7 @@ class AuthService
             return 'applicant-dashboard';
         }
 
-        return 'profile-completion';
+        return 'portal';
     }
 
     public function currentUserFromSession(): ?array

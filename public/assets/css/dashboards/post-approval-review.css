@@ -20,6 +20,10 @@ body {
     color: var(--review-text);
 }
 
+body.review-body--embedded {
+    background: #ffffff;
+}
+
 .review-shell {
     width: min(1400px, calc(100% - 32px));
     margin: 0 auto;
@@ -40,6 +44,28 @@ body {
     gap: 24px;
     padding: 28px;
     margin-bottom: 20px;
+}
+
+.review-header.is-embedded {
+    display: none;
+}
+
+body.review-body--embedded .review-shell {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+}
+
+body.review-body--embedded .review-panel {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+    box-shadow: none;
+}
+
+body.review-body--embedded .review-summary,
+body.review-body--embedded .review-queue {
+    display: none;
 }
 
 .eyebrow {

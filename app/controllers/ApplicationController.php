@@ -64,4 +64,17 @@ class ApplicationController extends Controller
 
         response_json($result);
     }
+
+    public function reviewRequirement(): never
+    {
+        $applicationId = (int) ($_POST['applicationId'] ?? 0);
+        $service = new ApplicationService();
+        $result = $service->reviewRequirement($applicationId, $_POST, $this->authorizeReviewer());
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
 }

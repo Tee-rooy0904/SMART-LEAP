@@ -15,8 +15,16 @@ class PostApprovalReviewController extends Controller
             abort(403);
         }
 
+        $taskId = (int) ($_GET['task_id'] ?? 0);
+        $embedded = ($_GET['embed'] ?? '') === '1';
+        if (!$embedded && $taskId <= 0) {
+            redirect('project-officer');
+        }
+
         $this->view('dashboards/post-approval-review', [
             'authUser' => $user,
+            'taskId' => $taskId,
+            'embedded' => $embedded,
         ]);
     }
 
@@ -72,10 +80,11 @@ class PostApprovalReviewController extends Controller
         $taskId = (int) ($payload['taskId'] ?? 0);
         $status = trim((string) ($payload['status'] ?? ''));
         $remarks = trim((string) ($payload['remarks'] ?? ''));
+        $applicantVisibleRemark = trim((string) ($payload['applicantVisibleRemark'] ?? ''));
         $staffForm = is_array($payload['staffForm'] ?? null) ? $payload['staffForm'] : [];
 
         $service = new PostApprovalReviewService();
-        $result = $service->reviewTask((int) $user['id'], $taskId, $status, $remarks, $staffForm);
+        $result = $service->reviewTask((int) $user['id'], $taskId, $status, $remarks, $applicantVisibleRemark, $staffForm);
         if (!($result['ok'] ?? false)) {
             response_json([
                 'ok' => false,

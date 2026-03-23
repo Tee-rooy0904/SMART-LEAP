@@ -632,7 +632,6 @@
             </main>
 
             <footer class="dash-footer">
-                <p>SMART LEAP - City Government of Butuan &amp; CSWDD - Empowering homegrown enterprises.</p>
             </footer>
         </div>
     </div>

@@ -14,6 +14,16 @@ class ApplicationService
         'cedula' => 'Cedula',
     ];
 
+    private const APPLICATION_FORM_DEFINITIONS = [
+        POST_APPROVAL_TASK_AVAILMENT_FORM => 'Availment Form',
+        POST_APPROVAL_TASK_VALIDATION_FORM => 'Validation Form',
+        POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => 'Mungkahing Proyekto',
+        POST_APPROVAL_TASK_BUSINESS_PLAN => 'Business Plan',
+        POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => 'Buhat sa Pagpanumpa',
+    ];
+
+    private ?array $initialRequirementFileColumns = null;
+
     public function getApplicantEntryState(int $userId): array
     {
         $user = $this->fetchUser($userId);
@@ -216,10 +226,104 @@ class ApplicationService
 
         $detail = $this->mapApplicationRow($row);
         $detail['requirements'] = array_values($this->fetchRequirementFiles($applicationId));
+        $detail['formRequirements'] = $this->fetchFormRequirementsForApplication($applicationId, $actor);
         $detail['comments'] = $this->fetchApplicationComments($applicationId);
         $detail['history'] = $this->fetchApplicationHistory($applicationId);
+        $detail['trainingReadiness'] = $this->fetchTrainingReadiness($this->findApplicantProfileIdForApplication($applicationId));
+        $detail['approvalReadiness'] = $this->buildApprovalReadiness(
+            $detail['requirements'],
+            $detail['formRequirements'],
+            $detail['trainingReadiness']
+        );
+        $detail['computedStatus'] = $detail['approvalReadiness']['overallStatus'] ?? $detail['status'];
 
         return $detail;
+    }
+
+    public function reviewRequirement(int $applicationId, array $payload, array $actor): array
+    {
+        $application = $this->findApplicationRow($applicationId, $actor);
+        if ($application === null) {
+            return ['ok' => false, 'errors' => ['applicationId' => 'Application not found or not accessible.']];
+        }
+
+        $requirementKey = trim((string) ($payload['requirementKey'] ?? ''));
+        $decision = trim((string) ($payload['decision'] ?? ''));
+        $remarks = trim((string) ($payload['staffRemarks'] ?? $payload['remarks'] ?? ''));
+        $applicantRemark = trim((string) ($payload['applicantRemark'] ?? ''));
+        $normalizedStatus = match (strtolower($decision)) {
+            'approve', 'approved', 'verified' => 'verified',
+            'reject', 'rejected' => 'rejected',
+            default => null,
+        };
+
+        if ($requirementKey === '' || !array_key_exists($requirementKey, self::REQUIREMENT_LABELS)) {
+            return ['ok' => false, 'errors' => ['requirementKey' => 'Requirement not found.']];
+        }
+        if ($normalizedStatus === null) {
+            return ['ok' => false, 'errors' => ['decision' => 'Select Approved or Rejected.']];
+        }
+        if ($normalizedStatus === 'rejected' && $applicantRemark === '') {
+            return ['ok' => false, 'errors' => ['applicantRemark' => 'Applicant-visible remark is required when rejecting a requirement.']];
+        }
+
+        $typeCode = $this->frontendKeyToCode($requirementKey);
+        $statement = db()->prepare(
+            'SELECT initial_requirement_files.id
+             FROM initial_requirement_files
+             INNER JOIN initial_requirement_types ON initial_requirement_types.id = initial_requirement_files.requirement_type_id
+             WHERE initial_requirement_files.application_id = :application_id
+               AND initial_requirement_types.code = :code
+             LIMIT 1'
+        );
+        $statement->execute([
+            'application_id' => $applicationId,
+            'code' => $typeCode,
+        ]);
+        $fileId = $statement->fetchColumn();
+        if ($fileId === false) {
+            return ['ok' => false, 'errors' => ['requirementKey' => 'This requirement has not been submitted yet.']];
+        }
+
+        try {
+            $supportsReviewColumns = $this->hasInitialRequirementReviewColumns();
+            $sql = 'UPDATE initial_requirement_files
+                    SET review_status = :review_status, updated_at = NOW()';
+            $params = [
+                'review_status' => $normalizedStatus,
+                'id' => (int) $fileId,
+            ];
+
+            if ($supportsReviewColumns) {
+                $sql .= ',
+                    reviewer_remarks = :reviewer_remarks,
+                    reviewed_by_user_id = :reviewed_by_user_id,
+                    reviewed_at = NOW()';
+                $params['reviewer_remarks'] = $remarks !== '' ? $remarks : null;
+                $params['reviewed_by_user_id'] = (int) $actor['id'];
+            }
+
+            $sql .= ' WHERE id = :id';
+            db()->prepare($sql)->execute($params);
+        } catch (\Throwable $exception) {
+            log_database_query_failure('application.review_requirement', $exception, [
+                'application_id' => $applicationId,
+                'requirement_key' => $requirementKey,
+                'actor_user_id' => (int) ($actor['id'] ?? 0),
+            ]);
+            return ['ok' => false, 'errors' => ['general' => 'Unable to save this requirement review right now.']];
+        }
+
+        if ($applicantRemark !== '') {
+            $this->createApplicationComment(
+                $applicationId,
+                (int) $actor['id'],
+                self::REQUIREMENT_LABELS[$requirementKey] . ' (' . ucfirst($normalizedStatus) . '): ' . $applicantRemark,
+                'applicant'
+            );
+        }
+
+        return ['ok' => true, 'application' => $this->getApplicationDetail($applicationId, $actor)];
     }
 
     public function reviewApplication(int $applicationId, array $payload, array $actor): array
@@ -233,9 +337,13 @@ class ApplicationService
         $remarks = trim((string) ($payload['remarks'] ?? ''));
         $actorRole = strtolower((string) ($actor['role'] ?? ''));
         $nextStatus = $this->resolveNextStatus($decision, $actorRole);
+        $detail = $this->getApplicationDetail($applicationId, $actor);
 
         if ($nextStatus === null) {
             return ['ok' => false, 'errors' => ['decision' => 'Invalid application decision.']];
+        }
+        if ($decision === 'approve' && is_array($detail) && !($detail['approvalReadiness']['canApprove'] ?? false)) {
+            return ['ok' => false, 'errors' => ['decision' => 'This applicant is not yet ready for approval.']];
         }
 
         if (in_array($nextStatus, [APPLICATION_STATUS_REJECTED, APPLICATION_STATUS_FLAGGED, APPLICATION_STATUS_NEEDS_CORRECTION], true)
@@ -434,10 +542,15 @@ class ApplicationService
 
     private function fetchRequirementFiles(int $applicationId): array
     {
+        $reviewerRemarksSelect = $this->hasInitialRequirementReviewColumns()
+            ? 'initial_requirement_files.reviewer_remarks, initial_requirement_files.reviewed_at,'
+            : 'NULL AS reviewer_remarks, NULL AS reviewed_at,';
         $statement = db()->prepare(
-            'SELECT initial_requirement_types.code, initial_requirement_types.label, initial_requirement_files.file_path,
-                    initial_requirement_files.original_name, initial_requirement_files.mime_type, initial_requirement_files.file_size,
-                    initial_requirement_files.review_status, initial_requirement_files.updated_at
+            'SELECT initial_requirement_types.code, initial_requirement_types.label, initial_requirement_types.is_required,
+                    initial_requirement_files.file_path, initial_requirement_files.original_name, initial_requirement_files.mime_type,
+                    initial_requirement_files.file_size, initial_requirement_files.review_status, '
+                    . $reviewerRemarksSelect . '
+                    initial_requirement_files.updated_at
              FROM initial_requirement_files
              INNER JOIN initial_requirement_types ON initial_requirement_types.id = initial_requirement_files.requirement_type_id
              WHERE initial_requirement_files.application_id = :application_id
@@ -452,7 +565,11 @@ class ApplicationService
             $mapped[$key] = [
                 'key' => $key,
                 'label' => $row['label'],
+                'typeLabel' => 'Upload Requirement',
+                'isRequired' => ((int) ($row['is_required'] ?? 1)) === 1,
                 'status' => $row['review_status'],
+                'reviewerRemarks' => $row['reviewer_remarks'] ?? null,
+                'reviewedAt' => $row['reviewed_at'] ?? null,
                 'file' => [
                     'name' => $row['original_name'],
                     'type' => $row['mime_type'],
@@ -469,7 +586,11 @@ class ApplicationService
                 $mapped[$frontendKey] = [
                     'key' => $frontendKey,
                     'label' => $label,
+                    'typeLabel' => 'Upload Requirement',
+                    'isRequired' => true,
                     'status' => 'missing',
+                    'reviewerRemarks' => null,
+                    'reviewedAt' => null,
                     'file' => null,
                     'updatedAt' => null,
                 ];
@@ -638,6 +759,277 @@ class ApplicationService
             'file_size' => $meta['file_size'],
             'review_status' => 'pending',
         ]);
+    }
+
+    private function fetchFormRequirementsForApplication(int $applicationId, array $actor): array
+    {
+        $applicantProfileId = $this->findApplicantProfileIdForApplication($applicationId);
+        if ($applicantProfileId <= 0) {
+            return [];
+        }
+
+        $beneficiaryProfileId = $this->ensureApplicationFormTasks($applicantProfileId, (int) ($actor['id'] ?? 0));
+        if ($beneficiaryProfileId === null) {
+            return [];
+        }
+
+        $params = ['beneficiary_profile_id' => $beneficiaryProfileId];
+        $scopeJoin = '';
+        $role = strtolower((string) ($actor['role'] ?? ''));
+        if (str_contains($role, 'project')) {
+            $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
+            if ($staffProfileId === null) {
+                return [];
+            }
+            $scopeJoin = '
+                INNER JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
+                INNER JOIN staff_barangay_assignments AS scope_assignments
+                    ON scope_assignments.barangay_id = applicant_profiles.barangay_id
+                   AND scope_assignments.staff_profile_id = :scope_staff_profile_id
+                   AND scope_assignments.ended_at IS NULL';
+            $params['scope_staff_profile_id'] = $staffProfileId;
+        }
+
+        $statement = db()->prepare(
+            'SELECT
+                post_approval_tasks.id,
+                post_approval_tasks.status,
+                post_approval_tasks.reviewer_remarks,
+                post_approval_tasks.applicant_started_at,
+                post_approval_tasks.applicant_submitted_at,
+                post_approval_tasks.reviewed_at,
+                post_approval_task_types.code,
+                post_approval_task_types.label
+             FROM post_approval_tasks
+             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
+             INNER JOIN beneficiary_profiles ON beneficiary_profiles.id = post_approval_tasks.beneficiary_profile_id'
+             . $scopeJoin .
+            ' WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
+              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
+             ORDER BY FIELD(post_approval_task_types.code, "availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa"), post_approval_tasks.id ASC'
+        );
+        $statement->execute($params);
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        return array_map(static function (array $row): array {
+            $status = (string) ($row['status'] ?? POST_APPROVAL_STATUS_UNLOCKED);
+            return [
+                'id' => (int) $row['id'],
+                'key' => (string) $row['code'],
+                'label' => (string) $row['label'],
+                'type' => 'form',
+                'typeLabel' => 'Fill-up Form Requirement',
+                'isRequired' => true,
+                'status' => $status,
+                'reviewerRemarks' => $row['reviewer_remarks'] ?? null,
+                'submittedAt' => $row['applicant_submitted_at'] ?? null,
+                'reviewedAt' => $row['reviewed_at'] ?? null,
+                'canReview' => in_array($status, [POST_APPROVAL_STATUS_SUBMITTED, POST_APPROVAL_STATUS_NEEDS_CORRECTION, POST_APPROVAL_STATUS_REJECTED, POST_APPROVAL_STATUS_VERIFIED], true),
+                'reviewUrl' => app_url('post-approval-review?task_id=' . (int) $row['id'] . '&embed=1'),
+            ];
+        }, $rows);
+    }
+
+    private function ensureApplicationFormTasks(int $applicantProfileId, int $actorUserId): ?int
+    {
+        $beneficiaryProfileId = (new BeneficiaryProfileService())->ensureForApplicantProfile($applicantProfileId);
+        if ($beneficiaryProfileId === null) {
+            return null;
+        }
+
+        $typeStatement = db()->prepare(
+            'INSERT INTO post_approval_task_types (code, label, description)
+             VALUES (:code, :label, :description)
+             ON DUPLICATE KEY UPDATE label = VALUES(label), description = VALUES(description)'
+        );
+
+        foreach (self::APPLICATION_FORM_DEFINITIONS as $code => $label) {
+            $typeStatement->execute([
+                'code' => $code,
+                'label' => $label,
+                'description' => 'Application-stage fill-up form requirement.',
+            ]);
+        }
+
+        $fetchTypes = db()->query('SELECT id, code FROM post_approval_task_types');
+        $typeMap = [];
+        foreach (($fetchTypes->fetchAll(PDO::FETCH_ASSOC) ?: []) as $row) {
+            $typeMap[(string) $row['code']] = (int) $row['id'];
+        }
+
+        $insertTask = db()->prepare(
+            'INSERT INTO post_approval_tasks
+             (beneficiary_profile_id, task_type_id, status, assigned_by_user_id)
+             VALUES (:beneficiary_profile_id, :task_type_id, :status, :assigned_by_user_id)
+             ON DUPLICATE KEY UPDATE updated_at = updated_at'
+        );
+
+        foreach (array_keys(self::APPLICATION_FORM_DEFINITIONS) as $code) {
+            if (!isset($typeMap[$code])) {
+                continue;
+            }
+            $insertTask->execute([
+                'beneficiary_profile_id' => $beneficiaryProfileId,
+                'task_type_id' => $typeMap[$code],
+                'status' => POST_APPROVAL_STATUS_UNLOCKED,
+                'assigned_by_user_id' => $actorUserId > 0 ? $actorUserId : null,
+            ]);
+        }
+
+        return $beneficiaryProfileId;
+    }
+
+    private function fetchTrainingReadiness(int $applicantProfileId): array
+    {
+        if ($applicantProfileId <= 0) {
+            return ['status' => TRAINING_STATUS_NOT_SCHEDULED, 'completed' => false, 'note' => 'No training schedule found yet.'];
+        }
+
+        $statement = db()->prepare(
+            'SELECT training_invitees.invite_status, attendance_records.attendance_status
+             FROM training_invitees
+             LEFT JOIN attendance_records ON attendance_records.training_invitee_id = training_invitees.id
+             WHERE training_invitees.applicant_profile_id = :applicant_profile_id
+             ORDER BY training_invitees.updated_at DESC, training_invitees.id DESC
+             LIMIT 1'
+        );
+        $statement->execute(['applicant_profile_id' => $applicantProfileId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return ['status' => TRAINING_STATUS_NOT_SCHEDULED, 'completed' => false, 'note' => 'No training schedule found yet.'];
+        }
+
+        $status = (string) ($row['attendance_status'] ?: $row['invite_status'] ?: TRAINING_STATUS_NOT_SCHEDULED);
+        $completed = in_array($status, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_COMPLETED], true);
+
+        return [
+            'status' => $status,
+            'completed' => $completed,
+            'note' => $completed ? 'Training attendance requirement is complete.' : 'Training attendance is still pending.',
+        ];
+    }
+
+    private function buildApprovalReadiness(array $requirements, array $formRequirements, array $trainingReadiness): array
+    {
+        $missingUploads = [];
+        $rejectedUploads = [];
+        $pendingUploads = [];
+        foreach ($requirements as $requirement) {
+            $status = strtolower((string) ($requirement['status'] ?? 'missing'));
+            $label = (string) ($requirement['label'] ?? 'Requirement');
+            $hasFile = !empty($requirement['file']['path']);
+            if (!$hasFile) {
+                $missingUploads[] = $label;
+                continue;
+            }
+            if (in_array($status, ['rejected'], true)) {
+                $rejectedUploads[] = $label;
+                continue;
+            }
+            if (!in_array($status, ['verified', 'approved'], true)) {
+                $pendingUploads[] = $label;
+            }
+        }
+
+        $missingForms = [];
+        $rejectedForms = [];
+        $verifiedForms = 0;
+        $pendingForms = [];
+        foreach ($formRequirements as $requirement) {
+            $status = strtolower((string) ($requirement['status'] ?? POST_APPROVAL_STATUS_UNLOCKED));
+            $label = (string) ($requirement['label'] ?? 'Form requirement');
+            if (in_array($status, ['verified'], true)) {
+                $verifiedForms++;
+                continue;
+            }
+            if (in_array($status, ['rejected', 'needs correction'], true)) {
+                $rejectedForms[] = $label;
+                continue;
+            }
+            if (in_array($status, ['submitted'], true)) {
+                $pendingForms[] = $label;
+                continue;
+            }
+            $missingForms[] = $label;
+        }
+
+        $approvedUploads = count($requirements) - count($missingUploads) - count($rejectedUploads) - count($pendingUploads);
+        $blockers = [];
+        foreach ($missingUploads as $label) {
+            $blockers[] = 'Missing: ' . $label;
+        }
+        foreach ($rejectedUploads as $label) {
+            $blockers[] = 'Rejected: ' . $label;
+        }
+        foreach ($pendingUploads as $label) {
+            $blockers[] = 'Pending review: ' . $label;
+        }
+        foreach ($missingForms as $label) {
+            $blockers[] = 'Missing: ' . $label;
+        }
+        foreach ($rejectedForms as $label) {
+            $blockers[] = 'Rejected: ' . $label;
+        }
+        foreach ($pendingForms as $label) {
+            $blockers[] = 'Pending review: ' . $label;
+        }
+        if (!($trainingReadiness['completed'] ?? false)) {
+            $blockers[] = 'Training attendance not completed';
+        }
+
+        $overallStatus = 'Under Review';
+        if ($missingUploads !== [] || $missingForms !== []) {
+            $overallStatus = 'Needs Documents';
+        } elseif ($rejectedUploads !== [] || $rejectedForms !== []) {
+            $overallStatus = 'Needs Correction';
+        } elseif ($blockers === []) {
+            $overallStatus = 'Approved';
+        }
+
+        return [
+            'uploadSummary' => [
+                'approved' => max(0, $approvedUploads),
+                'total' => count($requirements),
+            ],
+            'formSummary' => [
+                'approved' => $verifiedForms,
+                'total' => count($formRequirements),
+            ],
+            'trainingStatus' => $trainingReadiness,
+            'blockers' => $blockers,
+            'canApprove' => $blockers === [],
+            'overallStatus' => $overallStatus,
+        ];
+    }
+
+    private function initialRequirementFileColumns(): array
+    {
+        if ($this->initialRequirementFileColumns !== null) {
+            return $this->initialRequirementFileColumns;
+        }
+
+        try {
+            $rows = db()->query('SHOW COLUMNS FROM initial_requirement_files')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $exception) {
+            log_database_query_failure('application.initial_requirement_columns', $exception);
+            $this->initialRequirementFileColumns = [];
+            return $this->initialRequirementFileColumns;
+        }
+
+        $this->initialRequirementFileColumns = array_map(
+            static fn (array $row): string => (string) ($row['Field'] ?? ''),
+            $rows
+        );
+
+        return $this->initialRequirementFileColumns;
+    }
+
+    private function hasInitialRequirementReviewColumns(): bool
+    {
+        $columns = $this->initialRequirementFileColumns();
+        return in_array('reviewer_remarks', $columns, true)
+            && in_array('reviewed_by_user_id', $columns, true)
+            && in_array('reviewed_at', $columns, true);
     }
 
     private function frontendKeyToCode(string $key): string
@@ -936,6 +1328,19 @@ class ApplicationService
                 'createdAt' => $row['created_at'],
             ];
         }, $rows);
+    }
+
+    private function createApplicationComment(int $applicationId, int $userId, string $comment, string $visibility = 'internal'): void
+    {
+        db()->prepare(
+            'INSERT INTO application_comments (application_id, user_id, comment_text, visibility)
+             VALUES (:application_id, :user_id, :comment_text, :visibility)'
+        )->execute([
+            'application_id' => $applicationId,
+            'user_id' => $userId,
+            'comment_text' => $comment,
+            'visibility' => $visibility,
+        ]);
     }
 
     private function resolveNextStatus(string $decision, string $actorRole): ?string

@@ -3,6 +3,8 @@
         baseUrl: window.SMARTLEAP_BASE_URL || '',
         queue: [],
         activeTask: null,
+        initialTaskId: Number(window.SMARTLEAP_REVIEW_TASK_ID || 0),
+        embedded: Boolean(window.SMARTLEAP_REVIEW_EMBEDDED),
     };
 
     document.addEventListener('DOMContentLoaded', init);
@@ -10,7 +12,9 @@
     async function init() {
         document.getElementById('refreshReviewQueue')?.addEventListener('click', loadQueue);
         document.getElementById('reviewTaskList')?.addEventListener('click', handleQueueClick);
-        document.getElementById('reviewForm')?.addEventListener('submit', handleReviewSubmit);
+        if (!state.embedded) {
+            document.getElementById('reviewForm')?.addEventListener('submit', handleReviewSubmit);
+        }
         document.getElementById('reviewStaffSections')?.addEventListener('change', handleReviewerUploadChange);
         await loadQueue();
     }
@@ -21,7 +25,11 @@
             state.queue = payload.tasks || [];
             renderSummary(payload.summary || {});
             renderQueue();
-            if (state.activeTask) {
+            if (state.initialTaskId > 0) {
+                const taskId = state.initialTaskId;
+                state.initialTaskId = 0;
+                await loadTask(taskId);
+            } else if (state.activeTask) {
                 await loadTask(state.activeTask.id);
             }
         } catch (error) {
@@ -49,7 +57,7 @@
         }
 
         if (state.queue.length === 0) {
-            container.innerHTML = '<article class="empty-state">No Availment, Validation, Mungkahing Proyekto, Business Plan, or Buhat sa Pagpanumpa forms are available for review yet.</article>';
+            container.innerHTML = '<article class="empty-state">No fill-up form requirements are available for review yet.</article>';
             return;
         }
 
@@ -163,7 +171,7 @@
                     <article class="history-item">
                         <strong>${escapeHtml(item.reviewStatus || 'Submitted')}</strong>
                         <div>${escapeHtml(item.submittedByName || 'Applicant')} | ${escapeHtml(formatDateTime(item.submittedAt))}</div>
-                        <div>${escapeHtml(item.reviewerRemarks || 'No reviewer remarks saved on this entry.')}</div>
+                        ${state.embedded ? '' : `<div>${escapeHtml(item.reviewerRemarks || 'No reviewer remarks saved on this entry.')}</div>`}
                     </article>
                 `).join('');
         }
@@ -1255,6 +1263,9 @@
                 }),
             });
             showToast('Review decision saved.', 'success');
+            if (state.embedded && window.parent && window.parent !== window) {
+                window.parent.postMessage({ type: 'smartleap-form-review-saved', taskId: state.activeTask.id }, '*');
+            }
             await loadQueue();
             await loadTask(state.activeTask.id);
         } catch (error) {

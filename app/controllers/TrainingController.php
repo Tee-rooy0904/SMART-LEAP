@@ -19,16 +19,6 @@ class TrainingController extends Controller
         return $user;
     }
 
-    private function authorizeAdminActor(): array
-    {
-        $user = $this->authorizeTrainingActor();
-        if (!str_contains(strtolower((string) ($user['role'] ?? '')), 'admin')) {
-            response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
-        }
-
-        return $user;
-    }
-
     public function index(): never
     {
         $service = new TrainingService();
@@ -68,7 +58,7 @@ class TrainingController extends Controller
         if ($schemaError !== null) {
             response_json(['ok' => false, 'message' => $schemaError], 500);
         }
-        $result = $service->saveProgram($_POST, $this->authorizeAdminActor());
+        $result = $service->saveProgram($_POST, $this->authorizeTrainingActor());
         if (!$result['ok']) {
             response_json($result, 422);
         }
@@ -84,7 +74,7 @@ class TrainingController extends Controller
         if ($schemaError !== null) {
             response_json(['ok' => false, 'message' => $schemaError], 500);
         }
-        $result = $service->saveProgram($_POST, $this->authorizeAdminActor(), $programId);
+        $result = $service->saveProgram($_POST, $this->authorizeTrainingActor(), $programId);
         if (!$result['ok']) {
             response_json($result, 422);
         }
@@ -105,7 +95,7 @@ class TrainingController extends Controller
         if ($schemaError !== null) {
             response_json(['ok' => false, 'message' => $schemaError], 500);
         }
-        $result = $service->syncInvitees($programId, $applicantIds, $this->authorizeAdminActor());
+        $result = $service->syncInvitees($programId, $applicantIds, $this->authorizeTrainingActor());
         if (!$result['ok']) {
             response_json($result, 422);
         }

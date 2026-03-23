@@ -13,7 +13,6 @@
 
     let currentUser = null;
     let currentState = null;
-    let currentStep = 1;
     let docState = {};
     let boundPreviewEvents = false;
     let activePreviewUrl = null;
@@ -23,7 +22,7 @@
     document.addEventListener('DOMContentLoaded', () => {
         init().catch((error) => {
             console.error('Profile completion init failed', error);
-            showNotice(document.getElementById('formNotice'), 'Unable to load your profile right now.', true);
+            showNotices('Unable to load your profile right now.', true);
         });
     });
 
@@ -35,6 +34,10 @@
     function routeUrl(path) {
         const trimmed = String(path || '').replace(/^\/+/, '');
         return `${publicBase()}/${trimmed}`;
+    }
+
+    function isDashboardEmbedded() {
+        return Boolean(document.querySelector('.dashboard-shell') || document.getElementById('dashboard-home'));
     }
 
     async function init() {
@@ -54,9 +57,7 @@
         renderReview();
         checkStatusAndRoute();
         updateSubmitState();
-        updateNextButtons();
-        updateStepLocks();
-        updateActionBar();
+        dispatchDashboardProfileState();
     }
 
     async function fetchState() {
@@ -78,14 +79,6 @@
         return payload.data;
     }
 
-    function hydrateHeader() {
-        const name = currentUser?.name || 'Applicant';
-        const email = currentUser?.email || '--';
-        setText('profileInitial', name.trim().charAt(0).toUpperCase());
-        setText('profileUserName', name);
-        setText('profileUserEmail', email);
-    }
-
     function initDocState() {
         docState = REQUIRED_FILES.reduce((acc, doc) => {
             acc[doc.key] = {
@@ -96,6 +89,37 @@
             };
             return acc;
         }, {});
+    }
+
+    function bindEvents() {
+        document.getElementById('logoutButton')?.addEventListener('click', handleLogout);
+        document.getElementById('saveProfileChangesButton')?.addEventListener('click', () => persistProfile(false, 'profile'));
+        document.getElementById('saveDraftButton')?.addEventListener('click', () => persistProfile(false, 'application'));
+        document.getElementById('submitProfileButton')?.addEventListener('click', handleSubmitClick);
+        document.getElementById('profileBirthdate')?.addEventListener('change', handleBirthdateChange);
+
+        form.addEventListener('submit', (event) => {
+            event.preventDefault();
+        });
+
+        form.addEventListener('input', (event) => {
+            if (!event.target.matches('input, select')) {
+                return;
+            }
+
+            validateField(event.target);
+            renderReview();
+            updateSubmitState();
+        });
+
+        bindPreviewEventsOnce();
+    }
+
+    function hydrateHeader() {
+        const name = currentUser?.name || 'Applicant';
+        const email = currentUser?.email || '--';
+        setText('profilePageName', name);
+        setText('profilePageEmail', email);
     }
 
     function hydrateExistingApplication(state) {
@@ -137,33 +161,6 @@
         }
     }
 
-    function bindEvents() {
-        document.getElementById('logoutButton')?.addEventListener('click', handleLogout);
-        document.getElementById('saveDraftButton')?.addEventListener('click', () => {
-            persistProfile(false);
-        });
-        bindPreviewEventsOnce();
-
-        form.addEventListener('submit', handleSubmit);
-        document.querySelectorAll('[data-step-next]').forEach((btn) => {
-            btn.addEventListener('click', handleStepNext);
-        });
-        document.querySelectorAll('[data-step-prev]').forEach((btn) => {
-            btn.addEventListener('click', () => setStep(Number(btn.dataset.stepPrev)));
-        });
-        document.getElementById('profileBirthdate')?.addEventListener('change', handleBirthdateChange);
-
-        form.addEventListener('input', (event) => {
-            if (event.target.matches('input, select')) {
-                validateField(event.target);
-                renderReview();
-                updateSubmitState();
-                updateNextButtons();
-                updateStepLocks();
-            }
-        });
-    }
-
     function handleBirthdateChange(event) {
         const age = calculateAge(event.target.value);
         const ageInput = document.getElementById('profileAge');
@@ -191,7 +188,7 @@
 
     function validateField(field) {
         if (!field) return true;
-        const errorEl = form.querySelector(`[data-error-for="${field.id}"]`);
+        const errorEl = document.querySelector(`[data-error-for="${field.id}"]`);
         if (!errorEl) return true;
 
         if (field.required && !field.value) {
@@ -270,8 +267,6 @@
         updateDocsCounter();
         renderReview();
         updateSubmitState();
-        updateNextButtons();
-        updateStepLocks();
     }
 
     function validateFile(file) {
@@ -310,29 +305,10 @@
         updateDocsCounter();
         renderReview();
         updateSubmitState();
-        updateNextButtons();
-        updateStepLocks();
     }
 
     function renderReview() {
-        const profileList = document.getElementById('reviewProfile');
         const docsList = document.getElementById('reviewDocs');
-
-        if (profileList) {
-            profileList.innerHTML = `
-                <div><strong>Birthdate:</strong> ${getValue('profileBirthdate') || '--'}</div>
-                <div><strong>Age:</strong> ${getValue('profileAge') || '--'}</div>
-                <div><strong>Gender:</strong> ${getValue('profileGender') || '--'}</div>
-                <div><strong>Contact number:</strong> ${getValue('profileContactNumber') || '--'}</div>
-                <div><strong>Address:</strong> ${getValue('profileAddress') || '--'}</div>
-                <div><strong>Barangay:</strong> ${getValue('profileBarangay') || '--'}</div>
-                <div><strong>4Ps:</strong> ${getValue('profile4ps') || '--'}</div>
-                <div><strong>Household size:</strong> ${getValue('profileHouseholdSize') || '--'}</div>
-                <div><strong>Sector:</strong> ${getValue('profileSector') || '--'}</div>
-                <div><strong>Livelihood:</strong> ${getValue('profileLivelihood') || '--'}</div>
-                <div><strong>Business name:</strong> ${getValue('profileBusinessName') || '--'}</div>
-            `;
-        }
 
         if (docsList) {
             docsList.innerHTML = REQUIRED_FILES.map((doc) => {
@@ -365,7 +341,7 @@
         let valid = true;
         requiredIds.forEach((id) => {
             const field = document.getElementById(id);
-            const errorEl = form.querySelector(`[data-error-for="${id}"]`);
+            const errorEl = document.querySelector(`[data-error-for="${id}"]`);
             if (field?.required && !field.value) {
                 if (showErrors && errorEl) {
                     errorEl.textContent = 'This field is required.';
@@ -385,25 +361,22 @@
 
     function updateDocsCounter() {
         const uploaded = REQUIRED_FILES.filter((doc) => docState[doc.key]?.file && !docState[doc.key]?.error).length;
-        const totalEls = document.querySelectorAll('#docsTotalCountInline');
-        totalEls.forEach((el) => {
+        document.querySelectorAll('.docs-total-count').forEach((el) => {
             el.textContent = String(REQUIRED_FILES.length);
         });
         setText('docsUploadedCount', String(uploaded));
-        const badge = document.querySelector('.panel-meta .meta-badge');
-        if (badge) {
+        document.querySelectorAll('.meta-badge').forEach((badge) => {
             badge.classList.toggle('is-complete', uploaded === REQUIRED_FILES.length);
-        }
+        });
     }
 
-    async function handleSubmit(event) {
-        event.preventDefault();
+    async function handleSubmitClick() {
         if (!validateProfile(true) || !isDocsComplete()) {
-            showNotice(document.getElementById('formNotice'), 'Please complete all required fields and documents.', true);
+            showNotices('Please complete all required profile fields and uploads before submitting.', true, ['formNotice']);
             return;
         }
 
-        await persistProfile(true);
+        await persistProfile(true, 'application');
     }
 
     function buildProfilePayload() {
@@ -422,7 +395,7 @@
         };
     }
 
-    async function persistProfile(submit) {
+    async function persistProfile(submit, origin) {
         if (formLocked && submit) return;
 
         clearServerErrors();
@@ -456,7 +429,7 @@
 
             if (!response.ok || !payload.ok) {
                 applyServerErrors(payload.errors || {});
-                showNotice(document.getElementById('formNotice'), payload.errors?.general || payload.message || 'Unable to save your profile.', true);
+                showNotices(payload.errors?.general || payload.message || 'Unable to save your profile.', true, noticeTargets(origin, submit));
                 return;
             }
 
@@ -467,19 +440,35 @@
             renderReview();
             renderStatusBar(currentState.application);
             updateSubmitState();
-            updateNextButtons();
-            updateStepLocks();
-            showNotice(document.getElementById('formNotice'), payload.message || (submit ? 'Profile submitted for verification.' : 'Draft saved.'), false);
+            dispatchDashboardProfileState();
+            showNotices(payload.message || successMessage(submit, origin), false, noticeTargets(origin, submit));
 
             if (submit) {
                 lockForm();
             }
         } catch (error) {
             console.error('Profile save failed', error);
-            showNotice(document.getElementById('formNotice'), 'Unable to save your profile right now.', true);
+            showNotices('Unable to save your profile right now.', true, noticeTargets(origin, submit));
         } finally {
             toggleBusyState(false, submit);
         }
+    }
+
+    function successMessage(submit, origin) {
+        if (submit) {
+            return 'Application submitted for verification.';
+        }
+        if (origin === 'profile') {
+            return 'Profile updated.';
+        }
+        return 'Application draft saved.';
+    }
+
+    function noticeTargets(origin, submit) {
+        if (submit || origin === 'application') {
+            return ['formNotice'];
+        }
+        return ['profileFormNotice'];
     }
 
     function renderStatusBar(application) {
@@ -495,9 +484,18 @@
         }
     }
 
+    function dispatchDashboardProfileState() {
+        document.dispatchEvent(new CustomEvent('smartleap:profile-state', {
+            detail: {
+                profile: currentState?.profile || null,
+                application: currentState?.application || null
+            }
+        }));
+    }
+
     function checkStatusAndRoute() {
         const status = normalizeStatus(currentState?.application?.status || '');
-        if (status === 'approved' || status === 'active' || status === 'released') {
+        if (!isDashboardEmbedded() && (status === 'approved' || status === 'active' || status === 'released')) {
             window.location.href = routeUrl('applicant-dashboard');
             return;
         }
@@ -508,77 +506,24 @@
         }
     }
 
-    function lockForm() {
-        formLocked = true;
-        form.querySelectorAll('input, select, button').forEach((el) => {
-            if (el.id === 'logoutButton' || el.id === 'replacePreview' || el.id === 'closePreviewFooter') {
-                return;
-            }
-            el.disabled = true;
+    function setFormControlsDisabled(disabled) {
+        document.querySelectorAll('#profileCompletionForm input, #profileCompletionForm select, #saveProfileChangesButton, #saveDraftButton, #submitProfileButton, [data-doc-upload], [data-doc-preview], [data-doc-remove], [data-doc-input]').forEach((el) => {
+            el.disabled = disabled;
         });
-        renderDocs();
     }
 
-    function unlockForm() {
-        formLocked = false;
-        form.querySelectorAll('input, select, button').forEach((el) => {
-            if (el.id === 'logoutButton') return;
-            el.disabled = false;
-        });
+    function lockForm() {
+        formLocked = true;
+        setFormControlsDisabled(true);
         renderDocs();
         updateSubmitState();
     }
 
-    function setStep(step) {
-        currentStep = step;
-        document.querySelectorAll('[data-step-panel]').forEach((panel) => {
-            panel.hidden = Number(panel.dataset.stepPanel) !== step;
-        });
-        document.querySelectorAll('.step').forEach((stepEl) => {
-            stepEl.classList.toggle('is-active', Number(stepEl.dataset.step) === step);
-        });
-        renderReview();
-        updateNextButtons();
-        updateStepLocks();
-        updateActionBar();
-    }
-
-    function updateActionBar() {
-        const submitBtn = document.getElementById('submitProfileButton');
-        if (submitBtn) {
-            submitBtn.hidden = currentStep !== 3;
-        }
-    }
-
-    function updateNextButtons() {
-        const nextDocs = document.querySelector('[data-step-next="2"]');
-        const nextReview = document.querySelector('[data-step-next="3"]');
-        if (nextDocs) nextDocs.disabled = formLocked || !validateProfile(false);
-        if (nextReview) nextReview.disabled = formLocked || !isDocsComplete();
-    }
-
-    function updateStepLocks() {
-        const profileComplete = validateProfile(false);
-        const docsComplete = isDocsComplete();
-        document.querySelectorAll('.step').forEach((stepEl) => {
-            const stepNum = Number(stepEl.dataset.step);
-            const locked = (stepNum === 2 && !profileComplete) || (stepNum === 3 && !(profileComplete && docsComplete));
-            stepEl.classList.toggle('is-locked', locked);
-        });
-    }
-
-    function handleStepNext(event) {
-        const targetStep = Number(event.currentTarget.dataset.stepNext);
-        if (targetStep === 2 && !validateProfile(false)) {
-            validateProfile(true);
-            showNotice(document.getElementById('formNotice'), 'Please complete required fields to continue.', true);
-            return;
-        }
-        if (targetStep === 3 && !isDocsComplete()) {
-            showNotice(document.getElementById('formNotice'), 'Upload all required documents to continue.', true);
-            return;
-        }
-        setStep(targetStep);
+    function unlockForm() {
+        formLocked = false;
+        setFormControlsDisabled(false);
+        renderDocs();
+        updateSubmitState();
     }
 
     function bindPreviewEventsOnce() {
@@ -693,7 +638,7 @@
         };
 
         Object.entries(fieldMap).forEach(([key, id]) => {
-            const errorEl = form.querySelector(`[data-error-for="${id}"]`);
+            const errorEl = document.querySelector(`[data-error-for="${id}"]`);
             if (errorEl && errors[key]) {
                 errorEl.textContent = errors[key];
             }
@@ -710,7 +655,7 @@
     }
 
     function clearServerErrors() {
-        form.querySelectorAll('[data-error-for]').forEach((el) => {
+        document.querySelectorAll('[data-error-for]').forEach((el) => {
             if (String(el.getAttribute('data-error-for') || '').startsWith('profile')) {
                 el.textContent = '';
             }
@@ -719,15 +664,23 @@
         REQUIRED_FILES.forEach((doc) => {
             docState[doc.key] = { ...docState[doc.key], error: '' };
         });
+
+        hideNotices();
     }
 
     function toggleBusyState(isBusy, submit) {
-        const saveButton = document.getElementById('saveDraftButton');
+        const saveProfileButton = document.getElementById('saveProfileChangesButton');
+        const saveDraftButton = document.getElementById('saveDraftButton');
         const submitButton = document.getElementById('submitProfileButton');
 
-        if (saveButton) {
-            saveButton.disabled = isBusy || formLocked;
-            saveButton.textContent = isBusy && !submit ? 'Saving...' : 'Save Draft';
+        if (saveProfileButton) {
+            saveProfileButton.disabled = isBusy || formLocked;
+            saveProfileButton.textContent = isBusy && !submit ? 'Saving...' : 'Save Changes';
+        }
+
+        if (saveDraftButton) {
+            saveDraftButton.disabled = isBusy || formLocked;
+            saveDraftButton.textContent = isBusy && !submit ? 'Saving...' : 'Save Draft';
         }
 
         if (submitButton) {
@@ -758,11 +711,24 @@
         if (el) el.textContent = value;
     }
 
-    function showNotice(el, message, isError) {
-        if (!el) return;
-        el.textContent = message;
-        el.hidden = false;
-        el.classList.toggle('error', Boolean(isError));
+    function showNotices(message, isError, targets = ['profileFormNotice', 'formNotice']) {
+        targets.forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.textContent = message;
+            el.hidden = false;
+            el.classList.toggle('error', Boolean(isError));
+        });
+    }
+
+    function hideNotices() {
+        ['profileFormNotice', 'formNotice'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.hidden = true;
+            el.textContent = '';
+            el.classList.remove('error');
+        });
     }
 
     function normalizeStatus(value) {

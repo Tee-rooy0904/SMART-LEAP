@@ -147,16 +147,16 @@ input{
 .brand{
   display:flex;
   align-items:center;
-  gap:14px;
-  min-width:240px;
+  gap:0;
+  min-width:auto;
 }
 
 .brand-text{
   display:flex;
   flex-direction:column;
   justify-content:center;
-  gap:3px;
-  padding-block:2px;
+  gap:0;
+  padding-block:0;
 }
 
 .brand-logo{
@@ -171,16 +171,19 @@ input{
 }
 
 .brand-logo img{
-  width:68px;
-  height:68px;
+  width:60px;
+  height:60px;
   object-fit:contain;
 }
 
 .brand-name{
-  font-size:22px;
-  font-weight:700;
-  line-height:1.05;
-  letter-spacing:.01em;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  font-size:28px;
+  font-weight:800;
+  line-height:1;
+  letter-spacing:.015em;
   color:var(--blue-ink);
 }
 
@@ -190,14 +193,6 @@ input{
 
 .brand-name-leap{
   color:#66b97a;
-}
-
-.brand-sub{
-  font-size:13px;
-  color:#64748b;
-  font-weight:600;
-  line-height:1.3;
-  max-width:210px;
 }
 
 .header-actions{

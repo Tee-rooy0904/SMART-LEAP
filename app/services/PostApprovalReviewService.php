@@ -39,7 +39,7 @@ class PostApprovalReviewService
         return $this->mapTask($task, true);
     }
 
-    public function reviewTask(int $userId, int $taskId, string $decision, string $remarks, array $staffForm): array
+    public function reviewTask(int $userId, int $taskId, string $decision, string $remarks, string $applicantVisibleRemark, array $staffForm): array
     {
         $reviewer = $this->resolveReviewer($userId);
         if ($reviewer === null) {
@@ -66,8 +66,9 @@ class PostApprovalReviewService
         }
 
         $remarks = trim($remarks);
-        if (in_array($status, [POST_APPROVAL_STATUS_REJECTED, POST_APPROVAL_STATUS_NEEDS_CORRECTION], true) && $remarks === '') {
-            return ['ok' => false, 'errors' => ['remarks' => 'Reviewer remarks are required for rejection or correction.']];
+        $applicantVisibleRemark = trim($applicantVisibleRemark);
+        if (in_array($status, [POST_APPROVAL_STATUS_REJECTED, POST_APPROVAL_STATUS_NEEDS_CORRECTION], true) && $applicantVisibleRemark === '') {
+            return ['ok' => false, 'errors' => ['applicantVisibleRemark' => 'Applicant-visible remark is required for rejection or correction.']];
         }
 
         $mergedPayload = $this->mergeStaffPayload($task, $staffValidation['payload']);
@@ -119,7 +120,7 @@ class PostApprovalReviewService
             return ['ok' => false, 'errors' => ['general' => 'Unable to save the review right now.']];
         }
 
-        $this->notifyApplicant($task, $status, $remarks);
+        $this->notifyApplicant($task, $status, $applicantVisibleRemark);
         (new AuditLogService())->record(
             $userId,
             'post_approval.reviewed',

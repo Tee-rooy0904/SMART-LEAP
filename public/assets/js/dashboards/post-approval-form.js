@@ -37,6 +37,8 @@
     function bindStaticEvents() {
         document.getElementById('logoutButton')?.addEventListener('click', handleLogout);
         document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebarMenu);
+        document.getElementById('sidebarClose')?.addEventListener('click', closeSidebarMenuOnMobile);
+        document.getElementById('sidebarOverlay')?.addEventListener('click', closeSidebarMenuOnMobile);
         document.getElementById('postApprovalSaveButton')?.addEventListener('click', handleSave);
         document.getElementById('postApprovalForm')?.addEventListener('submit', handleSubmit);
         document.getElementById('postApprovalFormSections')?.addEventListener('click', handleRowAction);
@@ -44,6 +46,7 @@
         document.getElementById('postApprovalFormSections')?.addEventListener('change', handleApplicantUploadChange);
         document.getElementById('postApprovalFormSections')?.addEventListener('change', handleMungkahingMobileSectorChange);
         window.addEventListener('resize', handleWindowResize);
+        document.addEventListener('keydown', handleGlobalKeydown);
         syncSidebarMenuState();
     }
 
@@ -86,14 +89,14 @@
         renderIdentity();
 
         if (!state.taskCode) {
-            renderFatalState('No post-approval task was selected.');
+            renderFatalState('No application form was selected.');
             return;
         }
 
         try {
             const payload = await fetchJson(`api/post-approval/task?code=${encodeURIComponent(state.taskCode)}`);
             if (!payload.ok) {
-                throw new Error(payload.message || 'Unable to load this post-approval form.');
+                throw new Error(payload.message || 'Unable to load this application form.');
             }
 
             state.task = payload.task || null;
@@ -101,7 +104,7 @@
             state.formErrors = {};
             renderTask();
         } catch (error) {
-            renderFatalState(error.message || 'Unable to load this post-approval form.');
+            renderFatalState(error.message || 'Unable to load this application form.');
         }
     }
 
@@ -201,7 +204,7 @@
         const submitButton = document.getElementById('postApprovalSubmitButton');
 
         if (!task) {
-            renderFatalState('This post-approval task is unavailable.');
+            renderFatalState('This application form is unavailable.');
             return;
         }
 
@@ -211,6 +214,7 @@
         setText('formPageCompletion', `${task.completion || 0}%`);
         setText('formPageReview', buildReviewState(task));
         document.body.dataset.renderMode = state.renderMode;
+        renderFormGuidance(task);
 
         title && (title.textContent = task.title);
         subtitle && (subtitle.textContent = task.summary || task.helpText || '');
@@ -271,6 +275,14 @@
         return state.renderMode === 'desktop'
             ? renderValidationDesktop(payload)
             : renderValidationMobile(payload);
+    }
+
+    function renderFormGuidance(task) {
+        const guidance = buildFormGuidance(task);
+        setText('formGuidanceSummary', guidance.summary);
+        setText('formGuidanceStep', guidance.step);
+        setText('formGuidanceTime', guidance.time);
+        setText('formGuidancePrep', guidance.prepare);
     }
 
     function renderAvailmentMobile(payload) {
@@ -448,111 +460,109 @@
             <div class="paper-document paper-document--business-plan">
                 ${renderBusinessPlanPaperPage(1, `
                     <header class="bp-title-page">
-                        <h2>PLANO SA NEGOSYO</h2>
-                        <div class="bp-title-subhead">EHEKUTIBONG SUMARYO (PAGLALARAWAN SA NEGOSYO)</div>
+                        <h2>BUSINESS PLAN</h2>
+                        <div class="bp-title-subhead">EXECUTIVE SUMMARY (BUSINESS DESCRIPTION)</div>
                     </header>
-                    ${renderBusinessPlanPromptBlock('1.', 'Mubo nga Deskripsyon sa Negosyo/Proyekto', 'Mubo nga Deskripsyon sa Proyekto (Unsa ang kinaiyahan sa proyekto?)', `
-                        ${renderBusinessPlanInlineField('Ngalan sa negosyo / proyekto', 'overview.businessName', overview.businessName || '', 'text', 'bp-line--long')}
+                    ${renderBusinessPlanPromptBlock('1.', 'Brief Description of the Business/Project', 'Brief Description of the Project (What is the nature of the project?)', `
+                        ${renderBusinessPlanHiddenField('overview.businessName', overview.businessName || '')}
                         ${renderBusinessPlanNarrativeField('executiveSummary', data.executiveSummary || '', 8)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.', 'Mubo nga Profile sa Entrepreneur', 'Mubo nga Profile sa Entrepreneur (Unsa ang mga kahanas ug kwalipikasyon sa negosyante?)', `
-                        <div class="bp-meta-grid">
-                            ${renderBusinessPlanInlineField('Ngalan sa entrepreneur', 'overview.ownerName', overview.ownerName || '', 'text')}
-                            ${renderBusinessPlanInlineField('Contact number', 'overview.contactNumber', overview.contactNumber || '', 'text')}
-                            ${renderBusinessPlanInlineField('Business address', 'overview.businessAddress', overview.businessAddress || '', 'text', 'bp-line--long bp-inline--span2')}
-                        </div>
+                    ${renderBusinessPlanPromptBlock('2.', 'Brief Profile of the Entrepreneur', 'Brief Profile of the Entrepreneur (What are the entrepreneur’s skills and qualifications?)', `
+                        ${renderBusinessPlanHiddenField('overview.ownerName', overview.ownerName || '')}
+                        ${renderBusinessPlanHiddenField('overview.contactNumber', overview.contactNumber || '')}
+                        ${renderBusinessPlanHiddenField('overview.businessAddress', overview.businessAddress || '')}
                         ${renderBusinessPlanNarrativeField('overview.businessGoal', overview.businessGoal || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('3.', 'Mga Kontribusyon sa Proyekto sa Ekonomiya', 'Mga Kontribusyon sa Proyekto sa Ekonomiya (Unsa ang mga kontribusyon sa proyekto sa lokal ug nasudnong ekonomiya?)', `
+                    ${renderBusinessPlanPromptBlock('3.', 'Contributions of the Project to the Economy', 'Contributions of the Project to the Economy (What are the contributions of the project to the local and national economy?)', `
                         ${renderBusinessPlanNarrativeField('riskManagement.mitigation', risks.mitigation || '', 7)}
                     `)}
-                    <div class="bp-section-heading">Bahin 1: PLANO SA PAGPAMALIGYA</div>
-                    ${renderBusinessPlanPromptBlock('1.1', 'Deskripsyon sa Produkto', 'Deskripsyon sa Produkto (Unsa ang produkto?)', `
+                    <div class="bp-section-heading">Part 1: Marketing Plan</div>
+                    ${renderBusinessPlanPromptBlock('1.1', 'Description of the Product', 'Description of the Product (What is the product?)', `
                         ${renderBusinessPlanProductsRows(products)}
                     `, 'is-product-block')}
                 `)}
                 ${renderBusinessPlanPaperPage(2, `
-                    ${renderBusinessPlanPromptBlock('1.2', 'Pagtandi sa Produkto sa mga Kakompetensya Niini', 'Pagtandi sa Produkto sa mga Kakompetensya Niini (Giunsa kini itandi sa kalidad ug presyo sa mga kakompetensya niini?)', `
+                    ${renderBusinessPlanPromptBlock('1.2', 'Comparison of the Product with its Competitors', 'Comparison of the Product with its Competitors (How does it compare in quality and price with its competitors?)', `
                         ${renderBusinessPlanNarrativeField('marketStrategy.competitors', market.competitors || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.3', 'Lokasyon', 'Lokasyon (Asa mahimutang ang negosyo?)', `
+                    ${renderBusinessPlanPromptBlock('1.3', 'Location', 'Location (Where will the business be located?)', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.businessLocation', operations.businessLocation || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.4', 'Lugar sa Merkado', 'Lugar sa Merkado (Unsang mga geografikanhong lugar ang masakop sa proyekto?)', `
+                    ${renderBusinessPlanPromptBlock('1.4', 'Market Area', 'Market Area (What geographic areas will the project cover?)', `
                         ${renderBusinessPlanNarrativeField('marketStrategy.salesChannel', market.salesChannel || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.5', 'Panguna nga mga Kustomer', 'Panguna nga mga Kustomer (Sulod sa lugar sa merkado, kang kinsa ibaligya sa negosyo ang mga produkto niini?)', `
+                    ${renderBusinessPlanPromptBlock('1.5', 'Primary Customers', 'Primary Customers (Within the market area, to whom will the business sell its products?)', `
                         ${renderBusinessPlanNarrativeField('marketStrategy.customerProfile', market.customerProfile || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.6', 'Kinatibuk-ang Demand', 'Kinatibuk-ang Demand (Posible ba nga mabanabana kung unsa kadaghan ang produkto karon gibaligya?)', `
+                    ${renderBusinessPlanPromptBlock('1.6', 'Total Demand', 'Total Demand (Can it be estimated how much of the product is currently being sold?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.monthlySalesProjection', financial.monthlySalesProjection || '', 4)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.7', 'Presyo sa Pagbaligya', 'Presyo sa Pagbaligya (Unsa ang presyo sa pagbaligya sa produkto?)', `
+                    ${renderBusinessPlanPromptBlock('1.7', 'Selling Price', 'Selling Price (What is the selling price of the product?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.projectedNetIncome', financial.projectedNetIncome || '', 4)}
                     `)}
                 `)}
                 ${renderBusinessPlanPaperPage(3, `
-                    ${renderBusinessPlanPromptBlock('1.8', 'Mga Lakang sa Promosyon', 'Mga Lakang sa Promosyon (Unsang mga lakang sa promosyon ang gamiton sa pagbaligya sa produkto?)', `
+                    ${renderBusinessPlanPromptBlock('1.8', 'Promotional Measures', 'Promotional Measures (What promotional measures will be used in selling the product?)', `
                         ${renderBusinessPlanNarrativeField('marketStrategy.marketingApproach', market.marketingApproach || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.9', 'Diskarte sa Marketing', 'Diskarte sa Marketing (Unsa nga estratehiya sa pagpanaligiya ang gikinahanglan aron masiguro nga ang mga panagna sa pagbaligya nakab-ot?)', `
+                    ${renderBusinessPlanPromptBlock('1.9', 'Marketing Strategy', 'Marketing Strategy (What marketing strategy is needed to ensure that the sales forecasts are achieved?)', `
                         ${renderBusinessPlanNarrativeField('marketStrategy.salesChannel', market.salesChannel || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('1.10', 'Badyet sa Marketing', 'Badyet sa Marketing (Unsa kadaghan ang imong kinahanglan aron ma-promote ug maapod-apod ang imong produkto?)', `
+                    ${renderBusinessPlanPromptBlock('1.10', 'Marketing Budget', 'Marketing Budget (How much do you need to promote and distribute your product?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', 4)}
                     `)}
-                    <div class="bp-section-heading">Bahin 2: PLANO SA PRODUKSYON</div>
-                    ${renderBusinessPlanPromptBlock('2.1', 'Proseso sa Produksyon/Serbisyo', 'Proseso sa Produksyon/Serbisyo (Unsa ang proseso sa produksyon o serbisyo?)', `
+                    <div class="bp-section-heading">Part 2: Production Plan</div>
+                    ${renderBusinessPlanPromptBlock('2.1', 'Production / Service Process', 'Production / Service Process (What is the production or service process?)', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.productionProcess', operations.productionProcess || '', 7)}
                     `)}
                 `)}
                 ${renderBusinessPlanPaperPage(4, `
-                    ${renderBusinessPlanPromptBlock('2.2', 'Fixed Capital', 'Unsa nga mga bilding ug makinarya (fixed assets) ang gikinahanglan ug unsa ang ilang gasto?', `
+                    ${renderBusinessPlanPromptBlock('2.2', 'Fixed Capital', 'What buildings and machinery (fixed assets) are needed and what are their costs?', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.equipmentNeeded', operations.equipmentNeeded || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.3', 'Kinabuhi sa Fixed Capital', 'Kinabuhi sa Fixed Capital (Unsa ang mapuslanon nga kinabuhi sa bilding ug makinarya?)', `
+                    ${renderBusinessPlanPromptBlock('2.3', 'Life of Fixed Capital', 'Life of Fixed Capital (What is the useful life of the building and machinery?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.breakEvenNotes', financial.breakEvenNotes || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.4', 'Mga Tinubdan sa Kagamitan', 'Mga Tinubdan sa Kagamitan (Kanus-a ug asa makuha ang makinarya?)', `
+                    ${renderBusinessPlanPromptBlock('2.4', 'Sources of Equipment', 'Sources of Equipment (When and where will the machinery be obtained?)', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.equipmentNeeded', operations.equipmentNeeded || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.5', 'Giplano nga Kapasidad', 'Giplano nga Kapasidad (Pila ka kapasidad ang gamiton?)', `
+                    ${renderBusinessPlanPromptBlock('2.5', 'Planned Capacity', 'Planned Capacity (How much capacity will be used?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.breakEvenNotes', financial.breakEvenNotes || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.6', 'Umaabot nga Kapasidad', 'Umaabot nga Kapasidad (Unsa ang mga plano sa paggamit sa ekstrang kapasidad?)', `
+                    ${renderBusinessPlanPromptBlock('2.6', 'Future Capacity', 'Future Capacity (What are the plans for using extra capacity?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.breakEvenNotes', financial.breakEvenNotes || '', 6)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.7', 'Raw Materials', 'Pila ka Raw materials ang gikinahanglan?', `
+                    ${renderBusinessPlanPromptBlock('2.7', 'Raw Materials', 'How many raw materials are needed?', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.productionProcess', operations.productionProcess || '', 5)}
                     `)}
                 `)}
                 ${renderBusinessPlanPaperPage(5, `
-                    ${renderBusinessPlanPromptBlock('2.8', 'Gasto sa Raw Materials', 'Gasto sa Raw Materials (Pila ang gasto sa raw nga materyales?)', `
+                    ${renderBusinessPlanPromptBlock('2.8', 'Cost of Raw Materials', 'Cost of Raw Materials (What is the cost of the raw materials?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.projectedNetIncome', financial.projectedNetIncome || '', 4)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.9', 'Anaa sa Raw Materials', 'Anaa sa Raw Materials (Unsa ang mga tinubdan sa Raw Materials? Anaa ba sila tibuok tuig?)', `
+                    ${renderBusinessPlanPromptBlock('2.9', 'Availability of Raw Materials', 'Availability of Raw Materials (What are the sources of raw materials? Are they available the whole year?)', `
                         ${renderBusinessPlanNarrativeField('riskManagement.risks', risks.risks || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.10', 'Pagtrabaho', 'Pagtrabaho (Pila ka direkta ug dili direkta nga trabaho ang gikinahanglan ug unsa nga mga kahanas kinahanglanon ba nila?)', `
+                    ${renderBusinessPlanPromptBlock('2.10', 'Labor', 'Labor (How many direct and indirect jobs are required and what skills are needed?)', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.staffingPlan', operations.staffingPlan || '', 7)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.11', 'Gasto sa Pagtrabaho', 'Gasto sa Pagtrabaho (Unsa ang gasto sa pagtrabaho?)', `
+                    ${renderBusinessPlanPromptBlock('2.11', 'Cost of Labor', 'Cost of Labor (What is the cost of labor?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', 4)}
                     `)}
-                    ${renderBusinessPlanPromptBlock('2.12', 'Anaa sa Trabaho', 'Anaa sa Trabaho (Anaa ba ang mga trabahante sa tibuok tuig? Kung dili, unsa ang epekto niini naa sa production?)', `
+                    ${renderBusinessPlanPromptBlock('2.12', 'Availability of Labor', 'Availability of Labor (Are the workers available the whole year? If not, what is the effect on production?)', `
                         ${renderBusinessPlanNarrativeField('operationsPlan.staffingPlan', operations.staffingPlan || '', 6)}
                     `)}
-                    <div class="bp-section-heading">Bahin 3: PLANO SA ORGANISASYON UG PAGDUMALA</div>
-                    ${renderBusinessPlanPromptBlock('3.1', 'Pre-operating nga mga Kalihokan', 'Pre-operating nga mga Kalihokan (Unsang mga pre-operating nga mga kalihokan ang kinahanglan buhaton sa dili pa makalihok ang negosyo?)', `
+                    <div class="bp-section-heading">Part 3: Organization and Management Plan</div>
+                    ${renderBusinessPlanPromptBlock('3.1', 'Pre-operating Activities', 'Pre-operating Activities (What pre-operating activities need to be done before the business starts operating?)', `
                         ${renderBusinessPlanScheduleRows(scheduleRows)}
                     `)}
                 `)}
                 ${renderBusinessPlanPaperPage(6, `
-                    ${renderBusinessPlanPromptBlock('3.2', 'Pre-operating nga mga Gasto', 'Pre-operating nga mga Gasto (Unsa nga mga galastuhan sa wala pa ang operasyon ang mahitabo?)', `
+                    ${renderBusinessPlanPromptBlock('3.2', 'Pre-operating Costs', 'Pre-operating Costs (What expenses will be incurred before operations begin?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', 5)}
                     `)}
-                    <div class="bp-section-heading">Bahin 4: PLANO SA PINANSIYAL</div>
-                    ${renderBusinessPlanPromptBlock('4.1', 'Gasto sa Proyekto', 'Gasto sa Proyekto (Unsa ang kinatibuk-ang kinahanglanon sa kapital?)', `
+                    <div class="bp-section-heading">Part 4: Financial Plan</div>
+                    ${renderBusinessPlanPromptBlock('4.1', 'Project Cost', 'Project Cost (What is the total capital requirement?)', `
                         ${renderBusinessPlanNarrativeField('financialPlan.startupCapital', financial.startupCapital || '', 5)}
                     `)}
                     <section class="bp-signoff">
@@ -642,57 +652,21 @@
     }
 
     function renderBusinessPlanProductsRows(rows) {
+        const firstRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : {};
         return `
-            <div class="bp-product-list">
-                <div class="bp-required-note" data-error-group="productsServices.rows">Kinahanglan adunay labing menos usa ka produkto o serbisyo nga adunay tinuod nga sulod aron ma-submit ang Business Plan.</div>
-                ${rows.map((row, index) => `
-                    <div class="bp-product-card">
-                        <div class="bp-product-card__head">
-                            <span class="bp-product-card__title">Product ${index + 1}</span>
-                            <button type="button" class="paper-utility-btn paper-utility-btn--remove post-approval-row-action" data-row-action="remove-bp-product" data-row-index="${index}">Remove</button>
-                        </div>
-                        <div class="bp-product-grid">
-                            ${renderBusinessPlanInlineField('Ngalan', `productsServices.rows.${index}.name`, row.name || '', 'text')}
-                            ${renderBusinessPlanInlineField('Presyo sa pagbaligya', `productsServices.rows.${index}.price`, row.price || '', 'number', 'bp-line--short')}
-                            ${renderBusinessPlanNarrativeField(`productsServices.rows.${index}.description`, row.description || '', 5)}
-                            ${renderBusinessPlanNarrativeField(`productsServices.rows.${index}.targetMarket`, row.targetMarket || '', 4)}
-                        </div>
-                    </div>
-                `).join('')}
-                <div class="paper-table-controls--utility">
-                    <button type="button" class="paper-utility-btn" data-row-action="add-bp-product">Idugang ang entry sa produkto</button>
-                </div>
+            <div class="bp-essay-wrap" data-error-group="productsServices.rows">
+                <div class="bp-required-note">At least one product or service description with real content is required to submit the Business Plan.</div>
+                ${renderBusinessPlanNarrativeField('productsServices.rows.0.description', firstRow.description || '', 8)}
             </div>
         `;
     }
 
     function renderBusinessPlanScheduleRows(rows) {
-        const safeRows = Array.isArray(rows) && rows.length > 0 ? rows : [{ activity: '', targetDate: '', responsiblePerson: '' }];
+        const firstRow = Array.isArray(rows) && rows.length > 0 ? rows[0] : {};
         return `
-            <div class="bp-schedule-wrap" data-error-group="implementationSchedule.rows">
-                <div class="bp-required-note">Kinahanglan adunay labing menos usa ka iskedyul nga adunay tinuod nga sulod aron ma-submit ang Business Plan.</div>
-                <table class="bp-table">
-                    <thead>
-                        <tr>
-                            <th>Kalihokan</th>
-                            <th>Target nga Petsa</th>
-                            <th>Responsableng Tawo</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${safeRows.map((row, index) => `
-                            <tr>
-                                <td><input class="bp-table__input" type="text" name="implementationSchedule.rows.${index}.activity" value="${escapeAttribute(row.activity || '')}"></td>
-                                <td><input class="bp-table__input" type="date" name="implementationSchedule.rows.${index}.targetDate" value="${escapeAttribute(row.targetDate || '')}"></td>
-                                <td><input class="bp-table__input" type="text" name="implementationSchedule.rows.${index}.responsiblePerson" value="${escapeAttribute(row.responsiblePerson || '')}"></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-                <div class="paper-table-controls--utility">
-                    <button type="button" class="paper-utility-btn" data-row-action="add-bp-schedule">Idugang ang kalihokan</button>
-                    ${safeRows.length > 1 ? `<button type="button" class="paper-utility-btn paper-utility-btn--remove post-approval-row-action" data-row-action="remove-bp-schedule" data-row-index="${safeRows.length - 1}">Tangtanga ang ulahing kalihokan</button>` : ''}
-                </div>
+            <div class="bp-essay-wrap" data-error-group="implementationSchedule.rows">
+                <div class="bp-required-note">At least one pre-operating activity with real content is required to submit the Business Plan.</div>
+                ${renderBusinessPlanNarrativeField('implementationSchedule.rows.0.activity', firstRow.activity || '', 7)}
             </div>
         `;
     }
@@ -722,7 +696,7 @@
                 <div class="bp-signature-slot ${fileUrl ? 'has-file' : ''}">
                     ${fileUrl
                         ? `<a class="upload-link" href="${escapeAttribute(fileUrl)}" target="_blank" rel="noopener">${escapeHtml(fileName || 'Tan-awa ang na-upload nga pirma')}</a>`
-                        : '<span>Alang sa upload sa post-approval review</span>'}
+                        : '<span>Alang sa upload sa application review</span>'}
                 </div>
             </div>
         `;
@@ -741,62 +715,80 @@
         return `
             <section class="post-approval-section">
                 <div class="post-approval-section__header">
-                    <h4>Plano sa Negosyo</h4>
-                    <p>Mobile nga bersyon sa paper business plan gamit ang parehas nga nasave nga datos.</p>
+                    <h4>Business Plan</h4>
+                    <p>Mobile version of the paper business plan using the same saved data.</p>
                 </div>
                 <div class="post-approval-fields">
-                    ${renderField('Ngalan sa negosyo / proyekto', 'overview.businessName', overview.businessName || '', 'text', true)}
-                    ${renderField('Ngalan sa entrepreneur', 'overview.ownerName', overview.ownerName || '', 'text')}
-                    ${renderField('Contact number', 'overview.contactNumber', overview.contactNumber || '', 'text')}
-                    ${renderField('Business address', 'overview.businessAddress', overview.businessAddress || '', 'text', true)}
-                    ${renderTextarea('1. Mubo nga Deskripsyon sa Negosyo/Proyekto', 'executiveSummary', data.executiveSummary || '', true, 'Mubo nga Deskripsyon sa Proyekto (Unsa ang kinaiyahan sa proyekto?)')}
-                    ${renderTextarea('2. Mubo nga Profile sa Entrepreneur', 'overview.businessGoal', overview.businessGoal || '', true, 'Mubo nga Profile sa Entrepreneur (Unsa ang mga kahanas ug kwalipikasyon sa negosyante?)')}
-                    ${renderTextarea('3. Mga Kontribusyon sa Proyekto sa Ekonomiya', 'riskManagement.mitigation', risks.mitigation || '', true, 'Mga Kontribusyon sa Proyekto sa Ekonomiya')}
+                    ${renderBusinessPlanHiddenField('overview.businessName', overview.businessName || '')}
+                    ${renderBusinessPlanHiddenField('overview.ownerName', overview.ownerName || '')}
+                    ${renderBusinessPlanHiddenField('overview.contactNumber', overview.contactNumber || '')}
+                    ${renderBusinessPlanHiddenField('overview.businessAddress', overview.businessAddress || '')}
+                    ${renderTextarea('1. Brief Description of the Business/Project', 'executiveSummary', data.executiveSummary || '', true, 'Brief Description of the Project (What is the nature of the project?)')}
+                    ${renderTextarea('2. Brief Profile of the Entrepreneur', 'overview.businessGoal', overview.businessGoal || '', true, 'Brief Profile of the Entrepreneur (What are the entrepreneur’s skills and qualifications?)')}
+                    ${renderTextarea('3. Contributions of the Project to the Economy', 'riskManagement.mitigation', risks.mitigation || '', true, 'Contributions of the Project to the Economy')}
                 </div>
             </section>
-            ${renderBusinessPlanMobileRowsSection('1.1 Deskripsyon sa Produkto', 'Deskripsyon sa Produkto (Unsa ang produkto?)', products, 'add-bp-product', renderBusinessPlanProductRow)}
-            <section class="post-approval-section">
-                <div class="post-approval-section__header"><h4>Bahin 1: Plano sa Pagpamligya</h4><p>Sunod sa paper prompt order, gipahapsay para sa mobile.</p></div>
+            <section class="post-approval-section post-approval-section--mungkahing" data-error-group="productsServices.rows">
+                <div class="post-approval-section__header">
+                    <h4>1.1 Description of the Product</h4>
+                    <p>Description of the Product (What is the product?)</p>
+                    <small class="post-approval-repeatable__hint">At least one product or service description with real content is required.</small>
+                </div>
                 <div class="post-approval-fields">
-                    ${renderTextarea('1.2 Pagtandi sa Produkto sa mga Kakompetensya Niini', 'marketStrategy.competitors', market.competitors || '', true)}
-                    ${renderTextarea('1.3 Lokasyon', 'operationsPlan.businessLocation', operations.businessLocation || '', true)}
-                    ${renderTextarea('1.4 Lugar sa Merkado', 'marketStrategy.salesChannel', market.salesChannel || '', true)}
-                    ${renderTextarea('1.5 Panguna nga mga Kustomer', 'marketStrategy.customerProfile', market.customerProfile || '', true)}
-                    ${renderTextarea('1.6 Kinatibuk-ang Demand', 'financialPlan.monthlySalesProjection', financial.monthlySalesProjection || '', true)}
-                    ${renderTextarea('1.7 Presyo sa Pagbaligya', 'financialPlan.projectedNetIncome', financial.projectedNetIncome || '', true)}
-                    ${renderTextarea('1.8 Mga Lakang sa Promosyon', 'marketStrategy.marketingApproach', market.marketingApproach || '', true)}
-                    ${renderTextarea('1.9 Diskarte sa Marketing', 'marketStrategy.salesChannel', market.salesChannel || '', true)}
-                    ${renderTextarea('1.10 Badyet sa Marketing', 'financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', true)}
+                    ${renderTextarea('1.1 Description of the Product', 'productsServices.rows.0.description', products[0]?.description || '', true)}
                 </div>
             </section>
             <section class="post-approval-section">
-                <div class="post-approval-section__header"><h4>Bahin 2: Plano sa Produksyon</h4><p>Mga prompt para sa produksyon, kapasidad, materyales, ug labor.</p></div>
+                <div class="post-approval-section__header"><h4>Part 1: Marketing Plan</h4><p>Reordered for mobile while keeping the paper prompt sequence.</p></div>
                 <div class="post-approval-fields">
-                    ${renderTextarea('2.1 Proseso sa Produksyon/Serbisyo', 'operationsPlan.productionProcess', operations.productionProcess || '', true)}
+                    ${renderTextarea('1.2 Comparison of the Product with its Competitors', 'marketStrategy.competitors', market.competitors || '', true)}
+                    ${renderTextarea('1.3 Location', 'operationsPlan.businessLocation', operations.businessLocation || '', true)}
+                    ${renderTextarea('1.4 Market Area', 'marketStrategy.salesChannel', market.salesChannel || '', true)}
+                    ${renderTextarea('1.5 Primary Customers', 'marketStrategy.customerProfile', market.customerProfile || '', true)}
+                    ${renderTextarea('1.6 Total Demand', 'financialPlan.monthlySalesProjection', financial.monthlySalesProjection || '', true)}
+                    ${renderTextarea('1.7 Selling Price', 'financialPlan.projectedNetIncome', financial.projectedNetIncome || '', true)}
+                    ${renderTextarea('1.8 Promotional Measures', 'marketStrategy.marketingApproach', market.marketingApproach || '', true)}
+                    ${renderTextarea('1.9 Marketing Strategy', 'marketStrategy.salesChannel', market.salesChannel || '', true)}
+                    ${renderTextarea('1.10 Marketing Budget', 'financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', true)}
+                </div>
+            </section>
+            <section class="post-approval-section">
+                <div class="post-approval-section__header"><h4>Part 2: Production Plan</h4><p>Prompts covering production, capacity, materials, and labor.</p></div>
+                <div class="post-approval-fields">
+                    ${renderTextarea('2.1 Production / Service Process', 'operationsPlan.productionProcess', operations.productionProcess || '', true)}
                     ${renderTextarea('2.2 Fixed Capital', 'operationsPlan.equipmentNeeded', operations.equipmentNeeded || '', true)}
-                    ${renderTextarea('2.3 Kinabuhi sa Fixed Capital', 'financialPlan.breakEvenNotes', financial.breakEvenNotes || '', true)}
-                    ${renderTextarea('2.4 Mga Tinubdan sa Kagamitan', 'operationsPlan.equipmentNeeded', operations.equipmentNeeded || '', true)}
-                    ${renderTextarea('2.5 Giplano nga Kapasidad', 'financialPlan.breakEvenNotes', financial.breakEvenNotes || '', true)}
-                    ${renderTextarea('2.6 Umaabot nga Kapasidad', 'financialPlan.breakEvenNotes', financial.breakEvenNotes || '', true)}
+                    ${renderTextarea('2.3 Life of Fixed Capital', 'financialPlan.breakEvenNotes', financial.breakEvenNotes || '', true)}
+                    ${renderTextarea('2.4 Sources of Equipment', 'operationsPlan.equipmentNeeded', operations.equipmentNeeded || '', true)}
+                    ${renderTextarea('2.5 Planned Capacity', 'financialPlan.breakEvenNotes', financial.breakEvenNotes || '', true)}
+                    ${renderTextarea('2.6 Future Capacity', 'financialPlan.breakEvenNotes', financial.breakEvenNotes || '', true)}
                     ${renderTextarea('2.7 Raw Materials', 'operationsPlan.productionProcess', operations.productionProcess || '', true)}
-                    ${renderTextarea('2.8 Gasto sa Raw Materials', 'financialPlan.projectedNetIncome', financial.projectedNetIncome || '', true)}
-                    ${renderTextarea('2.9 Anaa sa Raw Materials', 'riskManagement.risks', risks.risks || '', true)}
-                    ${renderTextarea('2.10 Pagtrabaho', 'operationsPlan.staffingPlan', operations.staffingPlan || '', true)}
-                    ${renderTextarea('2.11 Gasto sa Pagtrabaho', 'financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', true)}
-                    ${renderTextarea('2.12 Anaa sa Trabaho', 'operationsPlan.staffingPlan', operations.staffingPlan || '', true)}
+                    ${renderTextarea('2.8 Cost of Raw Materials', 'financialPlan.projectedNetIncome', financial.projectedNetIncome || '', true)}
+                    ${renderTextarea('2.9 Availability of Raw Materials', 'riskManagement.risks', risks.risks || '', true)}
+                    ${renderTextarea('2.10 Labor', 'operationsPlan.staffingPlan', operations.staffingPlan || '', true)}
+                    ${renderTextarea('2.11 Cost of Labor', 'financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', true)}
+                    ${renderTextarea('2.12 Availability of Labor', 'operationsPlan.staffingPlan', operations.staffingPlan || '', true)}
                 </div>
             </section>
-            ${renderBusinessPlanMobileRowsSection('3.1 Pre-operating nga mga Kalihokan', 'Unsang mga pre-operating nga mga kalihokan ang kinahanglan buhaton sa dili pa makalihok ang negosyo?', scheduleRows, 'add-bp-schedule', renderBusinessPlanScheduleRow)}
-            <section class="post-approval-section">
-                <div class="post-approval-section__header"><h4>Bahin 3: Plano sa Organisasyon ug Pagdumala</h4><p>Pre-operating activities and expenses.</p></div>
+            <section class="post-approval-section post-approval-section--mungkahing" data-error-group="implementationSchedule.rows">
+                <div class="post-approval-section__header">
+                    <h4>3.1 Pre-operating Activities</h4>
+                    <p>What pre-operating activities are required before the business can operate?</p>
+                    <small class="post-approval-repeatable__hint">At least one pre-operating activity with real content is required.</small>
+                </div>
                 <div class="post-approval-fields">
-                    ${renderTextarea('3.2 Pre-operating nga mga Gasto', 'financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', true)}
+                    ${renderTextarea('3.1 Pre-operating Activities', 'implementationSchedule.rows.0.activity', scheduleRows[0]?.activity || '', true)}
                 </div>
             </section>
             <section class="post-approval-section">
-                <div class="post-approval-section__header"><h4>Bahin 4: Plano sa Pinansiyal</h4><p>Katapusang kinahanglanon sa kapital ug pirma sa aplikante.</p></div>
+                <div class="post-approval-section__header"><h4>Part 3: Organization and Management Plan</h4><p>Pre-operating activities and expenses.</p></div>
                 <div class="post-approval-fields">
-                    ${renderTextarea('4.1 Gasto sa Proyekto', 'financialPlan.startupCapital', financial.startupCapital || '', true)}
+                    ${renderTextarea('3.2 Pre-operating Costs', 'financialPlan.monthlyExpenseProjection', financial.monthlyExpenseProjection || '', true)}
+                </div>
+            </section>
+            <section class="post-approval-section">
+                <div class="post-approval-section__header"><h4>Part 4: Financial Plan</h4><p>Final capital requirement and applicant signature.</p></div>
+                <div class="post-approval-fields">
+                    ${renderTextarea('4.1 Project Cost', 'financialPlan.startupCapital', financial.startupCapital || '', true)}
                     ${renderField('Ngalan sa mipirma', 'applicantSignature.signedName', data.applicantSignature?.signedName || '', 'text')}
                     ${renderField('Petsa sa pirma', 'applicantSignature.signedDate', data.applicantSignature?.signedDate || '', 'date')}
                     ${renderUploadField('I-upload ang pirma sa aplikante', 'applicantSignature.signatureUpload', data.applicantSignature?.signatureUpload || null)}
@@ -810,8 +802,8 @@
             ? 'productsServices.rows'
             : (addAction === 'add-bp-schedule' ? 'implementationSchedule.rows' : '');
         const hint = addAction === 'add-bp-product'
-            ? 'Kinahanglan adunay labing menos usa ka row nga adunay sulod.'
-            : (addAction === 'add-bp-schedule' ? 'Kinahanglan adunay labing menos usa ka kalihokan nga adunay sulod.' : '');
+            ? 'At least one row must contain actual content.'
+            : (addAction === 'add-bp-schedule' ? 'At least one activity row must contain actual content.' : '');
         return `
             <section class="post-approval-section post-approval-section--mungkahing" ${errorGroup ? `data-error-group="${escapeAttribute(errorGroup)}"` : ''}>
                 <div class="post-approval-section__header">
@@ -822,7 +814,7 @@
                 <div class="post-approval-repeatable">
                     <div class="post-approval-repeatable__header">
                         <span class="post-approval-repeatable__title">${escapeHtml(title)}</span>
-                        <button type="button" class="btn-outline small" data-row-action="${escapeAttribute(addAction)}">Idugang ang row</button>
+                        <button type="button" class="btn-outline small" data-row-action="${escapeAttribute(addAction)}">Add row</button>
                     </div>
                     ${rows.map((row, index) => rowRenderer(row, index)).join('')}
                 </div>
@@ -2381,11 +2373,11 @@
 
     function renderFatalState(message) {
         showToast(message, 'warning');
-        setText('formPageTitle', 'Post-Approval Form');
+        setText('formPageTitle', 'Application Form');
         setText('formPageSubtitle', message);
         setText('formPageStatus', 'Unavailable');
         setText('formPageReview', 'Unavailable');
-        setText('postApprovalWorkspaceTitle', 'Post-approval form unavailable');
+        setText('postApprovalWorkspaceTitle', 'Application form unavailable');
         setText('postApprovalWorkspaceSubtitle', message);
         setText('postApprovalWorkspaceStatus', 'Unavailable');
         setText('postApprovalWorkspaceNotice', message);
@@ -2394,31 +2386,73 @@
 
     function buildReviewState(task) {
         if (task.status === 'Verified') {
-            return task.reviewedAt ? `Verified ${formatDateTime(task.reviewedAt)}` : 'Verified';
+            return task.reviewedAt ? `Done ${formatDateTime(task.reviewedAt)}` : 'Done';
         }
         if (task.status === 'Submitted') {
-            return 'Awaiting review';
+            return 'Waiting for review';
         }
         if (task.reviewerRemarks) {
-            return 'Has reviewer remarks';
+            return 'Please read reviewer note';
         }
-        return 'Draft / in progress';
+        return 'Still being filled out';
     }
 
     function buildPostApprovalNotice(task) {
         if (task.reviewerRemarks) {
-            return `Reviewer remarks: ${task.reviewerRemarks}`;
+            return `Please review this note before you continue: ${task.reviewerRemarks}`;
         }
         if (task.status === 'Submitted') {
-            return 'This form has been submitted and is awaiting review.';
+            return 'You already submitted this form. Please wait while it is being reviewed.';
         }
         if (task.status === 'Verified') {
-            return 'This form has already been verified by CSWDD.';
+            return 'This form is already done and checked by CSWDD.';
         }
         if (task.staged) {
-            return task.helpText || 'This task is staged for a later digital form pass.';
+            return task.helpText || 'This form will open later after the earlier steps are finished.';
         }
-        return task.helpText || 'Complete the required fields below, save progress anytime, then submit when ready.';
+        return task.helpText || 'Fill out the form below. You can save first and submit when everything is complete.';
+    }
+
+    function buildFormGuidance(task) {
+        const taskGuides = {
+            availment_form: {
+                step: 'Step 1 of 4',
+                time: 'About 10 to 15 minutes',
+                prepare: 'Personal details, family income details, and signature file',
+                summary: 'This form records your basic application details and the information needed to continue your assistance record.',
+            },
+            validation_form: {
+                step: 'Step 2 of 4',
+                time: 'About 10 minutes',
+                prepare: 'Updated household details and supporting answers',
+                summary: 'This form checks and updates your beneficiary information before the next documents are reviewed.',
+            },
+            business_plan: {
+                step: 'Step 3 of 4',
+                time: 'About 20 to 30 minutes',
+                prepare: 'Business idea, cost estimates, and income plan',
+                summary: 'This form helps explain your livelihood plan in a clearer, structured way.',
+            },
+            mungkahing_proyekto: {
+                step: 'Step 3 of 4',
+                time: 'About 20 to 30 minutes',
+                prepare: 'Project details, budget estimates, and signature file',
+                summary: 'This form captures the proposed project details that support your request for assistance.',
+            },
+            buhat_sa_pagpanumpa: {
+                step: 'Step 4 of 4',
+                time: 'About 10 minutes',
+                prepare: 'Final review of your answers and signature file',
+                summary: 'This form is your final statement and confirmation before the task can move for review.',
+            },
+        };
+
+        return taskGuides[task.code] || {
+            step: 'Current application form step',
+            time: 'Usually 10 to 20 minutes',
+            prepare: 'Your details and any files mentioned in the form',
+            summary: 'Read the task title, review the note below, and complete the form carefully before submitting.',
+        };
     }
 
     function renderFormErrorSummary(errors, taskCode) {
@@ -2444,13 +2478,13 @@
             'overview.ownerName': 'Ngalan sa entrepreneur',
             'overview.businessAddress': 'Business address',
             'overview.contactNumber': 'Contact number',
-            'overview.businessGoal': 'Mubo nga Profile sa Entrepreneur',
-            'executiveSummary': 'Mubo nga Deskripsyon sa Negosyo/Proyekto',
-            'productsServices.rows': 'Deskripsyon sa Produkto',
-            'marketStrategy.customerProfile': 'Panguna nga mga Kustomer',
-            'operationsPlan.productionProcess': 'Proseso sa Produksyon/Serbisyo',
-            'financialPlan.startupCapital': 'Gasto sa Proyekto',
-            'implementationSchedule.rows': 'Pre-operating nga mga Kalihokan',
+            'overview.businessGoal': 'Brief Profile of the Entrepreneur',
+            'executiveSummary': 'Brief Description of the Business/Project',
+            'productsServices.rows': 'Description of the Product',
+            'marketStrategy.customerProfile': 'Primary Customers',
+            'operationsPlan.productionProcess': 'Production / Service Process',
+            'financialPlan.startupCapital': 'Project Cost',
+            'implementationSchedule.rows': 'Pre-operating Activities',
             'applicantSignature.signedName': 'Ngalan sa mipirma',
             'applicantSignature.signedDate': 'Petsa sa pirma',
             'applicantSignature.signatureUpload': 'Pirma sa aplikante',
@@ -2579,17 +2613,36 @@
     function syncSidebarMenuState() {
         const sidebar = document.querySelector('.dash-sidebar');
         const toggle = document.getElementById('sidebarToggle');
+        const overlay = document.getElementById('sidebarOverlay');
+        const closeButton = document.getElementById('sidebarClose');
         if (!sidebar || !toggle) {
             return;
         }
 
         if (window.innerWidth > 960) {
             sidebar.classList.remove('is-open');
-            toggle.setAttribute('aria-expanded', 'true');
+            document.body.classList.remove('drawer-open');
+            toggle.setAttribute('aria-expanded', 'false');
+            overlay?.classList.remove('is-visible');
+            overlay?.setAttribute('aria-hidden', 'true');
+            sidebar.removeAttribute('aria-modal');
+            sidebar.removeAttribute('aria-hidden');
+            closeButton?.setAttribute('tabindex', '-1');
             return;
         }
 
-        toggle.setAttribute('aria-expanded', sidebar.classList.contains('is-open') ? 'true' : 'false');
+        const isOpen = sidebar.classList.contains('is-open');
+        toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        overlay?.classList.toggle('is-visible', isOpen);
+        overlay?.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        sidebar.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        if (isOpen) {
+            sidebar.setAttribute('aria-modal', 'true');
+        } else {
+            sidebar.removeAttribute('aria-modal');
+        }
+        document.body.classList.toggle('drawer-open', isOpen);
+        closeButton?.setAttribute('tabindex', isOpen ? '0' : '-1');
     }
 
     function renderPaperValueLine(value, options = {}) {
@@ -3898,6 +3951,22 @@
         }
 
         syncSidebarMenuState();
+    }
+
+    function closeSidebarMenuOnMobile() {
+        if (window.innerWidth > 960) {
+            return;
+        }
+
+        const sidebar = document.querySelector('.dash-sidebar');
+        sidebar?.classList.remove('is-open');
+        syncSidebarMenuState();
+    }
+
+    function handleGlobalKeydown(event) {
+        if (event.key === 'Escape') {
+            closeSidebarMenuOnMobile();
+        }
     }
 
     function routeUrl(path) {

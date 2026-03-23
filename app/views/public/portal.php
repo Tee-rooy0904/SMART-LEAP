@@ -13,13 +13,8 @@
             <div class="container header-inner">
                 <div class="header-top">
                     <div class="brand">
-                        <div class="brand-logo">
-                            <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP logo">
-                        </div>
-
                         <div class="brand-text">
                             <div class="brand-name"><span class="brand-name-smart">SMART</span> <span class="brand-name-leap">LEAP</span></div>
-                            <div class="brand-sub">CSWDD service portal</div>
                         </div>
                     </div>
 

@@ -77,7 +77,7 @@
 
             showAlert('Login successful. Redirecting...', 'success');
             window.setTimeout(() => {
-                window.location.href = routeUrl(payload.redirect || 'profile-completion');
+                window.location.href = routeUrl(payload.redirect || 'applicant-dashboard#profile-page');
             }, 350);
         } catch (error) {
             console.error('Login request failed', error);

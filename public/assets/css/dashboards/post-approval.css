@@ -11,21 +11,19 @@
     min-width: 0;
 }
 
-.post-banner {
-    margin-bottom: 0;
-}
-
 .tracker-list-head,
 .post-form-toolbar {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     flex-wrap: wrap;
 }
 
 .tracker-taskcards {
     align-content: start;
+    display: grid;
+    gap: 6px;
 }
 
 .tracker-taskcards .post-approval-taskcard {
@@ -34,20 +32,146 @@
     overflow: hidden;
 }
 
+.post-approval-taskcard {
+    width: 100%;
+    padding: 9px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(15, 23, 42, 0.04);
+    border-left: 3px solid rgba(51, 103, 214, 0.22);
+    background: rgba(248, 250, 252, 0.56);
+    color: var(--slate-900);
+    text-align: left;
+    cursor: pointer;
+    display: grid;
+    gap: 4px;
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.post-approval-taskcard:hover {
+    background: rgba(248, 250, 252, 0.74);
+    border-color: rgba(51, 103, 214, 0.14);
+}
+
+.post-approval-taskcard.is-active {
+    border-color: rgba(29, 191, 159, 0.14);
+    border-left-color: rgba(29, 191, 159, 0.44);
+    background: linear-gradient(135deg, rgba(51, 103, 214, 0.04), rgba(29, 191, 159, 0.06));
+    box-shadow: none;
+}
+
+.post-approval-taskcard.is-empty {
+    cursor: default;
+    color: var(--slate-500);
+    font-style: italic;
+    text-align: center;
+}
+
+.post-approval-taskcard strong {
+    font-size: 0.9rem;
+}
+
+.post-approval-taskcard p {
+    margin: 0;
+    color: var(--slate-600);
+    font-size: 0.82rem;
+    line-height: 1.34;
+}
+
+.post-approval-taskcard__meta,
+.post-approval-taskcard__footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.post-approval-taskcard__actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.post-approval-taskcard__status,
+.post-approval-taskcard__badge,
+.post-approval-taskcard__issue {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.post-approval-taskcard__badge {
+    background: rgba(59, 130, 246, 0.12);
+    color: #1d4ed8;
+}
+
+.post-approval-taskcard__badge.is-muted {
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--slate-600);
+}
+
+.post-approval-taskcard__issue {
+    background: rgba(245, 158, 11, 0.18);
+    color: #92400e;
+}
+
+.status-unlocked {
+    background: rgba(59, 130, 246, 0.14);
+    color: #1e3a8a;
+}
+
+.status-in-progress {
+    background: rgba(99, 102, 241, 0.16);
+    color: #4338ca;
+}
+
+.status-submitted {
+    background: rgba(14, 165, 233, 0.16);
+    color: #0369a1;
+}
+
+.status-verified {
+    background: rgba(34, 197, 94, 0.16);
+    color: #166534;
+}
+
+.status-needs-correction {
+    background: rgba(245, 158, 11, 0.2);
+    color: #92400e;
+}
+
+.status-rejected {
+    background: rgba(239, 68, 68, 0.16);
+    color: #b91c1c;
+}
+
+.status-locked {
+    background: rgba(148, 163, 184, 0.16);
+    color: var(--slate-600);
+}
+
 .tracker-taskcards .post-approval-taskcard__footer {
     align-items: center;
+    padding-top: 4px;
+    border-top: 1px solid rgba(15, 23, 42, 0.05);
 }
 
 .tracker-task-open {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    padding: 8px 14px;
+    padding: 5px 10px;
     border-radius: 999px;
     background: rgba(51, 103, 214, 0.12);
     color: var(--indigo-700);
     font-weight: 700;
-    font-size: 0.86rem;
+    font-size: 0.76rem;
 }
 
 .post-approval-taskcard__overlay {
@@ -291,11 +415,6 @@
 }
 
 @media (max-width: 720px) {
-    .post-banner .banner-profile,
-    .post-banner .banner-stats {
-        width: 100%;
-    }
-
     .tracker-list-head,
     .post-form-toolbar,
     .tracker-taskcards .post-approval-taskcard__footer {
@@ -323,6 +442,12 @@
     .post-approval-form__actions .btn-outline,
     .post-approval-form__actions .btn-primary {
         width: 100%;
+    }
+
+    .tracker-taskcards .post-approval-taskcard__meta,
+    .tracker-taskcards .post-approval-taskcard__footer {
+        flex-direction: column;
+        align-items: flex-start;
     }
 
     .post-approval-workspace--page {
@@ -854,21 +979,21 @@
 .bp-title-page h2 {
     margin: 0;
     font-size: 2.35rem;
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.02em;
 }
 
 .bp-title-subhead {
     text-align: center;
     font-size: 1.1rem;
-    font-weight: 800;
+    font-weight: 600;
     line-height: 1.35;
 }
 
 .bp-section-heading {
     margin: 46px 0 12px;
     font-size: 1.95rem;
-    font-weight: 800;
+    font-weight: 700;
     line-height: 1.2;
 }
 
@@ -880,13 +1005,13 @@
 
 .bp-prompt__title {
     font-size: 1.6rem;
-    font-weight: 800;
+    font-weight: 700;
     line-height: 1.25;
 }
 
 .bp-prompt__subtitle {
     font-size: 1.1rem;
-    font-weight: 700;
+    font-weight: 600;
     line-height: 1.45;
 }
 
@@ -914,7 +1039,7 @@
 
 .bp-inline__label {
     font-size: 0.93rem;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .bp-inline__input {
@@ -995,6 +1120,11 @@
     gap: 18px;
 }
 
+.bp-essay-wrap {
+    display: grid;
+    gap: 12px;
+}
+
 .bp-product-card {
     display: grid;
     gap: 10px;
@@ -1064,7 +1194,7 @@
 
 .bp-signoff-label {
     font-size: 1rem;
-    font-weight: 800;
+    font-weight: 700;
 }
 
 .bp-signoff-body {
@@ -1083,7 +1213,7 @@
 
 .bp-sign-caption {
     font-size: 0.95rem;
-    font-weight: 700;
+    font-weight: 600;
 }
 
 .bp-upload-inline {
@@ -1130,6 +1260,7 @@
 .bp-review-note {
     font-size: 0.98rem;
     line-height: 1.45;
+    font-weight: 600;
 }
 
 .bp-page-number {
@@ -2962,5 +3093,186 @@
     .span-2,
     .span-3 {
         grid-column: auto;
+    }
+}
+
+.post-tracker-shell {
+    display: grid;
+    gap: 18px;
+    padding: clamp(18px, 2.4vw, 26px);
+    margin-top: 2px;
+}
+
+.post-tracker-shell__hero {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    align-items: start;
+}
+
+.post-tracker-shell__copy {
+    display: grid;
+    gap: 10px;
+}
+
+.post-tracker-shell__priority {
+    font-size: clamp(1.35rem, 2vw, 1.8rem);
+    line-height: 1.15;
+    color: var(--slate-900);
+}
+
+.post-tracker-shell__next {
+    margin: 0;
+    color: var(--slate-600);
+    line-height: 1.5;
+}
+
+.post-tracker-shell__summary {
+    margin-bottom: 0;
+}
+
+.tracker-list-head {
+    align-items: flex-end;
+    padding-top: 4px;
+    border-top: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.tracker-list-head h3 {
+    margin: 0 0 2px;
+    color: var(--slate-900);
+}
+
+.tracker-list-head .panel-subtitle {
+    max-width: 560px;
+}
+
+.tracker-taskcards {
+    gap: 12px;
+}
+
+.post-approval-taskcard {
+    padding: 16px 18px;
+    border-radius: 18px;
+    border-left-width: 4px;
+    background: rgba(248, 250, 252, 0.74);
+    gap: 10px;
+}
+
+.post-approval-taskcard strong {
+    font-size: 1rem;
+}
+
+.post-approval-taskcard__meta {
+    align-items: center;
+}
+
+.post-approval-taskcard__index {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(51, 103, 214, 0.1);
+    color: var(--indigo-700);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.post-approval-taskcard.is-clickable {
+    box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+}
+
+.post-approval-taskcard.is-disabled {
+    background: rgba(248, 250, 252, 0.5);
+    border-left-color: rgba(148, 163, 184, 0.32);
+    color: var(--slate-700);
+}
+
+.post-approval-taskcard.is-disabled .post-approval-taskcard__overlay {
+    display: none;
+}
+
+.post-approval-taskcard.is-disabled .post-approval-taskcard__badge {
+    background: rgba(148, 163, 184, 0.14);
+    color: var(--slate-600);
+}
+
+.post-approval-taskcard__footer {
+    padding-top: 10px;
+}
+
+.post-approval-taskcard__locked-note {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--slate-500);
+}
+
+.tracker-task-open {
+    background: rgba(29, 191, 159, 0.12);
+    color: #0f766e;
+}
+
+@media (max-width: 960px) {
+    .post-tracker-shell__hero {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 540px) {
+    .post-tracker-shell {
+        padding: 16px;
+    }
+
+    .post-approval-taskcard {
+        padding: 14px 16px;
+        border-radius: 16px;
+    }
+}
+
+.form-guidance-card {
+    display: grid;
+    gap: 14px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.82);
+    border: 1px solid rgba(15, 23, 42, 0.05);
+}
+
+.form-guidance-card__header {
+    display: grid;
+    gap: 4px;
+}
+
+.form-guidance-card__header h3,
+.form-guidance-item strong {
+    margin: 0;
+    color: var(--slate-900);
+}
+
+.form-guidance-card__header p {
+    margin: 0;
+    color: var(--slate-600);
+    line-height: 1.5;
+}
+
+.form-guidance-card__grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.form-guidance-item {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.86);
+    border: 1px solid rgba(15, 23, 42, 0.05);
+}
+
+@media (max-width: 720px) {
+    .form-guidance-card__grid {
+        grid-template-columns: 1fr;
     }
 }

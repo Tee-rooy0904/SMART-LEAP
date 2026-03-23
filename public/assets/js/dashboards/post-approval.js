@@ -15,7 +15,10 @@
     function bindStaticEvents() {
         document.getElementById('logoutButton')?.addEventListener('click', handleLogout);
         document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebarMenu);
+        document.getElementById('sidebarClose')?.addEventListener('click', closeSidebarMenuOnMobile);
+        document.getElementById('sidebarOverlay')?.addEventListener('click', closeSidebarMenuOnMobile);
         window.addEventListener('resize', syncSidebarMenuState);
+        document.addEventListener('keydown', handleGlobalKeydown);
         syncSidebarMenuState();
     }
 
@@ -49,10 +52,8 @@
             || null;
         const remarkTask = tasks.find((task) => task.reviewerRemarks);
 
-        setText('trackerUnlockState', state.tracker.isUnlocked ? 'Unlocked' : 'Locked');
-        setText('trackerProgressValue', `${summary.verified || 0}/${summary.total || tasks.length} verified`);
-        setText('trackerPriority', firstActionable ? firstActionable.title : 'Await training unlock');
-        setText('trackerNextAction', firstActionable ? (firstActionable.interactive ? 'Open task form' : 'Review task status') : 'Open task when available');
+        setText('trackerPriority', firstActionable ? firstActionable.title : 'Waiting for training completion');
+        setText('trackerNextAction', firstActionable ? (firstActionable.interactive ? 'What to do next: open the available form below.' : 'What to do next: wait for the earlier step to finish.') : 'Forms will appear here when available.');
         setText('trackerUnlockedAt', state.tracker.unlockedAt ? formatDateTime(state.tracker.unlockedAt) : 'Not unlocked');
         setText('trackerUnlockMeta', state.tracker.isUnlocked
             ? `Unlocked after training completion${state.tracker.unlockedAt ? ` on ${formatDateTime(state.tracker.unlockedAt)}` : ''}.`
@@ -60,12 +61,12 @@
         setText('trackerTaskCount', `${tasks.length} task${tasks.length === 1 ? '' : 's'}`);
         setText('trackerTaskChip', `${tasks.length} task${tasks.length === 1 ? '' : 's'}`);
         setText('trackerProgressMeta', tasks.length > 0
-            ? `${(summary.submitted || 0) + (summary.inProgress || 0) + (summary.needsCorrection || 0)} task${(((summary.submitted || 0) + (summary.inProgress || 0) + (summary.needsCorrection || 0)) === 1) ? '' : 's'} still need action or review.`
+            ? `${(summary.submitted || 0) + (summary.inProgress || 0) + (summary.needsCorrection || 0)} form${(((summary.submitted || 0) + (summary.inProgress || 0) + (summary.needsCorrection || 0)) === 1) ? '' : 's'} still need action or review.`
             : 'No post-approval tasks are currently available.');
-        setText('trackerFeedbackSummary', remarkTask ? 'Has reviewer remarks' : 'No remarks');
-        setText('trackerFeedbackMeta', remarkTask ? remarkTask.reviewerRemarks : 'Reviewer instructions and correction notes will be summarized here.');
+        setText('trackerFeedbackSummary', remarkTask ? 'Please review' : 'No fix needed');
+        setText('trackerFeedbackMeta', remarkTask ? remarkTask.reviewerRemarks : 'If a reviewer asks for changes, the note will appear here.');
         setText('trackerSubtitle', state.tracker.isUnlocked
-            ? 'Choose a task below to open the dedicated form page. Your saved values and statuses remain intact.'
+            ? 'Look for the form marked available now. Waiting forms cannot be opened yet.'
             : 'This tracker will activate once training completion unlocks the post-approval phase.');
 
         renderTaskCards(tasks);
@@ -77,9 +78,8 @@
         const initial = (displayName.trim().charAt(0) || 'A').toUpperCase();
 
         setText('sidebarUserName', displayName);
-        setText('trackerUserEmail', authUser.email || 'Complete your unlocked CSWDD forms from this dedicated tracker.');
 
-        ['sidebarAvatar', 'bannerAvatar'].forEach((id) => {
+        ['sidebarAvatar'].forEach((id) => {
             const node = document.getElementById(id);
             if (node) {
                 node.textContent = initial;
@@ -98,24 +98,31 @@
             return;
         }
 
-        container.innerHTML = tasks.map((task) => {
+        container.innerHTML = tasks.map((task, index) => {
             const href = task.interactive
                 ? routeUrl(`post-approval-form?code=${encodeURIComponent(task.code)}`)
-                : routeUrl(`post-approval-form?code=${encodeURIComponent(task.code)}`);
+                : '';
+            const summary = task.summary || task.helpText || 'Task details will appear here.';
+            const progressText = buildTaskProgressText(task);
+            const primaryState = buildTaskPrimaryState(task);
 
             return `
-                <article class="post-approval-taskcard ${task.interactive ? '' : 'is-disabled'}">
+                <article class="post-approval-taskcard ${task.interactive ? 'is-clickable' : 'is-disabled'}" ${task.interactive ? '' : 'aria-disabled="true"'}>
                     <div class="post-approval-taskcard__meta">
+                        <span class="post-approval-taskcard__index">Step ${index + 1}</span>
                         <span class="post-approval-taskcard__status status-${slugify(task.status)}">${escapeHtml(task.status)}</span>
-                        ${task.interactive ? '<span class="post-approval-taskcard__badge">Open form</span>' : '<span class="post-approval-taskcard__badge is-muted">Staged next</span>'}
+                        <span class="post-approval-taskcard__badge ${task.interactive ? '' : 'is-muted'}">${escapeHtml(primaryState)}</span>
                     </div>
                     <strong>${escapeHtml(task.title)}</strong>
-                    <p>${escapeHtml(task.summary || task.helpText || '')}</p>
+                    <p>${escapeHtml(summary)}</p>
                     <div class="post-approval-taskcard__footer">
-                        <span>${escapeHtml(`${task.completion || 0}% complete`)}</span>
-                        ${task.reviewerRemarks ? '<span class="post-approval-taskcard__issue">Has remarks</span>' : '<span class="tracker-task-open">Open task</span>'}
+                        <span>${escapeHtml(progressText)}</span>
+                        <span class="post-approval-taskcard__actions">
+                            ${task.reviewerRemarks ? '<span class="post-approval-taskcard__issue">Reviewer remarks</span>' : ''}
+                            ${task.interactive ? '<span class="tracker-task-open">Open task</span>' : '<span class="post-approval-taskcard__locked-note">Unavailable</span>'}
+                        </span>
                     </div>
-                    <a class="post-approval-taskcard__overlay" href="${escapeAttribute(href)}" aria-label="Open ${escapeAttribute(task.title)}"></a>
+                    ${task.interactive ? `<a class="post-approval-taskcard__overlay" href="${escapeAttribute(href)}" aria-label="Open ${escapeAttribute(task.title)}"></a>` : ''}
                 </article>
             `;
         }).join('');
@@ -184,20 +191,55 @@
         syncSidebarMenuState();
     }
 
+    function closeSidebarMenuOnMobile() {
+        if (window.innerWidth > 960) {
+            return;
+        }
+
+        const sidebar = document.querySelector('.dash-sidebar');
+        sidebar?.classList.remove('is-open');
+        syncSidebarMenuState();
+    }
+
+    function handleGlobalKeydown(event) {
+        if (event.key === 'Escape') {
+            closeSidebarMenuOnMobile();
+        }
+    }
+
     function syncSidebarMenuState() {
         const sidebar = document.querySelector('.dash-sidebar');
         const toggle = document.getElementById('sidebarToggle');
+        const overlay = document.getElementById('sidebarOverlay');
+        const closeButton = document.getElementById('sidebarClose');
         if (!sidebar || !toggle) {
             return;
         }
 
         if (window.innerWidth > 960) {
             sidebar.classList.remove('is-open');
-            toggle.setAttribute('aria-expanded', 'true');
+            document.body.classList.remove('drawer-open');
+            toggle.setAttribute('aria-expanded', 'false');
+            overlay?.classList.remove('is-visible');
+            overlay?.setAttribute('aria-hidden', 'true');
+            sidebar.removeAttribute('aria-modal');
+            sidebar.removeAttribute('aria-hidden');
+            closeButton?.setAttribute('tabindex', '-1');
             return;
         }
 
-        toggle.setAttribute('aria-expanded', sidebar.classList.contains('is-open') ? 'true' : 'false');
+        const isOpen = sidebar.classList.contains('is-open');
+        toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        overlay?.classList.toggle('is-visible', isOpen);
+        overlay?.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        sidebar.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+        if (isOpen) {
+            sidebar.setAttribute('aria-modal', 'true');
+        } else {
+            sidebar.removeAttribute('aria-modal');
+        }
+        document.body.classList.toggle('drawer-open', isOpen);
+        closeButton?.setAttribute('tabindex', isOpen ? '0' : '-1');
     }
 
     function routeUrl(path) {
@@ -229,6 +271,23 @@
             .toLowerCase()
             .replace(/[^a-z0-9]+/g, '-')
             .replace(/^-+|-+$/g, '');
+    }
+
+    function buildTaskProgressText(task) {
+        const normalized = String(task.status || '').toLowerCase();
+        if (normalized === 'verified') return 'Done';
+        if (normalized === 'submitted') return 'Sent and waiting for review';
+        if (normalized === 'needs correction') return 'Needs correction before it can move forward';
+        if (normalized === 'rejected') return 'Returned for changes';
+        if (normalized === 'locked') return 'Waiting for the earlier form';
+        return `${task.completion || 0}% complete`;
+    }
+
+    function buildTaskPrimaryState(task) {
+        const normalized = String(task.status || '').toLowerCase();
+        if (normalized === 'verified') return 'Done';
+        if (task.interactive) return 'Available now';
+        return 'Waiting for earlier step';
     }
 
     function showToast(message, tone) {

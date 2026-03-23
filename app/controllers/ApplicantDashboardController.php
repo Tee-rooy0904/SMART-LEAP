@@ -18,16 +18,14 @@ class ApplicantDashboardController extends Controller
 
     public function showPostApproval(): never
     {
-        $this->view('dashboards/post-approval', [
-            'authUser' => auth_user(),
-        ]);
+        $this->redirectTo('applicant-dashboard#application-forms');
     }
 
     public function showPostApprovalForm(): never
     {
         $code = trim((string) ($_GET['code'] ?? ''));
         if ($code === '' || !preg_match('/^[a-z0-9_]+$/i', $code)) {
-            $this->redirectTo('post-approval');
+            $this->redirectTo('applicant-dashboard#application-forms');
         }
 
         $this->view('dashboards/post-approval-form', [

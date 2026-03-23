@@ -147,10 +147,14 @@ CREATE TABLE IF NOT EXISTS initial_requirement_files (
     mime_type VARCHAR(120) NULL,
     file_size BIGINT UNSIGNED NULL,
     review_status VARCHAR(40) NOT NULL DEFAULT 'pending',
+    reviewer_remarks TEXT NULL,
+    reviewed_by_user_id BIGINT UNSIGNED NULL,
+    reviewed_at DATETIME NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_requirement_files_application FOREIGN KEY (application_id) REFERENCES applications(id),
-    CONSTRAINT fk_requirement_files_type FOREIGN KEY (requirement_type_id) REFERENCES initial_requirement_types(id)
+    CONSTRAINT fk_requirement_files_type FOREIGN KEY (requirement_type_id) REFERENCES initial_requirement_types(id),
+    CONSTRAINT fk_requirement_files_reviewed_by FOREIGN KEY (reviewed_by_user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS training_programs (
@@ -158,6 +162,7 @@ CREATE TABLE IF NOT EXISTS training_programs (
     title VARCHAR(180) NOT NULL,
     description TEXT NULL,
     venue VARCHAR(180) NULL,
+    speaker VARCHAR(180) NULL,
     starts_at DATETIME NULL,
     ends_at DATETIME NULL,
     what_to_bring TEXT NULL,
