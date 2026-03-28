@@ -3,5 +3,5 @@
 declare(strict_types=1);
 
 return static function (): bool {
-    return has_role(ROLE_APPLICANT);
+    return has_role(ROLE_APPLICANT, ROLE_BENEFICIARY);
 };

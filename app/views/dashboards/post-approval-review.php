@@ -29,7 +29,7 @@ $reviewJsVersion = (string) @filemtime(base_path('public/assets/js/dashboards/po
                 <h1>Application Form Review</h1>
                 <p class="subtitle"><?= !empty($embedded)
                     ? 'Review the submitted fill-up form requirement in its paper-faithful layout.'
-                    : 'Review submitted SMART LEAP fill-up form requirements, save remarks, and mark them Verified, Rejected, or Needs Correction.' ?></p>
+                    : 'Review submitted fill-up form requirements and record the staff decision.' ?></p>
             </div>
             <div class="review-user">
                 <strong><?= htmlspecialchars($authUser['name'] ?? 'Staff', ENT_QUOTES, 'UTF-8') ?></strong>
@@ -99,8 +99,12 @@ $reviewJsVersion = (string) @filemtime(base_path('public/assets/js/dashboards/po
                                     </select>
                                 </label>
                                 <label class="form-field full">
-                                    <span>Reviewer remarks</span>
-                                    <textarea id="reviewDecisionRemarks" name="review.remarks" rows="4" placeholder="State the verification note, rejection reason, or correction instructions."></textarea>
+                                    <span>Staff remarks</span>
+                                    <textarea id="reviewDecisionRemarks" name="review.remarks" rows="3" placeholder="Internal note for staff use."></textarea>
+                                </label>
+                                <label class="form-field full">
+                                    <span>Applicant-visible remark</span>
+                                    <textarea id="reviewDecisionApplicantRemark" name="review.applicant_visible_remark" rows="3" placeholder="Required for Needs Correction or Rejected."></textarea>
                                 </label>
                             </div>
                         </section>

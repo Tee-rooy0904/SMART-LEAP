@@ -68,6 +68,20 @@
     }
   };
 
+  const apiFormPost = async (path, formData) => {
+    try {
+      const response = await fetch(routeUrl(path), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: formData,
+      });
+      return await parseJson(response);
+    } catch (error) {
+      return { ok: false, message: 'Unable to reach the server right now.' };
+    }
+  };
+
   const renderShell = () => {
     const target = section();
     if (!target) return;
@@ -78,7 +92,6 @@
           <div class="training-hero__copy">
             <span class="training-hero__eyebrow">Admin Training Workspace</span>
             <h3>Manage approved applicants from scheduling to attendance completion.</h3>
-            <p>Create programs, assign eligible participants, send notices, and monitor attendance readiness for post-approval compliance.</p>
           </div>
           <div class="training-hero__actions">
             <button type="button" class="app-btn-primary" id="training-focus-create">
@@ -119,12 +132,13 @@
         </div>
       </div>
       <div class="training-kpi-grid">
-        ${renderKpi('Programs', summary.total || 0, 'Configured sessions ready for administration')}
-        ${renderKpi('Scheduled', summary.scheduled || 0, 'Programs currently scheduled')}
-        ${renderKpi('Notified', summary.notified || 0, 'Invitees with notices recorded')}
-        ${renderKpi('Participants', summary.participants || 0, 'Applicants assigned across all programs')}
-        ${renderKpi('Attended', summary.attended || 0, 'Invitees who attended training')}
-        ${renderKpi('Completed', summary.completed || 0, 'Invitees marked complete')}
+        ${renderKpi('Programs', summary.total || 0)}
+        ${renderKpi('Scheduled', summary.scheduled || 0)}
+        ${renderKpi('Notified', summary.notified || 0)}
+        ${renderKpi('Participants', summary.participants || 0)}
+        ${renderKpi('Attended', summary.attended || 0)}
+        ${renderKpi('Excused', summary.excused || 0)}
+        ${renderKpi('Completed', summary.completed || 0)}
       </div>
     `);
   };
@@ -175,7 +189,6 @@
         <div>
           <span class="training-panel__eyebrow">${editing ? 'Update program' : 'Create training program'}</span>
           <h4>${editing ? escapeHtml(editing.programName) : 'Schedule a new SMART LEAP training session'}</h4>
-          <p>${editing ? 'Edit the program details below and save the updated schedule.' : 'Use this form to publish a real training schedule for approved applicants.'}</p>
         </div>
         ${editing ? '<button class="app-btn-ghost" id="training-cancel-edit">Cancel edit</button>' : ''}
       </div>
@@ -204,6 +217,13 @@
           </select>
         </label>
         <label>
+          <span>Training coverage</span>
+          <select name="trainingMode">
+            <option value="all" ${(editing?.trainingMode || 'all') === 'all' ? 'selected' : ''}>All participants</option>
+            <option value="batch" ${(editing?.trainingMode || 'all') === 'batch' ? 'selected' : ''}>By batch</option>
+          </select>
+        </label>
+        <label>
           <span>Start time</span>
           <input type="time" name="startTime" value="${escapeHtml(editing?.startTime || '')}" required>
         </label>
@@ -223,6 +243,11 @@
           <span>Instructions</span>
           <textarea name="instructions" rows="3" placeholder="Add arrival instructions, dress code, or attendance guidance.">${escapeHtml(editing?.instructions || '')}</textarea>
         </label>
+        <div class="training-form-grid__wide training-inline-note">
+          ${(editing?.trainingMode || 'all') === 'batch'
+            ? 'Batch mode uses 3 groups with 85 participants each, regardless of barangay.'
+            : 'All mode can include the full SMART LEAP training roster without a participant cap.'}
+        </div>
         <div class="training-form-grid__actions">
           <button type="submit" class="app-btn-primary">${editing ? 'Save program changes' : 'Create training program'}</button>
         </div>
@@ -240,13 +265,14 @@
         <td>
           <div class="applicant-cell">
             <strong>${escapeHtml(program.programName)}</strong>
-            <span>${escapeHtml(program.description || 'No description provided.')}</span>
+            <span>${escapeHtml(program.description || '--')}</span>
           </div>
         </td>
         <td>${formatDate(program.date)}</td>
         <td>${escapeHtml(program.venue || '--')}</td>
         <td>${escapeHtml(program.speaker || '--')}</td>
         <td>${escapeHtml(program.startTime || '--')} - ${escapeHtml(program.endTime || '--')}</td>
+        <td>${escapeHtml(trainingModeLabel(program.trainingMode))}</td>
         <td><span class="status-badge ${statusClass(program.status)}">${escapeHtml(program.status)}</span></td>
         <td>${program.participantCount || 0}</td>
         <td>${program.completedCount || 0}</td>
@@ -262,7 +288,6 @@
         <div>
           <span class="training-panel__eyebrow">Program registry</span>
           <h4>Training programs</h4>
-          <p>All live schedules are shown here. Select a program to manage invitees, notices, and attendance.</p>
         </div>
         <span class="chip">${programs.length} ${programs.length === 1 ? 'program' : 'programs'}</span>
       </div>
@@ -275,13 +300,14 @@
               <th>Venue</th>
               <th>Speaker</th>
               <th>Time</th>
+              <th>Coverage</th>
               <th>Status</th>
               <th>Participants</th>
               <th>Completed</th>
               <th class="actions">Actions</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="9"><div class="training-empty training-empty--inline">No training programs found yet.</div></td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="10"><div class="training-empty training-empty--inline">No training programs found yet.</div></td></tr>'}</tbody>
         </table>
       </div>
     `);
@@ -297,7 +323,6 @@
         <div class="training-empty">
           <div class="training-empty__icon"><i class="fas fa-chalkboard-user"></i></div>
           <h4>Select a training program</h4>
-          <p>Choose a program from the registry above to assign eligible applicants, send notices, and monitor attendance.</p>
         </div>
       `);
       return;
@@ -323,12 +348,28 @@
           </div>
         </td>
         <td>${escapeHtml(invitee.businessName || '--')}</td>
-        <td><span class="status-badge ${statusClass(invitee.status)}">${escapeHtml(invitee.status)}</span></td>
+        <td>${invitee.batchGroupNumber ? `Group ${escapeHtml(String(invitee.batchGroupNumber))}` : 'All'}</td>
+        <td><span class="status-badge ${statusClass(invitee.status)}">${escapeHtml(trainingStatusLabel(invitee.status))}</span></td>
         <td>${invitee.lastNoticeSentAt || invitee.notifiedAt ? '<span class="training-pill training-pill--info">Notice sent</span>' : '<span class="training-pill">Pending notice</span>'}</td>
         <td>${formatDate(invitee.lastNoticeSentAt || invitee.notifiedAt)}</td>
         <td>${formatDate(invitee.checkedInAt)}</td>
+        <td>
+          <select class="filter-select" data-training-status-select="${invitee.id}">
+            ${['Scheduled', 'Notified', 'Attended', 'Excused', 'Missed', 'Completed'].map((status) => `<option value="${status}" ${status === invitee.status ? 'selected' : ''}>${escapeHtml(status === 'Missed' ? 'Absent' : status)}</option>`).join('')}
+          </select>
+        </td>
+        <td>
+          <textarea class="filter-select" data-training-remarks="${invitee.id}" rows="2" placeholder="Remarks or proof note">${escapeHtml(invitee.remarks || '')}</textarea>
+        </td>
+        <td>
+          <div class="training-proof-cell">
+            ${invitee.proofAttachment?.file_path ? `<a class="app-btn-ghost" href="${escapeHtml(routeUrl(invitee.proofAttachment.file_path))}" target="_blank" rel="noopener">View proof</a>` : '<span class="table-subcopy">No proof</span>'}
+            <input type="file" data-training-proof="${invitee.id}" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf">
+          </div>
+        </td>
         <td class="actions">
           <button class="app-btn-outline" data-training-send-invitee="${invitee.id}">Send notice</button>
+          <button class="app-btn-primary" data-training-save-attendance="${invitee.id}">Save</button>
         </td>
       </tr>
     `).join('');
@@ -339,7 +380,6 @@
         <div>
           <span class="training-panel__eyebrow">Program workspace</span>
           <h4>${escapeHtml(program.programName)}</h4>
-          <p>Assign eligible applicants, trigger notices, and monitor participant readiness for compliance unlocking.</p>
         </div>
         <div class="training-workspace__status">
           <span class="status-badge ${statusClass(program.status)}">${escapeHtml(program.status)}</span>
@@ -356,22 +396,24 @@
         <article class="training-overview-card">
           <span class="training-overview-card__label">Venue</span>
           <strong>${escapeHtml(program.venue || '--')}</strong>
-          <small>${escapeHtml(program.description || 'No description provided.')}</small>
+          <small>${escapeHtml(program.description || '--')}</small>
         </article>
         <article class="training-overview-card">
           <span class="training-overview-card__label">Speaker</span>
           <strong>${escapeHtml(program.speaker || '--')}</strong>
-          <small>Assigned resource person or facilitator</small>
+        </article>
+        <article class="training-overview-card">
+          <span class="training-overview-card__label">Coverage</span>
+          <strong>${escapeHtml(trainingModeLabel(program.trainingMode))}</strong>
+          <small>${program.trainingMode === 'batch' ? '3 groups of up to 85 each' : 'No participant cap for all-mode sessions'}</small>
         </article>
         <article class="training-overview-card">
           <span class="training-overview-card__label">What to bring</span>
           <strong>${escapeHtml(program.whatToBring || '--')}</strong>
-          <small>Participant preparation guidance</small>
         </article>
         <article class="training-overview-card">
           <span class="training-overview-card__label">Instructions</span>
           <strong>${escapeHtml(program.instructions || '--')}</strong>
-          <small>Arrival and compliance instructions</small>
         </article>
       </div>
 
@@ -405,7 +447,6 @@
           <div class="training-action-stack">
             <div class="training-action-card">
               <strong>Bulk notice dispatch</strong>
-              <p>Send notices to all currently assigned participants for this program.</p>
               <button class="app-btn-primary" data-training-send-program="${program.id}">Send notices to all invitees</button>
             </div>
             <div class="training-action-card">
@@ -437,25 +478,29 @@
               <tr>
                 <th>Participant</th>
                 <th>Business</th>
+                <th>Group</th>
                 <th>Attendance status</th>
                 <th>Notice state</th>
                 <th>Last notice</th>
                 <th>Attendance recorded</th>
+                <th>Update status</th>
+                <th>Remarks</th>
+                <th>Excuse proof</th>
                 <th class="actions">Actions</th>
               </tr>
             </thead>
-            <tbody>${participantRows || '<tr><td colspan="7"><div class="training-empty training-empty--inline">No participants assigned yet.</div></td></tr>'}</tbody>
+            <tbody>${participantRows || '<tr><td colspan="11"><div class="training-empty training-empty--inline">No participants assigned yet.</div></td></tr>'}</tbody>
           </table>
         </div>
       </section>
     `);
   };
 
-  const renderKpi = (label, value, meta) => `
+  const renderKpi = (label, value, meta = '') => `
     <article class="training-kpi-card">
       <span class="training-kpi-card__label">${escapeHtml(label)}</span>
       <strong>${escapeHtml(String(value))}</strong>
-      <small>${escapeHtml(meta)}</small>
+      ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
     </article>
   `;
 
@@ -464,6 +509,7 @@
       Scheduled: 0,
       Notified: 0,
       Attended: 0,
+      Excused: 0,
       Missed: 0,
       Completed: 0,
     };
@@ -601,6 +647,35 @@
     await load();
   };
 
+  const updateAttendance = async (trainingInviteeId) => {
+    const statusSelect = qs(`[data-training-status-select="${trainingInviteeId}"]`, section());
+    const remarksField = qs(`[data-training-remarks="${trainingInviteeId}"]`, section());
+    const proofField = qs(`[data-training-proof="${trainingInviteeId}"]`, section());
+    const payload = new FormData();
+    payload.append('trainingInviteeId', String(trainingInviteeId));
+    payload.append('status', String(statusSelect?.value || 'Scheduled'));
+    payload.append('remarks', String(remarksField?.value || ''));
+    if (proofField instanceof HTMLInputElement && proofField.files?.[0]) {
+      payload.append('proofAttachment', proofField.files[0]);
+    }
+
+    const response = await apiFormPost('api/training/attendance', payload);
+    if (response.redirect) {
+      window.location.href = routeUrl(response.redirect);
+      return;
+    }
+    if (!response.ok) {
+      showNotice(firstError(response.errors) || 'Unable to update training attendance.', 'danger');
+      return;
+    }
+
+    showNotice('Attendance updated.', 'success');
+    if (state.activeProgram?.id) {
+      await loadProgramDetail(state.activeProgram.id, false);
+    }
+    await load();
+  };
+
   const showNotice = (message, tone = 'info') => {
     const notice = qs('#training-notice');
     if (!notice) return;
@@ -703,6 +778,12 @@
       const sendInvitee = event.target.closest('[data-training-send-invitee]');
       if (sendInvitee && state.activeProgram) {
         await sendNotices(state.activeProgram.id, [Number(sendInvitee.dataset.trainingSendInvitee)]);
+        return;
+      }
+
+      const saveAttendance = event.target.closest('[data-training-save-attendance]');
+      if (saveAttendance) {
+        await updateAttendance(Number(saveAttendance.dataset.trainingSaveAttendance));
       }
     });
 
@@ -720,10 +801,17 @@
   const statusClass = (status) => {
     const value = String(status || '').toLowerCase();
     if (value === 'completed' || value === 'attended') return 'is-success';
+    if (value === 'excused') return 'is-warning';
     if (value === 'missed') return 'is-danger';
     if (value === 'notified' || value === 'scheduled') return 'is-warning';
     return 'is-muted';
   };
+
+  const trainingModeLabel = (mode) => String(mode || '').toLowerCase() === 'batch'
+    ? 'Batch (3 groups × 85)'
+    : 'All participants';
+
+  const trainingStatusLabel = (status) => String(status || '') === 'Missed' ? 'Absent' : String(status || '--');
 
   const firstError = (errors) => {
     if (!errors || typeof errors !== 'object') return '';

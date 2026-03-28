@@ -466,3 +466,11 @@
 .sw-modal__feedback[data-tone="danger"]{background:rgba(239,68,68,0.12);color:#b91c1c;}
 @media (max-width:600px){.sw-modal__dialog{width:92vw;} .sw-modal__header,.sw-modal__body{padding:16px 18px;} .sw-modal__footer{padding:0 18px 18px;}}
 
+.social-worker-shell .metric-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 249, 255, 0.98));
+}
+
+.social-worker-shell .metric-card__value {
+    color: #0f4c5c;
+}
+

@@ -99,7 +99,8 @@
         }
 
         container.innerHTML = tasks.map((task, index) => {
-            const href = task.interactive
+            const isAvailable = task.interactive && String(task.status || '') !== 'Locked';
+            const href = isAvailable
                 ? routeUrl(`post-approval-form?code=${encodeURIComponent(task.code)}`)
                 : '';
             const summary = task.summary || task.helpText || 'Task details will appear here.';
@@ -107,11 +108,11 @@
             const primaryState = buildTaskPrimaryState(task);
 
             return `
-                <article class="post-approval-taskcard ${task.interactive ? 'is-clickable' : 'is-disabled'}" ${task.interactive ? '' : 'aria-disabled="true"'}>
+                <article class="post-approval-taskcard ${isAvailable ? 'is-clickable' : 'is-disabled'}" ${isAvailable ? '' : 'aria-disabled="true"'}>
                     <div class="post-approval-taskcard__meta">
                         <span class="post-approval-taskcard__index">Step ${index + 1}</span>
                         <span class="post-approval-taskcard__status status-${slugify(task.status)}">${escapeHtml(task.status)}</span>
-                        <span class="post-approval-taskcard__badge ${task.interactive ? '' : 'is-muted'}">${escapeHtml(primaryState)}</span>
+                        <span class="post-approval-taskcard__badge ${isAvailable ? '' : 'is-muted'}">${escapeHtml(primaryState)}</span>
                     </div>
                     <strong>${escapeHtml(task.title)}</strong>
                     <p>${escapeHtml(summary)}</p>
@@ -119,10 +120,10 @@
                         <span>${escapeHtml(progressText)}</span>
                         <span class="post-approval-taskcard__actions">
                             ${task.reviewerRemarks ? '<span class="post-approval-taskcard__issue">Reviewer remarks</span>' : ''}
-                            ${task.interactive ? '<span class="tracker-task-open">Open task</span>' : '<span class="post-approval-taskcard__locked-note">Unavailable</span>'}
+                            ${isAvailable ? '<span class="tracker-task-open">Open task</span>' : '<span class="post-approval-taskcard__locked-note">Unavailable</span>'}
                         </span>
                     </div>
-                    ${task.interactive ? `<a class="post-approval-taskcard__overlay" href="${escapeAttribute(href)}" aria-label="Open ${escapeAttribute(task.title)}"></a>` : ''}
+                    ${isAvailable ? `<a class="post-approval-taskcard__overlay" href="${escapeAttribute(href)}" aria-label="Open ${escapeAttribute(task.title)}"></a>` : ''}
                 </article>
             `;
         }).join('');
@@ -286,6 +287,7 @@
     function buildTaskPrimaryState(task) {
         const normalized = String(task.status || '').toLowerCase();
         if (normalized === 'verified') return 'Done';
+        if (normalized === 'locked') return 'Waiting for earlier step';
         if (task.interactive) return 'Available now';
         return 'Waiting for earlier step';
     }

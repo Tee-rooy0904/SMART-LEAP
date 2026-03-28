@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" crossorigin="anonymous">
   <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/admin.css">
   <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/project-officer.css">
+  <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval-review.css">
 </head>
 <body>
   <script>
@@ -30,7 +31,7 @@
       <nav class="sidebar-nav">
         <button type="button" class="nav-link active po-nav-link" data-section="clients">
           <i class="fas fa-users"></i>
-          <span class="po-nav-copy"><strong>Beneficiaries</strong></span>
+          <span class="po-nav-copy"><strong>Overview</strong></span>
         </button>
         <button type="button" class="nav-link po-nav-link" data-section="applications">
           <i class="fas fa-file-circle-check"></i>
@@ -39,10 +40,6 @@
         <button type="button" class="nav-link po-nav-link" data-section="training">
           <i class="fas fa-chalkboard-user"></i>
           <span class="po-nav-copy"><strong>Training Pipeline</strong></span>
-        </button>
-        <button type="button" class="nav-link po-nav-link" data-section="repayments">
-          <i class="fas fa-receipt"></i>
-          <span class="po-nav-copy"><strong>Repayments</strong></span>
         </button>
       </nav>
 
@@ -72,7 +69,6 @@
         </div>
         <div class="header-actions">
           <button type="button" class="btn-ghost" id="po-refresh"><i class="fas fa-rotate"></i><span>Refresh</span></button>
-          <button type="button" class="btn-primary" id="po-new-client"><i class="fas fa-user-plus"></i><span>Add beneficiary</span></button>
           <button type="button" class="btn-danger" id="po-logout"><i class="fas fa-arrow-right-from-bracket"></i><span>Logout</span></button>
         </div>
       </header>
@@ -80,6 +76,18 @@
       <main class="content-main">
         <section id="clients-section" class="content-card" data-role-section>
           <div class="po-home-shell">
+            <section class="po-attention-strip">
+              <div class="po-attention-strip__header">
+                <div>
+                  <span class="po-panel-label">Needs Attention Now</span>
+                  <h2>Priority cases</h2>
+                </div>
+              </div>
+              <div class="po-attention-strip__list" id="poAttentionStrip">
+                <div class="po-empty">No priority cases loaded.</div>
+              </div>
+            </section>
+
             <section class="po-briefing-panel">
               <div class="po-briefing-panel__intro">
                 <span class="po-panel-label">Daily Briefing</span>
@@ -110,25 +118,27 @@
                 <section class="po-panel po-panel--board">
                   <header class="po-panel__header">
                     <div>
-                      <span class="po-panel-label">Beneficiary Queue</span>
+                      <span class="po-panel-label">Overview</span>
                       <h2>Scoped roster</h2>
                     </div>
                     <span class="po-inline-pill" id="poRosterCount">0 records</span>
                   </header>
                   <div class="po-panel__body">
                     <div class="po-roster-toolbar">
-                      <label class="po-search-control" aria-label="Search applicant or barangay">
+                      <label class="po-search-control" aria-label="Search applicant, business, or barangay">
                         <i class="fas fa-magnifying-glass"></i>
-                        <input id="po-search" type="search" placeholder="Search applicant or barangay">
+                        <input id="po-search" type="search" placeholder="Search applicant, business, or barangay">
                       </label>
                     </div>
                     <div class="po-table-wrapper">
                       <table class="table align-middle" id="po-table">
                         <thead>
                           <tr>
-                            <th>#</th>
-                            <th>Beneficiary</th>
-                            <th>Status</th>
+                            <th>Applicant</th>
+                            <th>Barangay</th>
+                            <th>Case Status</th>
+                            <th>Readiness</th>
+                            <th>Last Update</th>
                             <th class="text-end">Actions</th>
                           </tr>
                         </thead>
@@ -177,7 +187,7 @@
               <div>
                 <span class="po-panel-label">Operations Queue</span>
                 <h2>Application Review</h2>
-                <p>Review queued applications, identify incomplete requirements, and open case files for final readiness decisions.</p>
+                <p>Review queued applications and open case files for readiness decisions.</p>
               </div>
             </section>
 
@@ -198,20 +208,25 @@
                   </article>
                 </div>
                 <div class="po-application-toolbar__controls">
+                  <label class="po-filter-field" for="po-app-search">
+                    <span>Search</span>
+                    <input id="po-app-search" class="section-filter" type="search" placeholder="Search applicant, barangay, or business">
+                  </label>
                   <label class="po-filter-field" for="po-app-filter">
                     <span>Status Filter</span>
                     <select id="po-app-filter" class="section-filter">
                       <option value="">All statuses</option>
                       <option value="Submitted">Submitted</option>
                       <option value="Under Review">Under Review</option>
-                      <option value="Checked by PDO">Checked by PDO</option>
+                      <option value="Requirements Verified">Requirements Verified</option>
+                      <option value="For Assessment">For Assessment</option>
+                      <option value="Approved for Training">Approved for Training</option>
                       <option value="Approved">Approved</option>
                       <option value="Rejected">Rejected</option>
                       <option value="Flagged">Flagged</option>
                       <option value="Needs Correction">Needs Correction</option>
                     </select>
                   </label>
-                  <button type="button" class="btn-ghost" id="po-app-refresh"><i class="fas fa-rotate"></i><span>Refresh Queue</span></button>
                 </div>
               </div>
 
@@ -242,57 +257,56 @@
         </section>
 
         <section id="training-section" class="content-card" data-role-section style="display:none;">
-          <div class="po-section-shell">
-            <section class="po-section-intro">
-              <div>
-                <span class="po-panel-label">Program Operations</span>
-                <h2>Training Pipeline</h2>
-                <p>Coordinate schedules, speakers, attendance records, and notice actions for scoped training programs.</p>
+          <div id="po-training-overview-view" class="po-section-shell">
+            <section class="po-section-intro po-section-intro--compact">
+              <div class="po-training-page-head">
+                <div>
+                  <span class="po-panel-label">Training Coordination</span>
+                  <h2>Training Pipeline</h2>
+                  <p>Review scoped training sessions and open a session workspace to manage details, notices, and attendance.</p>
+                </div>
+                <div class="section-actions">
+                  <button type="button" class="btn-ghost" id="po-training-add-session"><i class="fas fa-plus"></i><span>Add Training Session</span></button>
+                  <button type="button" class="btn-ghost" id="po-training-refresh"><i class="fas fa-rotate"></i><span>Refresh</span></button>
+                </div>
+              </div>
+            </section>
+
+            <section class="po-training-stats-strip">
+              <div class="po-training-summary" id="po-training-summary"></div>
+            </section>
+
+            <section class="po-section-board">
+              <section class="data-table-card po-training-queue-card">
+                <header class="data-table-card__header">
+                  <div>
+                    <span class="po-panel-label">Program Queue</span>
+                    <h3>Training Schedule</h3>
+                  </div>
+                  <span class="chip" id="po-training-program-count">0 programs</span>
+                </header>
+                <div id="po-training-program-list" class="po-training-program-list">
+                  <div class="po-empty">No scoped training programs found.</div>
+                </div>
+              </section>
+            </section>
+          </div>
+
+          <div id="po-training-session-view" class="po-section-shell" style="display:none;">
+            <section class="po-section-intro po-section-intro--compact">
+              <div class="po-training-detail-topbar">
+                <div class="po-training-detail-topbar__nav">
+                  <button type="button" class="btn-ghost" id="po-training-back"><i class="fas fa-arrow-left"></i><span>Back to Training Pipeline</span></button>
+                  <span class="po-training-breadcrumb">Training Pipeline / Session Detail</span>
+                </div>
+                <div class="section-actions">
+                  <button type="button" class="btn-ghost" id="po-training-session-refresh"><i class="fas fa-rotate"></i><span>Refresh Session</span></button>
+                </div>
               </div>
             </section>
 
             <section class="po-section-board">
-              <header class="section-card__header">
-                <div></div>
-              <div class="section-actions">
-                <button type="button" class="btn-ghost" id="po-training-refresh"><i class="fas fa-rotate"></i><span>Refresh</span></button>
-              </div>
-              </header>
-
-              <div class="po-training-summary" id="po-training-summary"></div>
-
-              <div class="po-training-grid">
-                <section class="data-table-card">
-                  <header class="data-table-card__header">
-                    <h3>Training Schedule</h3>
-                    <span class="chip" id="po-training-program-count">0 programs</span>
-                  </header>
-                  <div class="data-table-wrapper">
-                    <table class="data-table" id="po-training-program-table">
-                      <thead>
-                        <tr>
-                          <th>Program</th>
-                          <th>Speaker</th>
-                          <th>Date</th>
-                          <th>Venue</th>
-                          <th>Status</th>
-                          <th>Participants</th>
-                          <th class="actions">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody></tbody>
-                    </table>
-                  </div>
-                </section>
-
-                <section class="data-table-card">
-                  <header class="data-table-card__header">
-                    <h3>Program Workspace</h3>
-                    <span class="chip" id="po-training-active-chip">No program selected</span>
-                  </header>
-                  <div id="po-training-program-detail" class="po-training-detail"></div>
-                </section>
-              </div>
+              <div id="po-training-program-detail" class="po-training-detail"></div>
             </section>
           </div>
         </section>
@@ -334,13 +348,19 @@
         <div class="modal-body">
           <input type="hidden" id="po-app-modal-id">
 
-          <section class="po-case-grid">
-            <article class="po-case-card"><span>Applicant</span><strong id="po-app-modal-applicant">--</strong></article>
-            <article class="po-case-card"><span>Barangay</span><strong id="po-app-modal-barangay">--</strong></article>
-            <article class="po-case-card"><span>Business</span><strong id="po-app-modal-business">--</strong></article>
-            <article class="po-case-card"><span>Contact</span><strong id="po-app-modal-contact">--</strong></article>
-            <article class="po-case-card"><span>Sector</span><strong id="po-app-modal-sector">--</strong></article>
-            <article class="po-case-card"><span>Main livelihood</span><strong id="po-app-modal-livelihood">--</strong></article>
+          <section class="po-case-identity">
+            <article class="po-case-identity__block">
+              <span class="po-panel-label">Applicant</span>
+              <strong id="po-app-modal-applicant">--</strong>
+              <div class="po-case-identity__row"><span>Business</span><strong id="po-app-modal-business">--</strong></div>
+              <div class="po-case-identity__row"><span>Barangay</span><strong id="po-app-modal-barangay">--</strong></div>
+            </article>
+            <article class="po-case-identity__block">
+              <span class="po-panel-label">Case Details</span>
+              <div class="po-case-identity__row"><span>Contact</span><strong id="po-app-modal-contact">--</strong></div>
+              <div class="po-case-identity__row"><span>Sector</span><strong id="po-app-modal-sector">--</strong></div>
+              <div class="po-case-identity__row"><span>Livelihood</span><strong id="po-app-modal-livelihood">--</strong></div>
+            </article>
           </section>
 
           <section class="po-readiness-panel">
@@ -364,58 +384,45 @@
             </div>
           </section>
 
-          <section class="po-review-section">
-            <div class="po-review-section__header">
-              <div>
-                <span class="po-panel-label">Requirement Review</span>
-                <h6>Upload Requirements</h6>
+          <section class="po-review-workspace">
+            <article class="po-requirement-nav">
+              <div class="po-review-section__header">
+                <div>
+                  <span class="po-panel-label">Requirement Navigator</span>
+                  <h6>All Requirements</h6>
+                </div>
+                <span class="po-status-chip is-muted" id="po-review-total-count">0 items</span>
               </div>
-              <span class="po-status-chip is-muted" id="po-upload-review-count">0 items</span>
-            </div>
-            <div class="data-table-wrapper">
-              <table class="data-table po-review-table" id="po-upload-review-table">
-                <thead>
-                  <tr>
-                    <th>Requirement</th>
-                    <th>Type</th>
-                    <th>Submission State</th>
-                    <th>Requirement Status</th>
-                    <th>Staff Remarks</th>
-                    <th>Applicant-visible Remark</th>
-                    <th>Open</th>
-                    <th class="actions">Review Action</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
-          </section>
+              <div id="po-requirement-nav" class="po-requirement-nav__list">
+                <div class="po-preview-empty">No requirements loaded.</div>
+              </div>
+            </article>
 
-          <section class="po-review-section">
-            <div class="po-review-section__header">
-              <div>
-                <span class="po-panel-label">Requirement Review</span>
-                <h6>Fill-up Form Requirements</h6>
+            <article class="po-preview-panel">
+              <div class="po-review-section__header">
+                <div>
+                  <span class="po-panel-label">Requirement Viewer</span>
+                  <h6 id="po-preview-title">Select a requirement</h6>
+                </div>
+                <span class="po-status-chip is-muted" id="po-preview-chip">No preview</span>
               </div>
-              <span class="po-status-chip is-muted" id="po-form-review-count">0 items</span>
-            </div>
-            <div class="data-table-wrapper">
-              <table class="data-table po-review-table" id="po-form-review-table">
-                <thead>
-                  <tr>
-                    <th>Requirement</th>
-                    <th>Type</th>
-                    <th>Submission State</th>
-                    <th>Requirement Status</th>
-                    <th>Staff Remarks</th>
-                    <th>Applicant-visible Remark</th>
-                    <th>Open</th>
-                    <th class="actions">Review Action</th>
-                  </tr>
-                </thead>
-                <tbody></tbody>
-              </table>
-            </div>
+              <div id="po-app-preview" class="po-preview-surface">
+                <div class="po-preview-empty">Select an uploaded requirement or fill-up form to review it here.</div>
+              </div>
+            </article>
+
+            <article class="po-review-inspector">
+              <div class="po-review-section__header">
+                <div>
+                  <span class="po-panel-label">Requirement Decision</span>
+                  <h6 id="po-inspector-title">Select a requirement</h6>
+                </div>
+                <span class="po-status-chip is-muted" id="po-inspector-chip">No selection</span>
+              </div>
+              <div id="po-review-inspector" class="po-review-inspector__body">
+                <div class="po-preview-empty">Select a requirement from the navigator to review it.</div>
+              </div>
+            </article>
           </section>
 
           <section class="po-decision-panel">
@@ -470,6 +477,8 @@
       </div>
     </div>
   </div>
+
+  <div class="po-toast-stack" id="poToastStack" aria-live="polite" aria-atomic="true"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
   <script src="<?= $baseUrl ?>/assets/js/dashboards/project-officer.js" defer></script>

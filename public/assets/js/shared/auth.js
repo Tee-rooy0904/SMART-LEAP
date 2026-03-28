@@ -20,6 +20,21 @@
         return `${publicBase()}/${trimmed}`;
     }
 
+    function setAuthLoading(active, message) {
+        const overlay = document.getElementById('authLoadingScreen');
+        const copy = document.getElementById('authLoadingCopy');
+        if (!overlay) {
+            return;
+        }
+
+        if (copy && message) {
+            copy.textContent = message;
+        }
+
+        overlay.hidden = !active;
+        document.body.classList.toggle('auth-loading', active);
+    }
+
     function removeAlert() {
         document.querySelector('.auth-inline-alert')?.remove();
     }
@@ -53,6 +68,7 @@
         }
 
         setSubmitting(true);
+        setAuthLoading(true, 'Authorizing your SMART LEAP access...');
 
         try {
             const response = await fetch(routeUrl('auth/login'), {
@@ -71,7 +87,12 @@
 
             const payload = await response.json();
             if (!response.ok || !payload.ok) {
+                if (payload.requiresVerification && payload.redirect) {
+                    window.location.href = routeUrl(payload.redirect);
+                    return;
+                }
                 showAlert(payload.message || 'Invalid credentials.', 'danger');
+                setAuthLoading(false);
                 return;
             }
 
@@ -82,7 +103,11 @@
         } catch (error) {
             console.error('Login request failed', error);
             showAlert('Unable to process login right now. Please try again.', 'danger');
+            setAuthLoading(false);
         } finally {
+            if (document.visibilityState !== 'hidden') {
+                setAuthLoading(false);
+            }
             setSubmitting(false);
         }
     }

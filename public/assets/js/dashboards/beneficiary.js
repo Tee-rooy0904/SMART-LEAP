@@ -1,70 +1,29 @@
 (function () {
-    const FORCED_ROLE_VIEW = 'beneficiary';
+    const AUTH_USER = window.SMARTLEAP_AUTH_USER || null;
     const STORAGE_KEYS = {
-        user: 'smartleap_sample_user',
-        payments: 'smartleap_sample_payments',
-        feedback: 'smartleap_sample_feedback',
-        users: 'smartleap_users_v2',
-        session: 'smartleap_session_v1',
-        applications: 'smartleap_admin_applications_v3',
-        beneficiaries: 'smartleap_admin_beneficiaries_v3',
+        payments: 'smartleap_beneficiary_payments_v1',
+        feedback: 'smartleap_beneficiary_feedback_v1',
         notifications: 'smartleap_user_notifications_v1',
-        certificate: 'smartleap_certificate_uploads_v1',
         profilePhotos: 'smartleap_profile_photos_v1'
     };
+    const PORTAL_LOADER_MIN_MS = 3000;
 
-    const SAMPLE_USER = {
-        name: 'Maria Lopez',
-        email: 'maria.lopez@gmail.com',
-        business: "Maria's Sari-sari Store",
-        beneficiaryId: 101,
-        role: 'Beneficiary',
-        authenticatedAt: new Date().toISOString()
+    let user = {
+        id: AUTH_USER?.id || null,
+        name: AUTH_USER?.name || '',
+        fullName: AUTH_USER?.name || '',
+        email: AUTH_USER?.email || '',
+        role: AUTH_USER?.role || 'Beneficiary'
     };
-
-    const BASE_PAYMENTS = [
-        {
-            month: '2025-01',
-            paymentDate: '2025-01-12',
-            amount: 625,
-            stage: 'verified',
-            verifiedBy: 'Admin L. Cruz',
-            verifiedAt: '2025-01-18',
-            notes: 'Hard copy received'
-        },
-        {
-            month: '2025-02',
-            paymentDate: '2025-02-15',
-            amount: 625,
-            stage: 'verified',
-            verifiedBy: 'Project Officer D. Reyes',
-            verifiedAt: '2025-02-20',
-            notes: 'Barangay visit completed'
-        },
-        {
-            month: '2025-03',
-            paymentDate: '',
-            amount: 625,
-            stage: 'pending',
-            verifiedBy: '',
-            verifiedAt: '',
-            notes: 'Awaiting upload'
-        }
-    ];
-
-    let user = SAMPLE_USER;
     let payments = [];
     let feedbackEntries = [];
     let applicationRecord = null;
     let beneficiaryRecord = null;
     let notifications = [];
-    let beneficiaryId = SAMPLE_USER.beneficiaryId || null;
+    let beneficiaryId = Number(AUTH_USER?.id || 0) || null;
     let roleView = 'beneficiary';
-    let certificateUploads = {};
     let profilePhotos = {};
-    let trainingState = null;
-    let trainingUnsubscribe = null;
-    let trainingPercent = 0;
+    let loaderStartedAt = Date.now();
 
     const REQUIREMENT_ITEMS = [
         { key: 'validId', label: 'Valid ID' },
@@ -77,45 +36,28 @@
         { key: 'validationForm', label: 'Validation form' }
     ];
 
-    const TRAINING_REQUIREMENT_MAP = [
-        { match: 'sub-project identification', requirements: ['Project proposal', 'Individual profile'] },
-        { match: 'project planning', requirements: ['Business plan', 'Validation form'] },
-        { match: 'financial management', requirements: ['Business plan', 'Availment form'] },
-        { match: 'accountability reporting', requirements: ['Validation form', 'Cedula'] },
-        { match: 'project documentation', requirements: ['Valid ID', 'Cedula'] },
-        { match: 'implementation preparation', requirements: ['Health Certificate', 'Availment form'] },
-        { match: 'turnover', requirements: ['Certificate upload'] }
-    ];
-
     document.addEventListener('DOMContentLoaded', init);
 
     function init() {
         loadState();
         bindEvents();
-        initTraining();
         renderAll();
-        greetIfSample();
+        markPortalReady();
     }
 
     function loadState() {
-        const sessionUser = getSessionUser();
-        try {
-            const storedUser = sessionStorage.getItem(STORAGE_KEYS.user);
-            if (storedUser) user = JSON.parse(storedUser);
-        } catch (err) {
-            console.warn('Unable to read stored user', err);
-        }
-        if (sessionUser) {
-            user = { ...user, ...sessionUser };
-        }
-        beneficiaryRecord = findBeneficiaryRecord(user);
-        applicationRecord = findApplicationRecord(user, beneficiaryRecord);
-        roleView = resolveRoleView(user, applicationRecord, beneficiaryRecord);
-        roleView = FORCED_ROLE_VIEW;
-        if (user) {
-            user.role = roleView === 'beneficiary' ? 'Beneficiary' : 'Applicant';
-        }
-        beneficiaryId = Number(beneficiaryRecord?.id || user?.beneficiaryId || SAMPLE_USER.beneficiaryId || 0) || null;
+        user = {
+            ...user,
+            id: AUTH_USER?.id || user.id || null,
+            name: AUTH_USER?.name || user.name || '',
+            fullName: AUTH_USER?.name || user.fullName || user.name || '',
+            email: AUTH_USER?.email || user.email || '',
+            role: AUTH_USER?.role || user.role || 'Beneficiary'
+        };
+        beneficiaryRecord = null;
+        applicationRecord = null;
+        roleView = 'beneficiary';
+        beneficiaryId = Number(user?.id || 0) || null;
 
         try {
             const storedPayments = localStorage.getItem(STORAGE_KEYS.payments);
@@ -123,8 +65,8 @@
         } catch (err) {
             console.warn('Unable to read stored payments', err);
         }
-        if (!Array.isArray(payments) || !payments.length) {
-            payments = [...BASE_PAYMENTS];
+        if (!Array.isArray(payments)) {
+            payments = [];
         }
 
         try {
@@ -148,16 +90,6 @@
         }
 
         try {
-            const storedCertificates = localStorage.getItem(STORAGE_KEYS.certificate);
-            if (storedCertificates) certificateUploads = JSON.parse(storedCertificates) || {};
-        } catch (err) {
-            console.warn('Unable to read certificate uploads', err);
-        }
-        if (!certificateUploads || typeof certificateUploads !== 'object') {
-            certificateUploads = {};
-        }
-
-        try {
             const storedPhotos = localStorage.getItem(STORAGE_KEYS.profilePhotos);
             if (storedPhotos) profilePhotos = JSON.parse(storedPhotos) || {};
         } catch (err) {
@@ -174,15 +106,12 @@
         document.getElementById('profileForm')?.addEventListener('submit', handleProfileSubmit);
         document.getElementById('beneficiaryProfileForm')?.addEventListener('submit', handleBeneficiaryProfileSubmit);
         document.getElementById('profilePhotoInput')?.addEventListener('change', handleProfilePhotoChange);
-        document.getElementById('certificateForm')?.addEventListener('submit', handleCertificateSubmit);
-        document.getElementById('trainingViewCertificate')?.addEventListener('click', handleViewCertificate);
         document.getElementById('logoutButton')?.addEventListener('click', handleLogout);
-        document.getElementById('sidebarToggle')?.addEventListener('click', () => {
-            document.querySelector('.dash-sidebar')?.classList.toggle('is-open');
-        });
+        document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebarMenu);
+        document.getElementById('sidebarClose')?.addEventListener('click', closeSidebarMenuOnMobile);
+        document.getElementById('sidebarOverlay')?.addEventListener('click', closeSidebarMenuOnMobile);
         document.getElementById('historyFilterStatus')?.addEventListener('change', renderHistory);
         document.getElementById('historyFilterMonth')?.addEventListener('change', renderHistory);
-        initTrainingTabs();
         document.getElementById('historyTableBody')?.addEventListener('click', handleHistoryTableClick);
         document.getElementById('overviewRepaymentsBtn')?.addEventListener('click', () => {
             window.location.hash = '#repayments';
@@ -205,15 +134,34 @@
         initRouting();
     }
 
+    function toggleSidebarMenu() {
+        const sidebar = document.querySelector('.dash-sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+        const toggle = document.getElementById('sidebarToggle');
+        if (!sidebar) return;
+
+        const isOpen = !sidebar.classList.contains('is-open');
+        sidebar.classList.toggle('is-open', isOpen);
+        overlay?.classList.toggle('is-visible', isOpen);
+        toggle?.setAttribute('aria-expanded', String(isOpen));
+    }
+
+    function closeSidebarMenuOnMobile() {
+        const sidebar = document.querySelector('.dash-sidebar');
+        const overlay = document.getElementById('sidebarOverlay');
+        const toggle = document.getElementById('sidebarToggle');
+        sidebar?.classList.remove('is-open');
+        overlay?.classList.remove('is-visible');
+        toggle?.setAttribute('aria-expanded', 'false');
+    }
+
     function renderAll() {
         renderUser();
         applyRoleVisibility();
         renderSummary();
         renderOverview();
-        renderTrainingPanels();
         renderRequirements();
         renderNotifications();
-        renderCertificatePanel();
         renderProfileEditor();
         renderBeneficiaryProfile();
         if (roleView === 'beneficiary') {
@@ -225,8 +173,8 @@
     }
 
     function renderUser() {
-        const name = user.name || SAMPLE_USER.name;
-        const email = user.email || SAMPLE_USER.email;
+        const name = user.fullName || user.name || 'Beneficiary';
+        const email = user.email || '--';
         const business = user.businessName
             || user.business
             || applicationRecord?.businessName
@@ -237,7 +185,6 @@
             || user.barangay
             || user.location
             || (roleView === 'applicant' ? 'Applicant profile' : '')
-            || SAMPLE_USER.business
             || 'Your livelihood';
         const firstName = (name || '').split(' ')[0] || name || 'Beneficiary';
         const avatarInitial = (name || 'B').trim().charAt(0)?.toUpperCase() || 'B';
@@ -291,16 +238,13 @@
             : completed >= total
                 ? 'Ready for approval'
                 : 'Pending review';
-        const nextSession = trainingState && window.TrainingShared ? TrainingShared.getUpcomingSession() : null;
-        const nextSessionLabel = nextSession ? formatDate(nextSession.start) : 'No session yet';
-
         setText('bannerLabelOutstanding', 'Requirement status');
-        setText('bannerLabelProgress', 'Training completion');
-        setText('bannerLabelNextDue', 'Next session');
+        setText('bannerLabelProgress', 'Requirements progress');
+        setText('bannerLabelNextDue', 'Current stage');
         setText('bannerLabelRate', 'Approval status');
         setText('bannerOutstanding', `${completed}/${total} submitted`);
-        setText('bannerProgress', `${Math.round(trainingPercent)}% complete`);
-        setText('bannerNextDue', nextSessionLabel);
+        setText('bannerProgress', `${completed}/${total} complete`);
+        setText('bannerNextDue', statusLabel);
         setText('bannerRate', statusLabel);
     }
 
@@ -446,7 +390,7 @@
 
     function applyRouteVisibility() {
         const sidebarLinks = Array.from(document.querySelectorAll('.sidebar-link'));
-        const sections = Array.from(document.querySelectorAll('.dash-section'));
+        const sections = Array.from(document.querySelectorAll('.dash-main > section[id]'));
         const visibleLinks = sidebarLinks.filter((link) => !link.classList.contains('is-hidden'));
         const hashId = window.location.hash.replace('#', '');
         const targetLink = visibleLinks.find((link) => (link.getAttribute('href') || '').replace('#', '') === hashId);
@@ -479,13 +423,13 @@
             const dueEl = document.getElementById('overviewDue');
             const rateEl = document.getElementById('overviewRate');
             const reminderEl = document.getElementById('overviewReminder');
-            const trainingAlertEl = document.getElementById('overviewTrainingAlert');
+            const accountAlertEl = document.getElementById('overviewAccountAlert');
             const supportEl = document.getElementById('overviewSupport');
             if (!nameEl || !bizEl || !emailEl || !outstandingEl || !progressEl || !dueEl || !rateEl) return;
 
-            const name = user.fullName || user.name || beneficiaryRecord?.name || SAMPLE_USER.name;
-            const business = user.businessName || user.business || beneficiaryRecord?.businessName || beneficiaryRecord?.businessType || SAMPLE_USER.business;
-            const email = user.email || beneficiaryRecord?.email || SAMPLE_USER.email;
+            const name = user.fullName || user.name || beneficiaryRecord?.name || 'Beneficiary';
+            const business = user.businessName || user.business || beneficiaryRecord?.businessName || beneficiaryRecord?.businessType || 'Your livelihood';
+            const email = user.email || beneficiaryRecord?.email || '--';
             nameEl.textContent = name;
             bizEl.textContent = business;
             emailEl.textContent = email;
@@ -506,11 +450,10 @@
             if (reminderEl) {
                 reminderEl.textContent = nextPending ? `Upload OR for ${formatMonth(padMonth(nextPending.month))}` : 'No pending OR uploads.';
             }
-            if (trainingAlertEl) {
-                const nextSession = trainingState && window.TrainingShared ? TrainingShared.getUpcomingSession() : null;
-                trainingAlertEl.textContent = nextSession
-                    ? `Session on ${formatDate(nextSession.start)} \u2013 Confirm attendance.`
-                    : 'No upcoming training sessions.';
+            if (accountAlertEl) {
+                accountAlertEl.textContent = payments.some((payment) => payment.stage === 'pending' || payment.stage === 'uploaded')
+                    ? 'Receipt verification updates will appear here.'
+                    : 'Account updates will appear here.';
             }
             if (supportEl) supportEl.textContent = 'Need help? Contact your PDO.';
             return;
@@ -518,28 +461,28 @@
 
         const statusEl = document.getElementById('overviewStatus');
         const statusNoteEl = document.getElementById('overviewStatusNote');
-        const trainingEl = document.getElementById('overviewTrainingPercent');
-        const trainingNoteEl = document.getElementById('overviewTrainingNote');
+        const requirementsEl = document.getElementById('overviewRequirementsPercent');
+        const requirementsNoteEl = document.getElementById('overviewRequirementsNote');
         const nextDueEl = document.getElementById('overviewNextDue');
         const nextDueNoteEl = document.getElementById('overviewNextDueNote');
-        if (!statusEl || !trainingEl || !nextDueEl) return;
+        if (!statusEl || !requirementsEl || !nextDueEl) return;
 
         const status = beneficiaryRecord?.applicationStatus || beneficiaryRecord?.status || applicationRecord?.status || user?.status || 'Active';
+        const summary = calculateRequirementSummary(applicationRecord, beneficiaryRecord);
         statusEl.textContent = status;
         if (statusNoteEl) {
             statusNoteEl.textContent = 'Awaiting approval and release status.';
         }
 
-        trainingEl.textContent = `${Math.round(trainingPercent)}%`;
-        if (trainingNoteEl) {
-            trainingNoteEl.textContent = trainingPercent >= 100
-                ? 'Training complete. Upload your certificate.'
-                : 'Stay updated on scheduled modules.';
+        requirementsEl.textContent = `${summary.completed}/${summary.total || 8}`;
+        if (requirementsNoteEl) {
+            requirementsNoteEl.textContent = summary.issueCount > 0
+                ? 'Some requirements still need correction.'
+                : 'Continue submitting complete requirements.';
         }
 
-        const nextSession = trainingState && window.TrainingShared ? TrainingShared.getUpcomingSession() : null;
-        nextDueEl.textContent = nextSession ? formatDate(nextSession.start) : 'No session yet';
-        if (nextDueNoteEl) nextDueNoteEl.textContent = 'Check training schedules for updates.';
+        nextDueEl.textContent = status;
+        if (nextDueNoteEl) nextDueNoteEl.textContent = 'Review the application and notifications pages for updates.';
     }
 
     function renderProfileEditor() {
@@ -659,32 +602,6 @@
             `;
             list.appendChild(li);
         });
-    }
-
-    function renderCertificatePanel() {
-        const statusEl = document.getElementById('certificateStatus');
-        const noteEl = document.getElementById('certificateNote');
-        const fileInput = document.getElementById('certificateFile');
-        const submitBtn = document.getElementById('certificateSubmit');
-        if (!statusEl || !noteEl || !fileInput || !submitBtn) return;
-
-        const key = (user.email || '').toLowerCase();
-        const record = key ? certificateUploads[key] : null;
-        const unlocked = trainingPercent >= 100 && (trainingState?.sessions?.length || 0) > 0;
-
-        fileInput.disabled = !unlocked;
-        submitBtn.disabled = !unlocked;
-
-        if (record) {
-            statusEl.textContent = `Uploaded: ${record.fileName || 'Certificate'}`;
-            noteEl.textContent = `Last updated ${formatDateTime(record.uploadedAt)}`;
-        } else if (unlocked) {
-            statusEl.textContent = 'Ready for upload';
-            noteEl.textContent = 'Upload your certificate of completion.';
-        } else {
-            statusEl.textContent = 'Not available';
-            noteEl.textContent = 'Complete all training sessions to unlock certificate uploads.';
-        }
     }
 
     function handleProfileSubmit(event) {
@@ -818,25 +735,6 @@
         }
     }
 
-    function handleCertificateSubmit(event) {
-        event.preventDefault();
-        const form = event.target;
-        if (!form.reportValidity()) return;
-        const file = document.getElementById('certificateFile')?.files?.[0];
-        if (!file) return;
-
-        const key = (user.email || '').toLowerCase();
-        if (!key) return;
-        certificateUploads[key] = {
-            fileName: file.name,
-            uploadedAt: new Date().toISOString()
-        };
-        persistCertificates();
-        renderCertificatePanel();
-        showToast('Certificate uploaded for review.', 'success');
-        form.reset();
-    }
-
     function handleUploadSubmit(event) {
         event.preventDefault();
         const form = event.target;
@@ -888,12 +786,55 @@
         form.reset();
     }
 
-    function handleLogout() {
-        sessionStorage.removeItem(STORAGE_KEYS.user);
-        showToast('Signed out.', 'info');
-        setTimeout(() => {
-            window.location.href = 'portal';
-        }, 600);
+    function showPortalLoader(copy) {
+        const loader = document.getElementById('portalLoader');
+        const copyNode = document.getElementById('portalLoaderCopy');
+        if (!loader) {
+            return;
+        }
+
+        if (copyNode && copy) {
+            copyNode.textContent = copy;
+        }
+
+        loaderStartedAt = Date.now();
+        loader.hidden = false;
+        document.body.classList.remove('portal-ready');
+    }
+
+    function hidePortalLoader() {
+        const loader = document.getElementById('portalLoader');
+        if (!loader) {
+            document.body.classList.add('portal-ready');
+            return;
+        }
+
+        loader.setAttribute('hidden', 'hidden');
+        document.body.classList.add('portal-ready');
+    }
+
+    function markPortalReady() {
+        const remaining = Math.max(0, PORTAL_LOADER_MIN_MS - (Date.now() - loaderStartedAt));
+        window.setTimeout(hidePortalLoader, remaining);
+    }
+
+    async function handleLogout() {
+        showPortalLoader('Signing you out of SMART LEAP...');
+        try {
+            const response = await fetch(`${window.SMARTLEAP_BASE_URL || ''}/auth/logout`, {
+                method: 'POST',
+                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                credentials: 'same-origin',
+            });
+            const payload = await response.json().catch(() => ({}));
+            const remaining = Math.max(0, PORTAL_LOADER_MIN_MS - (Date.now() - loaderStartedAt));
+            window.setTimeout(() => {
+                window.location.href = `${window.SMARTLEAP_BASE_URL || ''}/${String(payload.redirect || 'portal').replace(/^\/+/, '')}`;
+            }, remaining);
+        } catch (error) {
+            hidePortalLoader();
+            showToast('Unable to log out right now.', 'warning');
+        }
     }
 
     function handleHistoryTableClick(event) {
@@ -908,85 +849,6 @@
             return;
         }
         win.document.write(`<pre>${escapeHtml(proof)}</pre>`);
-    }
-
-    function getSessionUser() {
-        try {
-            const sessionRaw = localStorage.getItem(STORAGE_KEYS.session);
-            const session = sessionRaw ? JSON.parse(sessionRaw) : null;
-            if (!session?.email) return null;
-            const users = getStoredUsers();
-            const match = users.find((entry) => (entry.email || '').toLowerCase() === session.email.toLowerCase());
-            if (!match) return null;
-            return {
-                id: match.id,
-                name: match.fullName || match.name || match.email,
-                fullName: match.fullName || match.name || '',
-                email: match.email,
-                contactNumber: match.contactNumber || match.contact || '',
-                businessName: match.businessName || '',
-                role: match.role || session.role || 'Applicant'
-            };
-        } catch (err) {
-            console.warn('Unable to resolve session user', err);
-            return null;
-        }
-    }
-
-    function getStoredUsers() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEYS.users);
-            const parsed = raw ? JSON.parse(raw) : [];
-            return Array.isArray(parsed) ? parsed : [];
-        } catch {
-            return [];
-        }
-    }
-
-    function findBeneficiaryRecord(currentUser) {
-        if (!currentUser) return null;
-        try {
-            const raw = localStorage.getItem(STORAGE_KEYS.beneficiaries);
-            const list = raw ? JSON.parse(raw) : [];
-            if (!Array.isArray(list)) return null;
-            const email = (currentUser.email || '').toLowerCase();
-            const id = currentUser.beneficiaryId || currentUser.id;
-            return list.find((item) => (email && (item.email || '').toLowerCase() === email) || (id && String(item.id) === String(id))) || null;
-        } catch {
-            return null;
-        }
-    }
-
-    function findApplicationRecord(currentUser, beneficiary) {
-        if (!currentUser && !beneficiary) return null;
-        try {
-            const raw = localStorage.getItem(STORAGE_KEYS.applications);
-            const list = raw ? JSON.parse(raw) : [];
-            if (!Array.isArray(list)) return null;
-            const email = (currentUser?.email || beneficiary?.email || '').toLowerCase();
-            const id = beneficiary?.id || currentUser?.beneficiaryId;
-            return list.find((item) => (email && (item.email || '').toLowerCase() === email) || (id && String(item.beneficiaryId) === String(id))) || null;
-        } catch {
-            return null;
-        }
-    }
-
-    function resolveRoleView(currentUser, application, beneficiary) {
-        const role = normalizeStatus(currentUser?.role || '');
-        if (role.includes('beneficiary')) return 'beneficiary';
-        if (role.includes('applicant')) return 'applicant';
-        const status = normalizeStatus(
-            beneficiary?.applicationStatus ||
-            beneficiary?.status ||
-            application?.status ||
-            currentUser?.status ||
-            currentUser?.role
-        );
-        if (!status) return 'applicant';
-        if (status.includes('released') || status.includes('beneficiary') || status.includes('active') || status.includes('disbursed')) {
-            return 'beneficiary';
-        }
-        return 'applicant';
     }
 
     function normalizeStatus(value) {
@@ -1060,13 +922,12 @@
             });
         }
 
-        const nextSession = trainingState && window.TrainingShared ? TrainingShared.getUpcomingSession() : null;
-        if (nextSession) {
-            const windowCopy = TrainingShared.formatSessionWindow(nextSession);
+        const nextPendingPayment = payments.find((payment) => payment.stage !== 'verified');
+        if (nextPendingPayment) {
             items.push({
-                title: 'Training reminder',
-                message: `${nextSession.title || nextSession.label || 'Training session'} - ${windowCopy.dateText} ${windowCopy.timeRange}`,
-                meta: nextSession.venue || 'Venue to be confirmed'
+                title: 'Repayment reminder',
+                message: `Prepare the OR for ${formatMonth(padMonth(nextPendingPayment.month))}.`,
+                meta: 'Upload your receipt once payment is made'
             });
         }
 
@@ -1084,86 +945,8 @@
     }
 
     function persistProfileUpdate() {
-        try {
-            sessionStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user));
-        } catch (err) {
-            console.warn('Unable to persist session user', err);
-        }
-
-        try {
-            const users = getStoredUsers();
-            const index = users.findIndex((entry) => entry.id === user.id || (entry.email || '').toLowerCase() === (user.email || '').toLowerCase());
-            if (index >= 0) {
-                users[index] = {
-                    ...users[index],
-                    fullName: user.fullName || user.name,
-                    email: user.email,
-                    contactNumber: user.contactNumber,
-                    businessName: user.businessName || user.business || users[index].businessName || '',
-                    updatedAt: new Date().toISOString()
-                };
-                localStorage.setItem(STORAGE_KEYS.users, JSON.stringify(users));
-            }
-        } catch (err) {
-            console.warn('Unable to update stored users', err);
-        }
-
-        try {
-            const applications = JSON.parse(localStorage.getItem(STORAGE_KEYS.applications) || '[]');
-            if (Array.isArray(applications)) {
-                const match = applications.find((app) => app.id === applicationRecord?.id || (app.email || '').toLowerCase() === (user.email || '').toLowerCase());
-                if (match) {
-                    match.applicantName = user.fullName || user.name;
-                    match.contactNumber = user.contactNumber || user.contact;
-                    match.barangay = user.barangay;
-                    if (user.businessName) {
-                        match.businessName = user.businessName;
-                    }
-                    localStorage.setItem(STORAGE_KEYS.applications, JSON.stringify(applications));
-                }
-            }
-        } catch (err) {
-            console.warn('Unable to update application profile', err);
-        }
-
-        try {
-            const beneficiaries = JSON.parse(localStorage.getItem(STORAGE_KEYS.beneficiaries) || '[]');
-            if (Array.isArray(beneficiaries)) {
-                const match = beneficiaries.find((entry) => entry.id === beneficiaryRecord?.id || (entry.email || '').toLowerCase() === (user.email || '').toLowerCase());
-                if (match) {
-                    match.name = user.fullName || user.name;
-                    match.contact = user.contactNumber || user.contact;
-                    match.barangay = user.barangay;
-                    if (user.businessName) {
-                        match.businessName = user.businessName;
-                    }
-                    if (user.email) {
-                        match.email = user.email;
-                    }
-                    localStorage.setItem(STORAGE_KEYS.beneficiaries, JSON.stringify(beneficiaries));
-                }
-            }
-        } catch (err) {
-            console.warn('Unable to update beneficiary profile', err);
-        }
-
-        try {
-            localStorage.setItem('currentUser', JSON.stringify({
-                role: user.role || 'Applicant',
-                email: user.email,
-                fullName: user.fullName || user.name
-            }));
-        } catch (err) {
-            console.warn('Unable to update current user', err);
-        }
-    }
-
-    function persistCertificates() {
-        try {
-            localStorage.setItem(STORAGE_KEYS.certificate, JSON.stringify(certificateUploads));
-        } catch (err) {
-            console.warn('Unable to persist certificate uploads', err);
-        }
+        renderUser();
+        renderOverview();
     }
 
     function persistProfilePhotos() {
@@ -1172,11 +955,6 @@
         } catch (err) {
             console.warn('Unable to persist profile photos', err);
         }
-    }
-
-    function greetIfSample() {
-        if (!user || user.email !== SAMPLE_USER.email) return;
-        showToast('Signed in to sample SMART LEAP account.', 'info');
     }
 
     function persistPayments() {
@@ -1236,7 +1014,7 @@
             present: { label: 'Present', className: 'present' },
             absent: { label: 'Absent', className: 'absent' },
             late: { label: 'Late', className: 'late' },
-            excused: { label: 'Late', className: 'late' },
+            excused: { label: 'Excused', className: 'excused' },
             pending: { label: 'Pending', className: 'pending' }
         };
         return map[key] || map.pending;
@@ -1257,230 +1035,6 @@
             return payment.notes ? escapeHtml(payment.notes) : 'Uploaded. Bring hard copy for verification.';
         }
         return 'For upload';
-    }
-
-    function initTraining() {
-        const overviewSection = document.querySelector('.training-overview');
-
-        if (!window.TrainingShared || !window.TrainingComponents) {
-            overviewSection?.classList.add('is-hidden');
-            return;
-        }
-
-        trainingUnsubscribe = TrainingShared.onChange((snapshot) => {
-            trainingState = snapshot;
-            renderTrainingPanels();
-            renderSummary();
-            renderOverview();
-            renderNotifications();
-            renderCertificatePanel();
-        });
-
-        trainingState = TrainingShared.getSnapshot ? TrainingShared.getSnapshot() : trainingState;
-
-        window.addEventListener('beforeunload', () => {
-            try { trainingUnsubscribe?.(); } catch (err) { console.warn(err); }
-        });
-    }
-
-    function renderTrainingPanels() {
-        if (!trainingState || !window.TrainingComponents) return;
-        renderTrainingOverview();
-        renderTrainingSchedule();
-        renderTrainingAttendance();
-        renderTrainingChecklist();
-        updateTrainingCompletionUI();
-    }
-
-    function renderTrainingOverview() {
-        const ring = document.getElementById('trainingRing');
-        const percentEl = document.getElementById('trainingPercent');
-        const noteEl = document.getElementById('trainingSummaryNote');
-        const completedEl = document.getElementById('trainingCompletedCount');
-        const pendingEl = document.getElementById('trainingPendingCount');
-        const absenceEl = document.getElementById('trainingAbsenceCount');
-        const excusedEl = document.getElementById('trainingExcusedCount');
-        const nextCard = document.getElementById('trainingNextCard');
-        const nextTitleEl = document.getElementById('trainingNextTitle');
-        const nextMetaEl = document.getElementById('trainingNextMeta');
-        if (!ring || !percentEl || !noteEl || !completedEl || !pendingEl || !absenceEl || !excusedEl || !nextCard || !nextTitleEl || !nextMetaEl) {
-            return;
-        }
-
-        const progress = beneficiaryId ? TrainingShared.getBeneficiaryProgress(beneficiaryId) : { sessionCount: trainingState.sessions?.length || 0 };
-        const totalSessions = progress.sessionCount || (trainingState.sessions?.length ?? 0);
-        const completed = progress.present || 0;
-        const absences = progress.absent || 0;
-        const excused = progress.excused || 0;
-        const pending = progress.pending != null ? progress.pending : Math.max(totalSessions - completed - absences - excused, 0);
-        const percent = totalSessions ? Math.round((completed / totalSessions) * 100) : 0;
-        trainingPercent = percent;
-
-        percentEl.textContent = `${percent}%`;
-        ring.style.setProperty('--progress', `${Math.min(100, percent) * 3.6}deg`);
-        const progressFill = document.getElementById('trainingProgressFill');
-        if (progressFill) progressFill.style.width = `${Math.min(100, percent)}%`;
-        setText('trainingProgressMeta', `${percent}% attendance completion`);
-        setText('trainingStreakBadge', `Streak: ${computeAttendanceStreak()} sessions`);
-
-        setText('trainingCompletedCount', formatCount(completed, 'module'));
-        setText('trainingPendingCount', formatCount(pending, 'upcoming module', 'upcoming modules'));
-        setText('trainingAbsenceCount', formatCount(absences, 'absence'));
-        setText('trainingExcusedCount', formatCount(excused, 'excused absence'));
-
-        setText('attendancePresentCount', String(completed));
-        setText('attendancePendingCount', String(pending));
-        setText('attendanceAbsentCount', String(absences));
-        setText('attendanceLateCount', String(excused));
-
-        if (!totalSessions) {
-            noteEl.textContent = 'Training assignments will appear here once scheduled.';
-        } else if (percent >= 100) {
-            noteEl.textContent = 'All training modules complete. Await certification updates from your officer.';
-        } else if (pending > 0) {
-            noteEl.textContent = `You have ${formatCount(pending, 'module')} left to attend.`;
-        } else {
-            noteEl.textContent = 'Great job maintaining your attendance. Keep reviewing your modules.';
-        }
-
-        const nextSession = TrainingShared.getUpcomingSession();
-        if (!nextSession) {
-            nextCard.classList.add('is-empty');
-            setText('trainingNextTitle', 'No upcoming session scheduled');
-            setText('trainingNextMeta', '');
-        } else {
-            nextCard.classList.remove('is-empty');
-            const windowCopy = TrainingShared.formatSessionWindow(nextSession);
-            const parts = [
-                windowCopy?.dateText || formatDate(nextSession.start),
-                windowCopy?.timeRange || '',
-                nextSession.venue || '',
-                nextSession.facilitator ? `Facilitator: ${nextSession.facilitator}` : ''
-            ].filter(Boolean);
-            setText('trainingNextTitle', nextSession.title || nextSession.label || 'Training session');
-            setText('trainingNextMeta', parts.join(' | '));
-        }
-    }
-
-    function renderTrainingSchedule() {
-        const grid = document.getElementById('trainingScheduleGrid');
-        if (!grid) return;
-        const sessions = trainingState.sessions || [];
-        grid.innerHTML = TrainingComponents.buildScheduleGrid(sessions, {
-            emptyCopy: 'Training schedule will appear here once assigned.'
-        });
-    }
-
-    function renderTrainingAttendance() {
-        const tbody = document.getElementById('attendanceTableBody');
-        if (!tbody) return;
-        const sessions = trainingState.sessions || [];
-        const attendanceMap = beneficiaryId ? TrainingShared.getAttendanceMap(beneficiaryId) : {};
-        tbody.innerHTML = buildAttendanceRows(sessions, attendanceMap);
-    }
-
-    function buildAttendanceRows(sessions, attendanceMap) {
-        if (!sessions.length) {
-            return '<tr class="empty"><td colspan="5">Attendance updates will appear once sessions begin.</td></tr>';
-        }
-        return sessions.map((session) => {
-            const statusValue = resolveAttendanceStatus(attendanceMap?.[session.id]);
-            const badge = mapAttendanceBadge(statusValue);
-            const windowCopy = TrainingShared?.formatSessionWindow
-                ? TrainingShared.formatSessionWindow(session)
-                : { dateText: formatDate(session.start), timeRange: '' };
-            const remarks = session.remarks || session.focus || '-';
-            const proofLink = statusValue === 'present' ? '<span class="muted">No file</span>' : '<span class="muted">--</span>';
-            return `
-                <tr>
-                    <td>
-                        <div class="table-primary">${escapeHtml(session.title || session.label || 'Training session')}</div>
-                        <div class="table-secondary">${escapeHtml(session.facilitator || 'Facilitator TBA')}</div>
-                    </td>
-                    <td>
-                        <div>${escapeHtml(windowCopy.dateText || '--')}</div>
-                        <small class="table-secondary">${escapeHtml(windowCopy.timeRange || '')}</small>
-                    </td>
-                    <td><span class="badge-status ${badge.className}">${badge.label}</span></td>
-                    <td>${escapeHtml(remarks)}</td>
-                    <td>${proofLink}</td>
-                </tr>
-            `;
-        }).join('');
-    }
-
-    function renderTrainingChecklist() {
-        const list = document.getElementById('trainingChecklist');
-        if (!list) return;
-        const sessions = trainingState.sessions || [];
-        list.innerHTML = '';
-        if (!sessions.length) {
-            list.innerHTML = '<li class="empty">Training checklist will appear once sessions are scheduled.</li>';
-            return;
-        }
-
-        sessions.forEach((session) => {
-            const label = session.title || session.label || 'Training session';
-            const requirements = resolveTrainingRequirements(label);
-            const item = document.createElement('li');
-            item.innerHTML = `<span>${escapeHtml(label)}</span><span>${escapeHtml(requirements.join(', '))}</span>`;
-            list.appendChild(item);
-        });
-    }
-
-    function updateTrainingCompletionUI() {
-        const completedCard = document.getElementById('trainingCompletedCard');
-        const tabs = document.getElementById('trainingTabs');
-        const dashboard = document.querySelector('.training-dashboard');
-        const progressTrack = document.querySelector('.training-progress-track');
-        const progressMeta = document.getElementById('trainingProgressMeta');
-        const streak = document.getElementById('trainingStreakBadge');
-        const checklist = document.querySelector('.training-checklist');
-        const panels = Array.from(document.querySelectorAll('.training-panel'));
-        if (!completedCard) return;
-
-        const sessions = trainingState?.sessions || [];
-        const progress = beneficiaryId ? TrainingShared.getBeneficiaryProgress(beneficiaryId) : { sessionCount: sessions.length };
-        const totalSessions = progress.sessionCount || sessions.length;
-        const completed = progress.present || 0;
-        const percent = totalSessions ? Math.round((completed / totalSessions) * 100) : 0;
-        const isComplete = totalSessions > 0 && percent >= 100;
-
-        completedCard.classList.toggle('is-hidden', !isComplete);
-        tabs?.classList.toggle('is-hidden', isComplete);
-        dashboard?.classList.toggle('is-hidden', isComplete);
-        progressTrack?.classList.toggle('is-hidden', isComplete);
-        progressMeta?.classList.toggle('is-hidden', isComplete);
-        streak?.classList.toggle('is-hidden', isComplete);
-        checklist?.classList.toggle('is-hidden', isComplete);
-        panels.forEach((panel) => panel.classList.toggle('is-hidden', isComplete));
-
-        if (isComplete) {
-            const completedMeta = document.getElementById('trainingCompletedMeta');
-            const attendanceMeta = document.getElementById('trainingCompletedAttendance');
-            const certificateMeta = document.getElementById('trainingCertificateIssued');
-            const viewBtn = document.getElementById('trainingViewCertificate');
-            const key = (user.email || '').toLowerCase();
-            const record = key ? certificateUploads[key] : null;
-            if (completedMeta) completedMeta.textContent = `${totalSessions} modules completed`;
-            if (attendanceMeta) attendanceMeta.textContent = 'Attendance: 100%';
-            if (certificateMeta) {
-                certificateMeta.textContent = record?.uploadedAt
-                    ? `Certificate issued on ${formatDate(record.uploadedAt)}`
-                    : 'Certificate pending upload';
-            }
-            if (viewBtn) viewBtn.disabled = !record;
-        }
-    }
-
-    function handleViewCertificate() {
-        const key = (user.email || '').toLowerCase();
-        const record = key ? certificateUploads[key] : null;
-        if (!record) {
-            showToast('No certificate on file yet.', 'info');
-            return;
-        }
-        showToast(`Certificate ready: ${record.fileName || 'Certificate'}`, 'success');
     }
 
     function setText(id, value) {
@@ -1556,59 +1110,6 @@
         const date = new Date(padMonth(monthText));
         if (Number.isNaN(date.getTime())) return null;
         return date;
-    }
-
-    function initTrainingTabs() {
-        const tabs = Array.from(document.querySelectorAll('.training-tab'));
-        const panels = Array.from(document.querySelectorAll('.training-panel'));
-        if (!tabs.length || !panels.length) return;
-
-        const setActive = (target) => {
-            const tabName = target?.dataset?.trainingTab;
-            if (!tabName) return;
-            tabs.forEach((tab) => {
-                const isActive = tab.dataset.trainingTab === tabName;
-                tab.classList.toggle('is-active', isActive);
-                tab.setAttribute('aria-selected', String(isActive));
-            });
-            panels.forEach((panel) => {
-                panel.classList.toggle('is-active', panel.dataset.trainingPanel === tabName);
-            });
-        };
-
-        tabs.forEach((tab) => {
-            tab.addEventListener('click', () => setActive(tab));
-        });
-
-        setActive(tabs[0]);
-    }
-
-    function computeAttendanceStreak() {
-        const sessions = trainingState?.sessions || [];
-        if (!sessions.length || !beneficiaryId) return 0;
-        const attendanceMap = TrainingShared.getAttendanceMap(beneficiaryId) || {};
-        const sorted = sessions.slice().sort((a, b) => {
-            const aTime = new Date(a.start || 0).getTime();
-            const bTime = new Date(b.start || 0).getTime();
-            return bTime - aTime;
-        });
-        let streak = 0;
-        for (const session of sorted) {
-            const status = resolveAttendanceStatus(attendanceMap[session.id]);
-            if (String(status).toLowerCase() === 'present') {
-                streak += 1;
-            } else {
-                break;
-            }
-        }
-        return streak;
-    }
-
-    function resolveTrainingRequirements(label) {
-        const normalized = String(label || '').toLowerCase();
-        const match = TRAINING_REQUIREMENT_MAP.find((entry) => normalized.includes(entry.match));
-        if (match) return match.requirements;
-        return ['Attendance sheet', 'Certificate upload'];
     }
 
     function isReleasedStatus(status) {

@@ -28,7 +28,6 @@
             <div class="login-right-panel">
                 <div class="login-header">
                     <h1>LOGIN</h1>
-                    <p class="mb-0 text-muted">Administrator and Project Officer access only.</p>
                 </div>
                 
                 <form id="loginForm" class="login-form" novalidate>
@@ -57,6 +56,13 @@
     <!-- Main System Container - Placeholder for redirection -->
     <div id="mainSystem" style="display: none;">
         <!-- This div is kept as a placeholder for the login/logout functionality -->
+    </div>
+
+    <div class="auth-loading-screen auth-loading-screen--staff" id="authLoadingScreen" hidden aria-live="polite" aria-label="Loading">
+        <div class="auth-loading-screen__orb" aria-hidden="true"></div>
+        <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="" class="auth-loading-screen__logo">
+        <strong class="auth-loading-screen__title">SMART LEAP</strong>
+        <p class="auth-loading-screen__copy" id="authLoadingCopy">Authorizing staff access...</p>
     </div>
 
     <!-- Scripts -->

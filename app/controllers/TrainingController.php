@@ -129,13 +129,39 @@ class TrainingController extends Controller
         $trainingInviteeId = (int) ($_POST['trainingInviteeId'] ?? 0);
         $status = trim((string) ($_POST['status'] ?? ''));
         $remarks = trim((string) ($_POST['remarks'] ?? ''));
+        $proofAttachment = isset($_FILES['proofAttachment']) && is_array($_FILES['proofAttachment'])
+            ? $_FILES['proofAttachment']
+            : null;
 
         $service = new TrainingService();
         $schemaError = $service->schemaError();
         if ($schemaError !== null) {
             response_json(['ok' => false, 'message' => $schemaError], 500);
         }
-        $result = $service->updateAttendance($trainingInviteeId, $status, $remarks !== '' ? $remarks : null, $this->authorizeTrainingActor());
+        $result = $service->updateAttendance(
+            $trainingInviteeId,
+            $status,
+            $remarks !== '' ? $remarks : null,
+            $this->authorizeTrainingActor(),
+            $proofAttachment
+        );
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function delete(): never
+    {
+        $programId = (int) ($_POST['programId'] ?? 0);
+
+        $service = new TrainingService();
+        $schemaError = $service->schemaError();
+        if ($schemaError !== null) {
+            response_json(['ok' => false, 'message' => $schemaError], 500);
+        }
+        $result = $service->removeProgram($programId, $this->authorizeTrainingActor());
         if (!$result['ok']) {
             response_json($result, 422);
         }

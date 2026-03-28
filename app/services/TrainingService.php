@@ -17,9 +17,9 @@ class TrainingService
         }
 
         $required = [
-            'training_programs' => ['speaker', 'what_to_bring', 'instructions'],
-            'training_invitees' => ['applicant_profile_id', 'remarks', 'notified_at', 'last_notice_sent_at', 'updated_by_user_id', 'post_approval_unlocked_at'],
-            'attendance_records' => ['training_invitee_id', 'applicant_profile_id', 'remarks', 'recorded_by_user_id'],
+            'training_programs' => ['speaker', 'what_to_bring', 'instructions', 'training_scope_mode', 'batch_group_count', 'batch_group_size'],
+            'training_invitees' => ['applicant_profile_id', 'remarks', 'notified_at', 'last_notice_sent_at', 'updated_by_user_id', 'post_approval_unlocked_at', 'batch_group_number'],
+            'attendance_records' => ['training_invitee_id', 'applicant_profile_id', 'remarks', 'recorded_by_user_id', 'proof_file_path', 'proof_original_name', 'proof_mime_type', 'proof_file_size'],
         ];
 
         foreach ($required as $table => $columns) {
@@ -35,7 +35,7 @@ class TrainingService
             $existing = array_map(static fn (array $row): string => (string) ($row['Field'] ?? ''), $rows);
             $missing = array_values(array_diff($columns, $existing));
             if ($missing !== []) {
-                $this->cachedSchemaError = 'Training database update required. Import or run database/migrations/027_alter_training_workflow_foundation.sql before using the training module.';
+                $this->cachedSchemaError = 'Training database update required. Import or run database/migrations/033_expand_training_batch_and_excused_workflow.sql before using the training module.';
                 return $this->cachedSchemaError;
             }
         }
@@ -50,7 +50,6 @@ class TrainingService
         }
 
         $params = [];
-        $joins = [];
         $conditions = ['1 = 1'];
 
         if ($this->isProjectOfficer($actor)) {
@@ -59,13 +58,21 @@ class TrainingService
                 return $this->emptyListing();
             }
 
-            $joins[] = 'INNER JOIN training_invitees ON training_invitees.training_program_id = training_programs.id';
-            $joins[] = 'INNER JOIN applicant_profiles ON applicant_profiles.id = training_invitees.applicant_profile_id';
-            $joins[] = 'INNER JOIN staff_barangay_assignments AS scope_assignments
+            $params['scope_staff_profile_id'] = $staffProfileId;
+            $params['scope_user_id'] = (int) ($actor['id'] ?? 0);
+            $conditions[] = '(
+                training_programs.created_by_user_id = :scope_user_id
+                OR EXISTS (
+                    SELECT 1
+                    FROM training_invitees
+                    INNER JOIN applicant_profiles ON applicant_profiles.id = training_invitees.applicant_profile_id
+                    INNER JOIN staff_barangay_assignments AS scope_assignments
                         ON scope_assignments.barangay_id = applicant_profiles.barangay_id
                        AND scope_assignments.staff_profile_id = :scope_staff_profile_id
-                       AND scope_assignments.ended_at IS NULL';
-            $params['scope_staff_profile_id'] = $staffProfileId;
+                       AND scope_assignments.ended_at IS NULL
+                    WHERE training_invitees.training_program_id = training_programs.id
+                )
+            )';
         }
 
         $status = trim((string) ($filters['status'] ?? ''));
@@ -97,6 +104,9 @@ class TrainingService
                 training_programs.ends_at,
                 training_programs.what_to_bring,
                 training_programs.instructions,
+                training_programs.training_scope_mode,
+                training_programs.batch_group_count,
+                training_programs.batch_group_size,
                 training_programs.status,
                 training_programs.created_by_user_id,
                 training_programs.created_at,
@@ -120,11 +130,16 @@ class TrainingService
                     SELECT COUNT(*)
                     FROM training_invitees
                     WHERE training_invitees.training_program_id = training_programs.id
+                      AND training_invitees.invite_status = "Excused"
+                ) AS excused_count,
+                (
+                    SELECT COUNT(*)
+                    FROM training_invitees
+                    WHERE training_invitees.training_program_id = training_programs.id
                       AND training_invitees.invite_status = "Notified"
                 ) AS notified_count
             FROM training_programs
             LEFT JOIN users ON users.id = training_programs.created_by_user_id
-            ' . implode("\n", $joins) . '
             WHERE ' . implode(' AND ', $conditions) . '
             ORDER BY training_programs.starts_at DESC, training_programs.id DESC
         ';
@@ -168,13 +183,21 @@ class TrainingService
 
         $startsAt = $input['data']['date'] . ' ' . $input['data']['startTime'] . ':00';
         $endsAt = $input['data']['date'] . ' ' . $input['data']['endTime'] . ':00';
+        if ($input['data']['trainingMode'] === TRAINING_SCOPE_BATCH && $programId !== null && $programId > 0) {
+            $existingInviteeCount = $this->countInvitees($programId);
+            $capacity = $input['data']['batchGroupCount'] * $input['data']['batchGroupSize'];
+            if ($existingInviteeCount > $capacity) {
+                return ['ok' => false, 'errors' => ['trainingMode' => 'This session already has more than 255 participants. Keep it in All mode or reduce the roster before switching to Batch mode.']];
+            }
+        }
 
         try {
             if ($programId !== null && $programId > 0) {
                 $statement = db()->prepare(
                     'UPDATE training_programs
                      SET title = :title, description = :description, venue = :venue, speaker = :speaker, starts_at = :starts_at, ends_at = :ends_at,
-                         what_to_bring = :what_to_bring, instructions = :instructions, status = :status, updated_at = NOW()
+                         what_to_bring = :what_to_bring, instructions = :instructions, training_scope_mode = :training_scope_mode,
+                         batch_group_count = :batch_group_count, batch_group_size = :batch_group_size, status = :status, updated_at = NOW()
                      WHERE id = :id'
                 );
                 $statement->execute([
@@ -186,14 +209,17 @@ class TrainingService
                     'ends_at' => $endsAt,
                     'what_to_bring' => $input['data']['whatToBring'] ?: null,
                     'instructions' => $input['data']['instructions'] ?: null,
+                    'training_scope_mode' => $input['data']['trainingMode'],
+                    'batch_group_count' => $input['data']['batchGroupCount'],
+                    'batch_group_size' => $input['data']['batchGroupSize'],
                     'status' => $input['data']['status'],
                     'id' => $programId,
                 ]);
             } else {
                 $statement = db()->prepare(
                     'INSERT INTO training_programs
-                     (title, description, venue, speaker, starts_at, ends_at, what_to_bring, instructions, status, created_by_user_id)
-                     VALUES (:title, :description, :venue, :speaker, :starts_at, :ends_at, :what_to_bring, :instructions, :status, :created_by_user_id)'
+                     (title, description, venue, speaker, starts_at, ends_at, what_to_bring, instructions, training_scope_mode, batch_group_count, batch_group_size, status, created_by_user_id)
+                     VALUES (:title, :description, :venue, :speaker, :starts_at, :ends_at, :what_to_bring, :instructions, :training_scope_mode, :batch_group_count, :batch_group_size, :status, :created_by_user_id)'
                 );
                 $statement->execute([
                     'title' => $input['data']['programName'],
@@ -204,11 +230,16 @@ class TrainingService
                     'ends_at' => $endsAt,
                     'what_to_bring' => $input['data']['whatToBring'] ?: null,
                     'instructions' => $input['data']['instructions'] ?: null,
+                    'training_scope_mode' => $input['data']['trainingMode'],
+                    'batch_group_count' => $input['data']['batchGroupCount'],
+                    'batch_group_size' => $input['data']['batchGroupSize'],
                     'status' => $input['data']['status'],
                     'created_by_user_id' => (int) $actor['id'],
                 ]);
                 $programId = (int) db()->lastInsertId();
             }
+
+            $this->syncBatchAssignmentsForProgram($programId, $input['data'], (int) $actor['id']);
         } catch (\Throwable $exception) {
             log_database_query_failure('training.save_program', $exception, ['program_id' => $programId]);
             return ['ok' => false, 'errors' => ['general' => 'Unable to save training program right now.']];
@@ -265,6 +296,19 @@ class TrainingService
             }
         }
 
+        usort($targetIds, function (int $left, int $right) use ($eligibleMap): int {
+            $leftName = (string) ($eligibleMap[$left]['name'] ?? '');
+            $rightName = (string) ($eligibleMap[$right]['name'] ?? '');
+            return strcasecmp($leftName, $rightName);
+        });
+
+        $assignmentPlan = $this->resolveBatchAssignmentPlan($program, $targetIds);
+        if (($assignmentPlan['errors'] ?? []) !== []) {
+            return ['ok' => false, 'errors' => $assignmentPlan['errors']];
+        }
+
+        $groupAssignments = $assignmentPlan['groups'] ?? [];
+
         $pdo = db();
         $pdo->beginTransaction();
 
@@ -279,22 +323,43 @@ class TrainingService
 
             $insert = $pdo->prepare(
                 'INSERT INTO training_invitees
-                 (training_program_id, applicant_profile_id, beneficiary_profile_id, invite_status, updated_by_user_id)
-                 VALUES (:training_program_id, :applicant_profile_id, :beneficiary_profile_id, :invite_status, :updated_by_user_id)'
+                 (training_program_id, applicant_profile_id, beneficiary_profile_id, invite_status, updated_by_user_id, batch_group_number)
+                 VALUES (:training_program_id, :applicant_profile_id, :beneficiary_profile_id, :invite_status, :updated_by_user_id, :batch_group_number)'
+            );
+
+            $updateAssignment = $pdo->prepare(
+                'UPDATE training_invitees
+                 SET beneficiary_profile_id = :beneficiary_profile_id,
+                     batch_group_number = :batch_group_number,
+                     updated_by_user_id = :updated_by_user_id,
+                     updated_at = NOW()
+                 WHERE training_program_id = :training_program_id
+                   AND applicant_profile_id = :applicant_profile_id'
             );
 
             foreach ($targetIds as $applicantProfileId) {
+                $beneficiaryProfileId = $eligibleMap[$applicantProfileId]['beneficiaryProfileId']
+                    ?: (new BeneficiaryProfileService())->ensureForApplicantProfile($applicantProfileId);
+                $batchGroupNumber = $groupAssignments[$applicantProfileId] ?? null;
+
                 if (isset($existingMap[$applicantProfileId])) {
+                    $updateAssignment->execute([
+                        'beneficiary_profile_id' => $beneficiaryProfileId,
+                        'batch_group_number' => $batchGroupNumber,
+                        'updated_by_user_id' => (int) $actor['id'],
+                        'training_program_id' => $programId,
+                        'applicant_profile_id' => $applicantProfileId,
+                    ]);
                     continue;
                 }
 
                 $insert->execute([
                     'training_program_id' => $programId,
                     'applicant_profile_id' => $applicantProfileId,
-                    'beneficiary_profile_id' => $eligibleMap[$applicantProfileId]['beneficiaryProfileId']
-                        ?: (new BeneficiaryProfileService())->ensureForApplicantProfile($applicantProfileId),
+                    'beneficiary_profile_id' => $beneficiaryProfileId,
                     'invite_status' => TRAINING_STATUS_SCHEDULED,
                     'updated_by_user_id' => (int) $actor['id'],
+                    'batch_group_number' => $batchGroupNumber,
                 ]);
             }
 
@@ -416,7 +481,7 @@ class TrainingService
         return ['ok' => true, 'sentCount' => $sentCount];
     }
 
-    public function updateAttendance(int $trainingInviteeId, string $status, ?string $remarks, array $actor): array
+    public function updateAttendance(int $trainingInviteeId, string $status, ?string $remarks, array $actor, ?array $proofAttachment = null): array
     {
         if ($this->schemaError() !== null) {
             return ['ok' => false, 'errors' => ['general' => $this->schemaError()]];
@@ -432,7 +497,13 @@ class TrainingService
         }
 
         $attendanceService = new AttendanceService();
-        $result = $attendanceService->updateInviteeAttendance((int) $invitee['id'], $status, $remarks, (int) ($actor['id'] ?? 0));
+        $result = $attendanceService->updateInviteeAttendance(
+            (int) $invitee['id'],
+            $status,
+            $remarks,
+            (int) ($actor['id'] ?? 0),
+            $proofAttachment
+        );
         if ($result['ok'] ?? false) {
             (new AuditLogService())->record((int) ($actor['id'] ?? 0), 'training.attendance_updated', 'training_invitees', (int) $invitee['id'], [
                 'status' => $status,
@@ -442,24 +513,57 @@ class TrainingService
         return $result;
     }
 
+    public function removeProgram(int $programId, array $actor): array
+    {
+        if ($this->schemaError() !== null) {
+            return ['ok' => false, 'errors' => ['general' => $this->schemaError()]];
+        }
+
+        if (!$this->isAdmin($actor) && !$this->isProjectOfficer($actor)) {
+            return ['ok' => false, 'errors' => ['general' => 'Only authorized CSWDD staff can remove training programs.']];
+        }
+
+        $program = $this->findProgram($programId, $actor);
+        if ($program === null) {
+            return ['ok' => false, 'errors' => ['program' => 'Training program not found.']];
+        }
+
+        $pdo = db();
+        $pdo->beginTransaction();
+
+        try {
+            $pdo->prepare(
+                'DELETE attendance_records
+                 FROM attendance_records
+                 INNER JOIN training_invitees ON training_invitees.id = attendance_records.training_invitee_id
+                 WHERE training_invitees.training_program_id = :training_program_id'
+            )->execute(['training_program_id' => $programId]);
+
+            $pdo->prepare('DELETE FROM training_invitees WHERE training_program_id = :training_program_id')
+                ->execute(['training_program_id' => $programId]);
+
+            $pdo->prepare('DELETE FROM training_programs WHERE id = :id')
+                ->execute(['id' => $programId]);
+
+            $pdo->commit();
+        } catch (\Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            log_database_query_failure('training.remove_program', $exception, ['program_id' => $programId]);
+            return ['ok' => false, 'errors' => ['general' => 'Unable to remove training session right now.']];
+        }
+
+        (new AuditLogService())->record((int) ($actor['id'] ?? 0), 'training.program_removed', 'training_programs', $programId, [
+            'program_name' => $program['programName'] ?? null,
+        ]);
+
+        return ['ok' => true];
+    }
+
     public function eligibleInvitees(array $actor): array
     {
-        $params = [];
-        $joins = [];
-        $conditions = ['LOWER(applications.status) IN ("approved", "approved for training", "approvedfortraining")'];
-
-        if ($this->isProjectOfficer($actor)) {
-            $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
-            if ($staffProfileId === null) {
-                return [];
-            }
-
-            $joins[] = 'INNER JOIN staff_barangay_assignments AS scope_assignments
-                        ON scope_assignments.barangay_id = applicant_profiles.barangay_id
-                       AND scope_assignments.staff_profile_id = :scope_staff_profile_id
-                       AND scope_assignments.ended_at IS NULL';
-            $params['scope_staff_profile_id'] = $staffProfileId;
-        }
+        $conditions = ['LOWER(REPLACE(applications.status, "_", " ")) IN ("approved", "approved for training")'];
 
         $sql = '
             SELECT
@@ -480,16 +584,12 @@ class TrainingService
             INNER JOIN users ON users.id = applicant_profiles.user_id
             LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
             LEFT JOIN beneficiary_profiles ON beneficiary_profiles.applicant_profile_id = applicant_profiles.id
-            ' . implode("\n", $joins) . '
             WHERE ' . implode(' AND ', $conditions) . '
             ORDER BY users.full_name ASC
         ';
 
         try {
             $statement = db()->prepare($sql);
-            foreach ($params as $key => $value) {
-                $statement->bindValue(':' . $key, $value);
-            }
             $statement->execute();
             $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $exception) {
@@ -520,23 +620,6 @@ class TrainingService
             return [];
         }
 
-        $params = ['training_program_id' => $programId];
-        $joins = [];
-        $conditions = ['training_invitees.training_program_id = :training_program_id'];
-
-        if ($this->isProjectOfficer($actor)) {
-            $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
-            if ($staffProfileId === null) {
-                return [];
-            }
-
-            $joins[] = 'INNER JOIN staff_barangay_assignments AS scope_assignments
-                        ON scope_assignments.barangay_id = applicant_profiles.barangay_id
-                       AND scope_assignments.staff_profile_id = :scope_staff_profile_id
-                       AND scope_assignments.ended_at IS NULL';
-            $params['scope_staff_profile_id'] = $staffProfileId;
-        }
-
         $sql = '
             SELECT
                 training_invitees.id,
@@ -547,9 +630,11 @@ class TrainingService
                 training_invitees.post_approval_unlocked_at,
                 training_invitees.applicant_profile_id,
                 training_invitees.beneficiary_profile_id,
+                training_invitees.batch_group_number,
                 users.id AS user_id,
                 users.full_name,
                 users.email,
+                applicant_profiles.contact_number,
                 applicant_profiles.business_name,
                 applicant_profiles.sector,
                 applicant_profiles.livelihood_type,
@@ -557,6 +642,10 @@ class TrainingService
                 attendance_records.attendance_status,
                 attendance_records.remarks AS attendance_remarks,
                 attendance_records.checked_in_at,
+                attendance_records.proof_file_path,
+                attendance_records.proof_original_name,
+                attendance_records.proof_mime_type,
+                attendance_records.proof_file_size,
                 updated_by.full_name AS updated_by_name
             FROM training_invitees
             INNER JOIN applicant_profiles ON applicant_profiles.id = training_invitees.applicant_profile_id
@@ -565,17 +654,13 @@ class TrainingService
             LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
             LEFT JOIN attendance_records ON attendance_records.training_invitee_id = training_invitees.id
             LEFT JOIN users AS updated_by ON updated_by.id = training_invitees.updated_by_user_id
-            ' . implode("\n", $joins) . '
-            WHERE ' . implode(' AND ', $conditions) . '
+            WHERE training_invitees.training_program_id = :training_program_id
             ORDER BY users.full_name ASC
         ';
 
         try {
             $statement = db()->prepare($sql);
-            foreach ($params as $key => $value) {
-                $statement->bindValue(':' . $key, $value);
-            }
-            $statement->execute();
+            $statement->execute(['training_program_id' => $programId]);
             $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $exception) {
             log_database_query_failure('training.program_invitees', $exception, ['program_id' => $programId]);
@@ -594,11 +679,21 @@ class TrainingService
                 'lastNoticeSentAt' => $row['last_notice_sent_at'],
                 'postApprovalUnlockedAt' => $row['post_approval_unlocked_at'],
                 'checkedInAt' => $row['checked_in_at'],
+                'batchGroupNumber' => $row['batch_group_number'] !== null ? (int) $row['batch_group_number'] : null,
                 'barangay' => $row['barangay_name'],
                 'businessName' => $row['business_name'],
                 'sector' => $row['sector'],
                 'livelihood' => $row['livelihood_type'],
+                'contactNumber' => $row['contact_number'],
                 'updatedByName' => $row['updated_by_name'],
+                'proofAttachment' => ($row['proof_file_path'] ?? null)
+                    ? [
+                        'file_path' => $row['proof_file_path'],
+                        'original_name' => $row['proof_original_name'],
+                        'mime_type' => $row['proof_mime_type'],
+                        'file_size' => $row['proof_file_size'] !== null ? (int) $row['proof_file_size'] : null,
+                    ]
+                    : null,
                 'user' => [
                     'id' => (int) $row['user_id'],
                     'name' => $row['full_name'],
@@ -635,12 +730,26 @@ class TrainingService
             'endTime' => $normalizedEndTime,
             'whatToBring' => trim((string) ($payload['whatToBring'] ?? '')),
             'instructions' => trim((string) ($payload['instructions'] ?? '')),
+            'trainingMode' => strtolower(trim((string) ($payload['trainingMode'] ?? TRAINING_SCOPE_ALL))),
+            'batchGroupCount' => (int) ($payload['batchGroupCount'] ?? TRAINING_BATCH_GROUP_COUNT),
+            'batchGroupSize' => (int) ($payload['batchGroupSize'] ?? TRAINING_BATCH_GROUP_SIZE),
             'status' => trim((string) ($payload['status'] ?? TRAINING_STATUS_SCHEDULED)),
         ];
 
         $errors = [];
         if ($data['programName'] === '') {
             $errors['programName'] = 'Program name is required.';
+        }
+        if (!in_array($data['trainingMode'], [TRAINING_SCOPE_ALL, TRAINING_SCOPE_BATCH], true)) {
+            $errors['trainingMode'] = 'Training mode must be either All or Batch.';
+        }
+        if ($data['trainingMode'] === TRAINING_SCOPE_BATCH) {
+            if ($data['batchGroupCount'] !== TRAINING_BATCH_GROUP_COUNT) {
+                $errors['batchGroupCount'] = 'Batch training uses exactly 3 groups.';
+            }
+            if ($data['batchGroupSize'] !== TRAINING_BATCH_GROUP_SIZE) {
+                $errors['batchGroupSize'] = 'Each batch group can hold up to 85 participants.';
+            }
         }
         if ($data['date'] === '') {
             $errors['date'] = 'Training date is required.';
@@ -719,6 +828,7 @@ class TrainingService
             'completed' => 0,
             'participants' => 0,
             'attended' => 0,
+            'excused' => 0,
         ];
 
         foreach ($programs as $program) {
@@ -734,6 +844,7 @@ class TrainingService
             }
             $summary['participants'] += (int) ($program['participantCount'] ?? 0);
             $summary['attended'] += (int) ($program['completedCount'] ?? 0);
+            $summary['excused'] += (int) ($program['excusedCount'] ?? 0);
         }
 
         return $summary;
@@ -758,11 +869,17 @@ class TrainingService
             'endsAt' => $endsAt,
             'whatToBring' => $row['what_to_bring'],
             'instructions' => $row['instructions'],
+            'trainingMode' => strtolower((string) ($row['training_scope_mode'] ?? TRAINING_SCOPE_ALL)) === TRAINING_SCOPE_BATCH
+                ? TRAINING_SCOPE_BATCH
+                : TRAINING_SCOPE_ALL,
+            'batchGroupCount' => (int) ($row['batch_group_count'] ?? TRAINING_BATCH_GROUP_COUNT),
+            'batchGroupSize' => (int) ($row['batch_group_size'] ?? TRAINING_BATCH_GROUP_SIZE),
             'status' => $this->deriveProgramStatus($row),
             'createdBy' => $row['created_by_name'],
             'participantCount' => (int) $row['participant_count'],
             'completedCount' => (int) $row['completed_count'],
             'attendedCount' => (int) ($row['attended_count'] ?? 0),
+            'excusedCount' => (int) ($row['excused_count'] ?? 0),
             'notifiedCount' => (int) ($row['notified_count'] ?? 0),
             'createdAt' => $row['created_at'],
         ];
@@ -791,6 +908,84 @@ class TrainingService
         return TRAINING_STATUS_SCHEDULED;
     }
 
+    private function resolveBatchAssignmentPlan(array $program, array $targetIds): array
+    {
+        $mode = strtolower((string) ($program['trainingMode'] ?? TRAINING_SCOPE_ALL));
+        if ($mode !== TRAINING_SCOPE_BATCH) {
+            return ['errors' => [], 'groups' => []];
+        }
+
+        $groupCount = max(1, (int) ($program['batchGroupCount'] ?? TRAINING_BATCH_GROUP_COUNT));
+        $groupSize = max(1, (int) ($program['batchGroupSize'] ?? TRAINING_BATCH_GROUP_SIZE));
+        $capacity = $groupCount * $groupSize;
+
+        if (count($targetIds) > $capacity) {
+            return [
+                'errors' => [
+                    'invitees' => sprintf(
+                        'Batch training supports up to %d participants only (%d groups x %d participants). Use All mode for larger training rolls.',
+                        $capacity,
+                        $groupCount,
+                        $groupSize
+                    ),
+                ],
+                'groups' => [],
+            ];
+        }
+
+        $groups = [];
+        foreach (array_values($targetIds) as $index => $applicantProfileId) {
+            $groups[$applicantProfileId] = (int) floor($index / $groupSize) + 1;
+        }
+
+        return ['errors' => [], 'groups' => $groups];
+    }
+
+    private function syncBatchAssignmentsForProgram(int $programId, array $programData, int $actorUserId): void
+    {
+        $statement = db()->prepare(
+            'SELECT training_invitees.applicant_profile_id
+             FROM training_invitees
+             INNER JOIN applicant_profiles ON applicant_profiles.id = training_invitees.applicant_profile_id
+             INNER JOIN users ON users.id = applicant_profiles.user_id
+             WHERE training_invitees.training_program_id = :training_program_id
+             ORDER BY users.full_name ASC'
+        );
+        $statement->execute(['training_program_id' => $programId]);
+        $targetIds = array_map('intval', $statement->fetchAll(PDO::FETCH_COLUMN) ?: []);
+
+        $assignmentPlan = $this->resolveBatchAssignmentPlan($programData, $targetIds);
+        if (($assignmentPlan['errors'] ?? []) !== []) {
+            throw new \RuntimeException((string) reset($assignmentPlan['errors']));
+        }
+
+        $groupAssignments = $assignmentPlan['groups'] ?? [];
+        $update = db()->prepare(
+            'UPDATE training_invitees
+             SET batch_group_number = :batch_group_number,
+                 updated_by_user_id = :updated_by_user_id,
+                 updated_at = NOW()
+             WHERE training_program_id = :training_program_id
+               AND applicant_profile_id = :applicant_profile_id'
+        );
+
+        foreach ($targetIds as $applicantProfileId) {
+            $update->execute([
+                'batch_group_number' => $groupAssignments[$applicantProfileId] ?? null,
+                'updated_by_user_id' => $actorUserId,
+                'training_program_id' => $programId,
+                'applicant_profile_id' => $applicantProfileId,
+            ]);
+        }
+    }
+
+    private function countInvitees(int $programId): int
+    {
+        $statement = db()->prepare('SELECT COUNT(*) FROM training_invitees WHERE training_program_id = :training_program_id');
+        $statement->execute(['training_program_id' => $programId]);
+        return (int) ($statement->fetchColumn() ?: 0);
+    }
+
     private function findProgram(int $programId, array $actor): ?array
     {
         $list = $this->listPrograms([], $actor)['programs'];
@@ -805,36 +1000,37 @@ class TrainingService
 
     private function findScopedInvitee(int $trainingInviteeId, array $actor): ?array
     {
-        $params = ['id' => $trainingInviteeId];
-        $joins = [];
-
-        if ($this->isProjectOfficer($actor)) {
-            $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
-            if ($staffProfileId === null) {
-                return null;
-            }
-
-            $joins[] = 'INNER JOIN applicant_profiles ON applicant_profiles.id = training_invitees.applicant_profile_id';
-            $joins[] = 'INNER JOIN staff_barangay_assignments AS scope_assignments
-                        ON scope_assignments.barangay_id = applicant_profiles.barangay_id
-                       AND scope_assignments.staff_profile_id = :scope_staff_profile_id
-                       AND scope_assignments.ended_at IS NULL';
-            $params['scope_staff_profile_id'] = $staffProfileId;
-        }
-
         $sql = '
             SELECT training_invitees.id
             FROM training_invitees
-            ' . implode("\n", $joins) . '
+            INNER JOIN training_programs ON training_programs.id = training_invitees.training_program_id
             WHERE training_invitees.id = :id
+              AND (
+                :is_admin = 1
+                OR training_programs.created_by_user_id = :actor_user_id
+                OR EXISTS (
+                    SELECT 1
+                    FROM training_invitees AS scope_invitees
+                    INNER JOIN applicant_profiles AS scope_applicants ON scope_applicants.id = scope_invitees.applicant_profile_id
+                    INNER JOIN staff_barangay_assignments AS scope_assignments
+                        ON scope_assignments.barangay_id = scope_applicants.barangay_id
+                       AND scope_assignments.staff_profile_id = :scope_staff_profile_id
+                       AND scope_assignments.ended_at IS NULL
+                    WHERE scope_invitees.id = training_invitees.id
+                )
+              )
             LIMIT 1
         ';
 
         $statement = db()->prepare($sql);
-        foreach ($params as $key => $value) {
-            $statement->bindValue(':' . $key, $value);
-        }
-        $statement->execute();
+        $statement->execute([
+            'id' => $trainingInviteeId,
+            'is_admin' => $this->isAdmin($actor) ? 1 : 0,
+            'actor_user_id' => (int) ($actor['id'] ?? 0),
+            'scope_staff_profile_id' => $this->isProjectOfficer($actor)
+                ? ($this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0)) ?? 0)
+                : 0,
+        ]);
 
         $row = $statement->fetch(PDO::FETCH_ASSOC);
         return is_array($row) ? $row : null;

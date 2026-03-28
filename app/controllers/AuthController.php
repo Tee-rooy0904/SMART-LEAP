@@ -31,9 +31,57 @@ class AuthController extends Controller
             response_json($result, 422);
         }
 
+        if (!empty($result['requiresVerification'])) {
+            response_json($result);
+        }
+
         ensure_session_started();
         session_regenerate_id(true);
         login_user($result['user']);
+
+        response_json($result);
+    }
+
+    public function showVerification(): never
+    {
+        $this->view('public/verify-account', [
+            'email' => strtolower(trim((string) ($_GET['email'] ?? ''))),
+            'mode' => strtolower(trim((string) ($_GET['mode'] ?? 'activation'))),
+            'entryPoint' => strtolower(trim((string) ($_GET['entryPoint'] ?? 'portal'))),
+        ]);
+    }
+
+    public function verifyAccount(): never
+    {
+        $service = new AuthService();
+        $result = $service->verifyChallenge(
+            (string) ($_POST['email'] ?? ''),
+            (string) ($_POST['code'] ?? ''),
+            (string) ($_POST['mode'] ?? 'activation'),
+            (string) ($_POST['entryPoint'] ?? 'portal')
+        );
+
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        ensure_session_started();
+        session_regenerate_id(true);
+        login_user($result['user']);
+
+        response_json($result);
+    }
+
+    public function resendVerification(): never
+    {
+        $service = new AuthService();
+        $result = $service->resendVerificationCode(
+            (string) ($_POST['email'] ?? ''),
+            (string) ($_POST['mode'] ?? 'activation')
+        );
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
 
         response_json($result);
     }

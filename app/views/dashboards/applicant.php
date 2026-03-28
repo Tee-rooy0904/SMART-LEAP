@@ -5,7 +5,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SMART LEAP | Applicant Dashboard</title>
+    <title>SMART LEAP | Beneficiary Portal</title>
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval.css">
 </head>
@@ -15,7 +15,7 @@
         window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     </script>
     <div class="dashboard-shell">
-        <aside class="dash-sidebar" id="appSidebar" aria-label="Applicant navigation">
+        <aside class="dash-sidebar" id="appSidebar" aria-label="Beneficiary portal navigation">
             <div class="sidebar-drawer__top">
                 <div class="sidebar-brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="sidebar-logo">
@@ -28,7 +28,7 @@
             <div class="sidebar-user">
                 <div class="sidebar-avatar" id="sidebarAvatar" aria-hidden="true">A</div>
                 <div class="sidebar-user__meta">
-                    <span class="sidebar-user__name" id="sidebarUserName">Applicant</span>
+                    <span class="sidebar-user__name" id="sidebarUserName">Beneficiary</span>
                     <span class="sidebar-user__biz" id="sidebarUserBusiness">Your livelihood</span>
                 </div>
             </div>
@@ -42,8 +42,14 @@
             <button type="button" class="btn-outline sidebar-logout" id="applicantLogoutButton">Logout</button>
         </aside>
         <button type="button" class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true" tabindex="-1"></button>
+        <div class="portal-loader" id="portalLoader" aria-live="polite">
+            <div class="portal-loader__orb" aria-hidden="true"></div>
+            <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="" class="portal-loader__logo">
+            <strong class="portal-loader__title">SMART LEAP</strong>
+            <p class="portal-loader__copy" id="portalLoaderCopy">Loading your applicant portal...</p>
+        </div>
         <div class="dash-content">
-            <header class="mobile-topbar" aria-label="Applicant mobile navigation">
+            <header class="mobile-topbar" aria-label="Beneficiary portal mobile navigation">
                 <div class="mobile-topbar__brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="mobile-topbar__logo">
                     <strong class="mobile-topbar__title">SMART LEAP</strong>
@@ -68,7 +74,7 @@
                     <div class="dash-page__header">
                         <div>
                             <p class="dash-page__eyebrow">Dashboard</p>
-                            <h2 id="dashboardHomeHeading">Your guided applicant journey</h2>
+                            <h2 id="dashboardHomeHeading">Your guided beneficiary journey</h2>
                             <p class="dash-page__lead">Start with the current step, then review what needs attention and what comes next.</p>
                         </div>
                     </div>
@@ -80,7 +86,7 @@
                             </div>
                             <span class="journey-pill" id="nextStepStatus">Loading current status</span>
                             <strong class="applicant-current-step__title" id="nextStepTitle">Loading your next step</strong>
-                            <p class="applicant-current-step__copy" id="nextStepDescription">Please wait while your applicant workspace checks your current workflow stage.</p>
+                            <p class="applicant-current-step__copy" id="nextStepDescription">Please wait while your beneficiary workspace checks your current workflow stage.</p>
                             <div class="applicant-current-step__actions">
                                 <button type="button" class="btn-primary" id="nextStepAction" disabled>Loading</button>
                             </div>
@@ -154,14 +160,14 @@
                     <div class="dash-page__header">
                         <div>
                             <p class="dash-page__eyebrow">Profile</p>
-                            <h2 id="profilePageHeading">Edit your profile</h2>
-                            <p class="dash-page__lead">Update and save your personal information here. Use Application for requirements, review, and submission.</p>
+                            <h2 id="profilePageHeading">Edit your personal details</h2>
+                            <p class="dash-page__lead">Update and save the information used in your application.</p>
                         </div>
                     </div>
                     <section class="dash-section profile-editor-workspace" aria-labelledby="profileWorkspaceHeading">
                         <div class="status-bar" aria-live="polite">
                             <div>
-                                <span class="status-label">Status</span>
+                                <span class="status-label">Application status</span>
                                 <strong id="statusValue">Draft</strong>
                                 <span class="status-dot" aria-hidden="true"></span>
                                 <span class="status-updated">Last update: <span id="statusUpdated">--</span></span>
@@ -169,34 +175,10 @@
                             <div class="status-remark" id="statusRemark" hidden></div>
                         </div>
 
-                        <section class="panel profile-editor-panel profile-editor-intro" aria-labelledby="profileWorkspaceHeading">
-                            <div class="panel-header panel-header--compact">
-                                <h3 id="profileWorkspaceHeading">Profile information</h3>
-                                <p class="panel-subtitle">Use this page to update your personal and livelihood details. Uploads and final submission now belong to Application.</p>
-                            </div>
-                            <div class="profile-editor-intro__grid">
-                                <article class="profile-editor-intro__item">
-                                    <span class="overview-label">Profile owner</span>
-                                    <strong class="overview-value" id="profilePageName">Applicant</strong>
-                                    <p class="overview-meta" id="profilePageEmail">--</p>
-                                </article>
-                                <article class="profile-editor-intro__item">
-                                    <span class="overview-label">Application status</span>
-                                    <strong class="overview-value" id="profileWorkspaceApplicationStatus">Draft</strong>
-                                    <p class="overview-meta" id="profileWorkspaceApplicationNote">Your profile changes affect the same application record shown in Application.</p>
-                                </article>
-                                <article class="profile-editor-intro__item">
-                                    <span class="overview-label">What to do next</span>
-                                    <strong class="overview-value" id="profileWorkspaceCompletion">Keep details updated</strong>
-                                    <p class="overview-meta" id="profileWorkspaceCompletionNote">Save your profile changes here, then go to Application for required uploads and submission.</p>
-                                </article>
-                            </div>
-                        </section>
-
                         <form id="profileCompletionForm" class="profile-form" novalidate>
                             <section class="panel profile-editor-panel profile-editor-panel--personal">
                                 <div class="panel-header">
-                                    <h2>Personal Information</h2>
+                                    <h2 id="profileWorkspaceHeading">Personal Information</h2>
                                     <p class="panel-subtitle">Update the details used across your applicant record. Fields marked with * are required.</p>
                                 </div>
                                 <div class="form-grid">
@@ -333,14 +315,39 @@
                     <div class="dash-page__header">
                         <div>
                             <p class="dash-page__eyebrow">Application</p>
-                            <h2 id="applicationPageHeading">Application workspace</h2>
-                            <p class="dash-page__lead">Use this page for all application requirements, review updates, visible remarks, and notifications. Edit personal details through Profile.</p>
+                            <h2 id="applicationPageHeading">Application requirements</h2>
+                            <p class="dash-page__lead">Upload files, complete forms, and track review updates here.</p>
                         </div>
                     </div>
+                    <section class="panel dash-section panel--summary application-status-hero" aria-labelledby="applicationSummaryHeading">
+                        <div class="application-status-hero__main">
+                            <div class="panel-header panel-header--compact">
+                                <h3 id="applicationSummaryHeading">Application status</h3>
+                                <p class="panel-subtitle">This shows your current review stage and the next step for your requirements.</p>
+                            </div>
+                            <div class="application-status-hero__content">
+                                <span class="journey-pill" id="applicationStatusPill">Draft</span>
+                                <strong class="application-status-hero__title" id="applicationStatusValue">Draft</strong>
+                                <p class="application-status-hero__copy" id="applicationStatusNextStep">Start by uploading your required files and saving your application.</p>
+                            </div>
+                        </div>
+                        <div class="application-status-hero__meta">
+                            <article class="current-step-meta">
+                                <span class="overview-label">Last reviewed</span>
+                                <strong class="overview-value" id="applicationStatusReviewedDate">Not reviewed yet</strong>
+                                <p class="overview-meta" id="applicationStatusDates">Not submitted yet.</p>
+                            </article>
+                            <article class="current-step-meta">
+                                <span class="overview-label">Assigned officer</span>
+                                <strong class="overview-value" id="assignedPdoName">Not assigned</strong>
+                                <p class="overview-meta" id="assignedPdoEmail">Assigned PDO details will appear here.</p>
+                            </article>
+                        </div>
+                    </section>
                     <section class="panel dash-section panel--summary application-profile-reminder" aria-labelledby="profileHeading">
                         <div class="application-profile-reminder__copy">
                             <h3 id="profileHeading">Need to update your personal details?</h3>
-                            <p class="panel-subtitle">Use Profile to edit your name, contact details, address, and livelihood information.</p>
+                            <p class="panel-subtitle">Use Profile to edit the information used in this application.</p>
                         </div>
                         <div class="application-profile-reminder__actions">
                             <button type="button" class="btn-primary" data-open-profile-editor>Edit Profile</button>
@@ -348,8 +355,8 @@
                     </section>
                     <section class="panel dash-section panel--summary application-upload-panel" aria-labelledby="applicationUploadsHeading">
                         <div class="panel-header">
-                                    <h3 id="applicationUploadsHeading">Upload requirements</h3>
-                                    <p class="panel-subtitle">Upload the files needed for your application here. PDF, PNG, or JPG only. Max 5 MB per file.</p>
+                            <h3 id="applicationUploadsHeading">Upload requirements</h3>
+                            <p class="panel-subtitle">Upload the files needed for your application here. PDF, PNG, or JPG only. Max 5 MB per file.</p>
                             <p class="panel-meta">
                                 <span>Required: <span class="docs-total-count">3</span> documents (Valid ID, Health Certificate, Cedula)</span>
                                 <span class="meta-sep">&bull;</span>
@@ -376,26 +383,13 @@
                                 <ul class="requirements-list" id="requirementsList"><li class="empty">No requirement records available yet.</li></ul>
                             </div>
                         </section>
-                        <section id="application-status" class="panel dash-section panel--review application-workspace-panel application-status-panel" aria-labelledby="applicationStatusHeading">
-                            <div class="panel-header"><h3 id="applicationStatusHeading">Review updates</h3><p class="panel-subtitle">See what happened, what needs fixing, and what to do next.</p></div>
-                            <div class="overview-grid status-summary-grid">
-                                <article class="overview-card"><span class="overview-label">Current status</span><strong class="overview-value" id="applicationStatusValue">Draft</strong><p class="overview-meta" id="applicationStatusDates">Not submitted yet.</p></article>
-                                <article class="overview-card"><span class="overview-label">Assigned project officer</span><strong class="overview-value" id="assignedPdoName">Not assigned</strong><p class="overview-meta" id="assignedPdoEmail">Assigned PDO details will appear here.</p></article>
-                                <article class="overview-card"><span class="overview-label">Checked so far</span><strong class="overview-value" id="requirementReviewValue">0 verified</strong><p class="overview-meta" id="requirementReviewNote">No requirement review activity yet.</p></article>
-                                <article class="overview-card overview-card--soft"><span class="overview-label">Need to fix</span><strong class="overview-value" id="applicationRemarkCount">0 remarks</strong><p class="overview-meta" id="applicationRemarkNote">Applicant-visible review notes will be summarized here.</p></article>
-                            </div>
-                            <div class="status-panels">
-                                <div class="status-panel"><h3>What happened</h3><ul class="timeline-list" id="historyList"><li class="empty">No status history yet.</li></ul></div>
-                                <div class="status-panel"><h3>Messages for you</h3><ul class="timeline-list" id="remarksList"><li class="empty">No applicant-visible remarks yet.</li></ul></div>
-                            </div>
-                        </section>
                     </div>
                     <section id="application-forms" class="panel dash-section panel--summary application-forms-panel post-tracker-shell" aria-labelledby="applicationFormsHeading">
                         <div class="post-tracker-shell__hero">
                             <div class="post-tracker-shell__copy">
                                 <div class="panel-header panel-header--compact">
                                     <h3 id="applicationFormsHeading">Fill-up form requirements</h3>
-                                    <p class="panel-subtitle" id="applicationFormsSubtitle">Complete the fill-up form requirements connected to your application record here.</p>
+                                    <p class="panel-subtitle" id="applicationFormsSubtitle">These forms are part of your application stage.</p>
                                 </div>
                                 <strong class="post-tracker-shell__priority" id="applicationFormsPriority">Waiting for fill-up form requirements</strong>
                                 <p class="post-tracker-shell__next" id="applicationFormsNextAction">The next required form will be shown here.</p>
@@ -421,7 +415,7 @@
                         <div class="tracker-list-head">
                             <div>
                                 <h3>Form requirements in order</h3>
-                                <p class="panel-subtitle">These fill-up form requirements are part of your application stage.</p>
+                                <p class="panel-subtitle">Open each form below when it becomes available.</p>
                             </div>
                             <span class="chip" id="applicationFormsTaskChip">0 forms</span>
                         </div>
@@ -429,23 +423,48 @@
                             <article class="post-approval-taskcard is-empty">Fill-up form requirements will appear here when available.</article>
                         </div>
                     </section>
+                    <section id="application-status" class="panel dash-section panel--review application-workspace-panel application-status-panel" aria-labelledby="applicationReviewHeading">
+                        <div class="panel-header"><h3 id="applicationReviewHeading">Review updates</h3><p class="panel-subtitle">See the latest review result first, then open your full history only when needed.</p></div>
+                        <div class="overview-grid status-summary-grid">
+                            <article class="overview-card"><span class="overview-label">Current status</span><strong class="overview-value" id="applicationReviewStatusValue">Draft</strong><p class="overview-meta" id="applicationReviewStatusNote">No review activity yet.</p></article>
+                            <article class="overview-card"><span class="overview-label">Checked so far</span><strong class="overview-value" id="requirementReviewValue">0 verified</strong><p class="overview-meta" id="requirementReviewNote">No requirement review activity yet.</p></article>
+                            <article class="overview-card overview-card--soft"><span class="overview-label">Need to fix</span><strong class="overview-value" id="applicationRemarkCount">0 remarks</strong><p class="overview-meta" id="applicationRemarkNote">Applicant-visible review notes will be summarized here.</p></article>
+                        </div>
+                        <div class="application-review-latest">
+                            <article class="application-review-latest__card">
+                                <span class="overview-label">Latest reviewer message</span>
+                                <strong class="overview-value" id="applicationLatestRemarkTitle">No message yet</strong>
+                                <p class="overview-meta" id="applicationLatestRemarkCopy">Applicant-visible review notes will appear here first.</p>
+                            </article>
+                        </div>
+                        <div class="status-panel">
+                            <h3>Messages for you</h3>
+                            <ul class="timeline-list" id="remarksList"><li class="empty">No applicant-visible remarks yet.</li></ul>
+                        </div>
+                        <details class="application-history-disclosure">
+                            <summary>View full history</summary>
+                            <ul class="timeline-list" id="historyList"><li class="empty">No status history yet.</li></ul>
+                        </details>
+                    </section>
                     <section id="notifications-panel" class="panel dash-section panel--summary application-notifications-panel" aria-labelledby="notificationsHeading">
                         <div class="application-feed-header">
                             <div class="application-feed-header__copy">
                                 <h3 id="notificationsHeading">Updates for you</h3>
                                 <p class="panel-subtitle">Quick reminders, schedule notices, review updates, and completed steps.</p>
                             </div>
-                            <button type="button" class="btn-outline small is-hidden" id="notificationsToggle">Show more</button>
                         </div>
                         <ul class="notification-list" id="notificationList"><li class="empty">No notifications yet.</li></ul>
+                        <div class="application-feed-footer">
+                            <button type="button" class="btn-outline small is-hidden" id="notificationsToggle">Show more</button>
+                        </div>
                     </section>
                 </section>
                 <section id="training-page" class="dash-page" aria-labelledby="trainingPageHeading">
                     <div class="dash-page__header">
                         <div>
                             <p class="dash-page__eyebrow">Training</p>
-                            <h2 id="trainingPageHeading">Training journey</h2>
-                            <p class="dash-page__lead">See the next session first, then your progress, attendance record, schedule, and certificate outcome.</p>
+                            <h2 id="trainingPageHeading">Training schedule and attendance</h2>
+                            <p class="dash-page__lead">Check your next session, attendance, and certificate status.</p>
                         </div>
                     </div>
                     <section id="training-progress" class="panel dash-section panel--hero training-hero-panel" aria-labelledby="trainingHeading">
@@ -454,40 +473,23 @@
                             <div class="training-dashboard__next training-dashboard__next--hero is-empty" id="trainingNextCard"><h3>Next session</h3><p class="training-next__title" id="trainingNextTitle">No upcoming session scheduled</p><p class="training-next__meta" id="trainingNextMeta"></p></div>
                             <p class="training-dashboard__hint" id="trainingSummaryNote">No training assignment has been recorded yet.</p>
                         </div>
-                        <aside class="training-hero-panel__aside">
-                            <div class="training-ring" id="trainingRing" style="--progress: 0deg;"><div class="training-ring__value" id="trainingPercent">0%</div><div class="training-ring__label">complete</div></div>
-                            <p class="training-progress-meta" id="trainingProgressMeta">0% completion</p>
-                            <div class="training-progress-track"><div class="training-progress-fill" id="trainingProgressFill"></div></div>
-                        </aside>
                     </section>
                     <section class="panel dash-section panel--summary training-metrics-panel" aria-labelledby="trainingMetricsHeading">
-                        <div class="panel-header panel-header--compact"><h3 id="trainingMetricsHeading">Progress and attendance metrics</h3><p class="panel-subtitle">A quick read on your assigned sessions and attendance record.</p></div>
+                        <div class="panel-header panel-header--compact"><h3 id="trainingMetricsHeading">Attendance summary</h3><p class="panel-subtitle">A quick read on your assigned sessions and attendance record.</p></div>
                         <div class="training-dashboard__stats training-dashboard__stats--workspace">
-                            <div class="training-stat"><span class="training-stat__label">Sessions</span><span class="training-stat__value" id="trainingScheduledCount">0</span></div>
-                            <div class="training-stat"><span class="training-stat__label">Notified</span><span class="training-stat__value" id="trainingNotifiedCount">0</span></div>
                             <div class="training-stat"><span class="training-stat__label">Completed</span><span class="training-stat__value" id="trainingCompletedCount">0</span></div>
                             <div class="training-stat"><span class="training-stat__label">Missed</span><span class="training-stat__value" id="trainingMissedCount">0</span></div>
+                            <div class="training-stat"><span class="training-stat__label">Notified</span><span class="training-stat__value" id="trainingNotifiedCount">0</span></div>
                         </div>
                     </section>
-                    <div class="training-flow-grid training-flow-grid--workspace">
-                        <section class="panel dash-section training-subsection training-subsection--assigned panel--summary" aria-labelledby="trainingAssignedHeading">
-                            <div class="panel-header"><h3 id="trainingAssignedHeading">Assigned sessions</h3><p class="panel-subtitle">A quick sequence of the sessions tied to your training record.</p></div>
-                            <div class="training-checklist"><ul id="trainingChecklist"><li class="empty">No training sessions have been assigned yet.</li></ul></div>
-                        </section>
-                        <section class="panel dash-section training-subsection training-subsection--schedule panel--info" aria-labelledby="trainingScheduleHeading">
-                            <div class="panel-header"><h3 id="trainingScheduleHeading">Schedule list</h3><p class="panel-subtitle">Dates, venues, and preparation notes for each assigned session.</p></div>
-                            <div class="training-schedule-grid" id="trainingScheduleGrid"><article class="training-schedule-empty">No training schedule yet. Wait for CSWDD notice updates.</article></div>
-                        </section>
-                    </div>
+                    <section class="panel dash-section training-subsection training-subsection--schedule panel--info" aria-labelledby="trainingScheduleHeading">
+                        <div class="panel-header"><h3 id="trainingScheduleHeading">Schedule list</h3><p class="panel-subtitle">Dates, venues, and preparation notes for each assigned session.</p></div>
+                        <div class="training-schedule-grid" id="trainingScheduleGrid"><article class="training-schedule-empty">No training schedule yet. Wait for CSWDD notice updates.</article></div>
+                    </section>
                     <section class="panel dash-section panel--records training-attendance-panel" aria-labelledby="trainingAttendanceHeading">
                         <div class="panel-header panel-header--spaced"><h3 id="trainingAttendanceHeading">Attendance</h3><p class="panel-subtitle">Attendance remains readable on mobile and reflects the latest recorded status.</p></div>
-                        <div class="attendance-metrics" role="list">
-                            <article class="attendance-metric" role="listitem"><span class="attendance-metric__label">Scheduled</span><strong class="attendance-metric__value" id="attendanceScheduledCount">0</strong></article>
-                            <article class="attendance-metric" role="listitem"><span class="attendance-metric__label">Notified</span><strong class="attendance-metric__value" id="attendanceNotifiedCount">0</strong></article>
-                            <article class="attendance-metric" role="listitem"><span class="attendance-metric__label">Missed</span><strong class="attendance-metric__value" id="attendanceMissedCount">0</strong></article>
-                            <article class="attendance-metric" role="listitem"><span class="attendance-metric__label">Completed</span><strong class="attendance-metric__value" id="attendanceCompletedCount">0</strong></article>
-                        </div>
-                        <div class="table-wrapper table-wrapper--soft">
+                        <div class="attendance-card-list" id="attendanceCardList"><article class="attendance-card attendance-card--empty">Attendance updates will appear once sessions are assigned.</article></div>
+                        <div class="table-wrapper table-wrapper--soft training-attendance-table-wrap">
                             <table class="attendance-table">
                                 <thead><tr><th scope="col">Session</th><th scope="col">Date &amp; Time</th><th scope="col">Status</th><th scope="col">Remarks</th><th scope="col">Notice</th></tr></thead>
                                 <tbody id="attendanceTableBody"><tr class="empty"><td colspan="5">Attendance updates will appear once sessions are assigned.</td></tr></tbody>

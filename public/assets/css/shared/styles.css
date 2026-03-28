@@ -260,3 +260,89 @@ body {
         height: 150px;
     }
 }
+
+.auth-loading-screen--staff {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: grid;
+    justify-items: center;
+    align-content: center;
+    gap: 0.9rem;
+    padding: 2rem;
+    text-align: center;
+    color: #f8fbff;
+    background:
+        radial-gradient(circle at top, rgba(229, 185, 74, 0.26), transparent 38%),
+        linear-gradient(160deg, rgba(7, 27, 55, 0.98), rgba(8, 84, 103, 0.94));
+}
+
+.auth-loading-screen--staff[hidden] {
+    display: none;
+}
+
+.auth-loading-screen--staff .auth-loading-screen__orb {
+    position: relative;
+    grid-area: 1 / 1;
+    width: min(54vw, 26rem);
+    height: min(54vw, 26rem);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 0 0 20px rgba(255, 255, 255, 0.04), 0 0 0 44px rgba(255, 255, 255, 0.02);
+    animation: staff-auth-pulse 2.2s ease-in-out infinite;
+}
+
+.auth-loading-screen--staff .auth-loading-screen__logo {
+    position: relative;
+    grid-area: 1 / 1;
+    z-index: 1;
+    align-self: center;
+    justify-self: center;
+    width: clamp(5rem, 11vw, 6.5rem);
+    animation: staff-auth-float 1.8s ease-in-out infinite;
+}
+
+.auth-loading-screen--staff .auth-loading-screen__title,
+.auth-loading-screen--staff .auth-loading-screen__copy {
+    position: relative;
+    z-index: 1;
+}
+
+.auth-loading-screen--staff .auth-loading-screen__copy {
+    max-width: 22rem;
+    margin: 0;
+    color: rgba(248, 251, 255, 0.84);
+}
+
+body.auth-loading {
+    overflow: hidden;
+}
+
+@keyframes staff-auth-pulse {
+    0%,
+    100% {
+        transform: scale(0.95);
+        opacity: 0.72;
+    }
+    50% {
+        transform: scale(1.04);
+        opacity: 1;
+    }
+}
+
+@keyframes staff-auth-float {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-6px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .auth-loading-screen--staff .auth-loading-screen__orb,
+    .auth-loading-screen--staff .auth-loading-screen__logo {
+        animation: none;
+    }
+}

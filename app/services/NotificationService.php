@@ -58,10 +58,16 @@ class NotificationService
     public function sendTrainingNotice(array $user, array $program, array $invitee): bool
     {
         $title = 'Training Notice';
+        $formattedDate = $this->formatTrainingDate((string) ($program['date'] ?? ''));
+        $formattedTime = $this->formatTrainingTimeRange(
+            (string) ($program['startTime'] ?? ''),
+            (string) ($program['endTime'] ?? '')
+        );
         $message = sprintf(
-            'You are scheduled for %s on %s at %s.',
+            'You are scheduled for %s on %s at %s in %s.',
             $program['programName'] ?? $program['title'] ?? 'training',
-            $program['date'] ?? '--',
+            $formattedDate,
+            $formattedTime,
             $program['venue'] ?? 'TBA'
         );
 
@@ -86,5 +92,55 @@ class NotificationService
         );
 
         return $sent;
+    }
+
+    private function formatTrainingDate(string $date): string
+    {
+        $value = trim($date);
+        if ($value === '') {
+            return '--';
+        }
+
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            return $value;
+        }
+
+        return date('F j, Y', $timestamp);
+    }
+
+    private function formatTrainingTimeRange(string $startTime, string $endTime): string
+    {
+        $start = $this->formatTrainingTime($startTime);
+        $end = $this->formatTrainingTime($endTime);
+
+        if ($start === '--' && $end === '--') {
+            return '--';
+        }
+
+        if ($end === '--') {
+            return $start;
+        }
+
+        if ($start === '--') {
+            return $end;
+        }
+
+        return $start . ' - ' . $end;
+    }
+
+    private function formatTrainingTime(string $time): string
+    {
+        $value = trim($time);
+        if ($value === '') {
+            return '--';
+        }
+
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            return $value;
+        }
+
+        return date('g:i A', $timestamp);
     }
 }

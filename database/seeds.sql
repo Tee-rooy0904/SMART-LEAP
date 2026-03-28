@@ -17,11 +17,12 @@ label = VALUES(label),
 description = VALUES(description),
 is_required = VALUES(is_required);
 
+DELETE FROM initial_requirement_types WHERE code = 'business_plan';
+
 INSERT INTO users (role_id, full_name, email, password_hash, verification_status, is_active, is_disabled) VALUES
 ((SELECT id FROM roles WHERE name = 'Administrator'), 'System Administrator', 'admin@smartleap.local', '$2y$12$8ctbT5rIWwyLCRILdZ/buev3PVTrnwOqBgD7aP6ISTLQfDoX4.ls2', 'verified', 1, 0),
 ((SELECT id FROM roles WHERE name = 'Project Officer'), 'Default Project Officer', 'po@smartleap.local', '$2y$12$TtxkiDcyoSaprcw1rMQETeh2MuttWc8RG5RqExmxzGrm6nEMMUJI2', 'verified', 1, 0),
 ((SELECT id FROM roles WHERE name = 'Social Worker'), 'Default Social Worker', 'sw@smartleap.local', '$2y$12$0w.6caydQgnfwnLS33taSOsZZsbwoXQ8eDf9b3THtznKdonn1cGVy', 'verified', 1, 0),
-((SELECT id FROM roles WHERE name = 'Applicant'), 'Default Applicant', 'applicant@smartleap.local', '$2y$12$uoA9rAnEkwk3gz0ZjsYelOESWvcHqHto1ieHt6OJiMXfrWYIOaCSq', 'verified', 1, 0),
 ((SELECT id FROM roles WHERE name = 'Beneficiary'), 'Default Beneficiary', 'beneficiary@smartleap.local', '$2y$12$RGvQykk9zdI1o7wLmOLLYuvAaPko/7H/gqWXNimhtfzSssyDrKJKm', 'verified', 1, 0)
 ON DUPLICATE KEY UPDATE
 role_id = VALUES(role_id),
@@ -54,7 +55,7 @@ INSERT INTO applicant_profiles (
     profile_status,
     completion_submitted_at
 ) VALUES (
-    (SELECT id FROM users WHERE email = 'applicant@smartleap.local'),
+    (SELECT id FROM users WHERE email = 'beneficiary@smartleap.local'),
     '09170000003',
     'Default Sari-sari Store',
     'Purok 1, Butuan City',
@@ -87,6 +88,7 @@ INSERT INTO post_approval_task_types (code, label, description) VALUES
 ('availment_form', 'SMART LEAP Availment Form', 'Required availment form after training completion.'),
 ('validation_form', 'SMART LEAP Validation Form', 'Validation form for post-approval compliance.'),
 ('buhat_sa_pagpanumpa', 'Buhat sa Pagpanumpa', 'Required oath-taking compliance document.'),
+('fund_release_evidence', 'Proof of Fund Release', 'Final attachment proving the SMART LEAP fund was released.'),
 ('seminar_attendance', 'Attendance to seminars/trainings conducted', 'Attendance compliance for required trainings.')
 ON DUPLICATE KEY UPDATE
 label = VALUES(label),

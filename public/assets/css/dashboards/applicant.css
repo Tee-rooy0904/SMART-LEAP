@@ -21,6 +21,7 @@
     --shadow-md: 0 18px 32px rgba(15, 23, 42, 0.08);
 }
 
+
 * {
     box-sizing: border-box;
 }
@@ -2898,6 +2899,12 @@ textarea {
     padding: 8px 12px;
 }
 
+.application-feed-footer {
+    display: flex;
+    justify-content: center;
+    margin-top: 14px;
+}
+
 .status-panel h3,
 .panel-subtitle,
 .overview-meta,
@@ -2912,5 +2919,327 @@ textarea {
     .requirement-card,
     .profile-editor-workspace .form-grid {
         grid-template-columns: 1fr;
+    }
+}
+
+.applicant-current-step__meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.application-status-hero {
+    display: grid;
+    gap: 16px;
+}
+
+.application-status-hero__content {
+    display: grid;
+    gap: 10px;
+}
+
+.application-status-hero__title {
+    margin: 0;
+    font-size: clamp(1.2rem, 2vw, 1.55rem);
+    color: var(--slate-900);
+}
+
+.application-status-hero__copy {
+    margin: 0;
+    color: var(--slate-600);
+    line-height: 1.5;
+}
+
+.application-status-hero__meta {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.application-review-latest {
+    margin-bottom: 8px;
+}
+
+.application-review-latest__card {
+    display: grid;
+    gap: 6px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.86);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.application-history-disclosure {
+    display: grid;
+    gap: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.application-history-disclosure summary {
+    cursor: pointer;
+    font-weight: 700;
+    color: var(--indigo-700);
+    list-style: none;
+}
+
+.application-history-disclosure summary::-webkit-details-marker {
+    display: none;
+}
+
+.attendance-card-list {
+    display: none;
+}
+
+.attendance-card {
+    display: grid;
+    gap: 8px;
+    padding: 14px 16px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.attendance-card--empty {
+    color: var(--slate-500);
+    font-style: italic;
+    text-align: center;
+}
+
+.attendance-card__top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.attendance-card__meta,
+.attendance-card__copy,
+.attendance-card__hint {
+    margin: 0;
+}
+
+.attendance-card__meta,
+.attendance-card__hint {
+    color: var(--slate-600);
+}
+
+.attendance-card__copy {
+    color: var(--slate-700);
+}
+
+@media (max-width: 960px) {
+    .applicant-current-step,
+    .application-focus-grid,
+    .training-flow-grid,
+    .applicant-current-step__meta,
+    .application-status-hero__meta {
+        grid-template-columns: 1fr;
+    }
+
+    .training-hero-panel__aside,
+    .training-ring,
+    .training-progress-track,
+    .training-progress-meta {
+        display: none;
+    }
+
+    .training-dashboard__stats--workspace {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 720px) {
+    .dash-main {
+        padding-top: 14px;
+        gap: 16px;
+    }
+
+    .dash-page {
+        gap: 14px;
+    }
+
+    .dash-page__header {
+        gap: 8px;
+    }
+
+    .dash-page__header h2 {
+        font-size: 1.75rem;
+    }
+
+    .profile-editor-workspace .status-bar,
+    .applicant-current-step__meta,
+    .application-status-hero__meta,
+    .modal-header,
+    .modal-footer {
+        align-items: stretch;
+        grid-template-columns: 1fr;
+    }
+
+    .profile-editor-panel .panel-header {
+        margin-bottom: 10px;
+    }
+
+    .journey-step,
+    .overview-card {
+        padding: 14px;
+    }
+
+    .application-profile-reminder,
+    .application-upload-panel,
+    .application-forms-panel,
+    .application-status-panel,
+    .training-metrics-panel,
+    .training-subsection,
+    .training-attendance-panel,
+    .training-certificate-panel {
+        padding: 16px;
+    }
+
+    .post-tracker-shell__summary {
+        grid-template-columns: 1fr;
+    }
+
+    .training-dashboard__stats--workspace {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .training-attendance-table-wrap {
+        display: none;
+    }
+
+    .attendance-card-list {
+        display: grid;
+        gap: 12px;
+    }
+
+    .notification-list li {
+        grid-template-columns: 1fr;
+        gap: 10px;
+    }
+}
+
+.portal-loader {
+    position: fixed;
+    inset: 0;
+    z-index: 1300;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 0.8rem;
+    padding: 2rem;
+    overflow: hidden;
+    isolation: isolate;
+    text-align: center;
+    background:
+        radial-gradient(circle at top, rgba(229, 185, 74, 0.26), transparent 40%),
+        linear-gradient(155deg, rgba(8, 34, 61, 0.97), rgba(8, 94, 112, 0.93));
+    color: #f8fbff;
+}
+
+.portal-loader[hidden] {
+    display: none;
+}
+
+.portal-loader__orb {
+    position: absolute;
+    width: min(54vw, 28rem);
+    height: min(54vw, 28rem);
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    box-shadow: 0 0 0 20px rgba(255, 255, 255, 0.04), 0 0 0 44px rgba(255, 255, 255, 0.02);
+    animation: portalPulse 2.1s ease-in-out infinite;
+}
+
+.portal-loader__logo,
+.portal-loader__title,
+.portal-loader__copy {
+    position: relative;
+    z-index: 1;
+}
+
+.portal-loader__logo {
+    display: block;
+    width: clamp(5rem, 11vw, 6.5rem);
+    margin: 0 auto;
+    animation: portalFloat 1.7s ease-in-out infinite;
+}
+
+.portal-loader__copy {
+    max-width: 24rem;
+    margin: 0;
+    color: rgba(248, 251, 255, 0.82);
+}
+
+.dashboard-shell .journey-step,
+.dashboard-shell .panel,
+.dashboard-shell .overview-card,
+.dashboard-shell .training-schedule-card,
+.dashboard-shell .requirement-card {
+    transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.dashboard-shell .journey-step:hover,
+.dashboard-shell .panel:hover,
+.dashboard-shell .overview-card:hover,
+.dashboard-shell .training-schedule-card:hover,
+.dashboard-shell .requirement-card:hover {
+    transform: translateY(-2px);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    body.portal-ready .dash-page__header,
+    body.portal-ready .panel,
+    body.portal-ready .journey-step {
+        animation: beneficiaryReveal 420ms ease both;
+    }
+}
+
+@keyframes portalPulse {
+    0%,
+    100% {
+        transform: scale(0.95);
+        opacity: 0.72;
+    }
+    50% {
+        transform: scale(1.05);
+        opacity: 1;
+    }
+}
+
+@keyframes portalFloat {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-5px);
+    }
+}
+
+@keyframes beneficiaryReveal {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .portal-loader__orb,
+    .portal-loader__logo {
+        animation: none;
+    }
+
+    .dashboard-shell .journey-step,
+    .dashboard-shell .panel,
+    .dashboard-shell .overview-card,
+    .dashboard-shell .training-schedule-card,
+    .dashboard-shell .requirement-card {
+        transition: none;
     }
 }

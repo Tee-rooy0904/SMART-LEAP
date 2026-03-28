@@ -157,8 +157,10 @@
             : '';
     }
 
-    function buildFieldOwnershipAttributes(reference, disabled = false) {
-        const ownership = resolveFieldOwnership(reference);
+    function buildFieldOwnershipAttributes(reference, disabled = false, forceApplicant = false) {
+        const ownership = forceApplicant
+            ? { owner: FIELD_OWNER_APPLICANT, editable: true }
+            : resolveFieldOwnership(reference);
         const shouldDisable = disabled || !ownership.editable;
         return {
             owner: ownership.owner,
@@ -171,6 +173,14 @@
     function resolveElementOwnership(element) {
         if (!(element instanceof HTMLElement)) {
             return { owner: FIELD_OWNER_APPLICANT, editable: true };
+        }
+
+        const explicitOwner = normalizeFieldReference(element.dataset.fieldOwner);
+        if (explicitOwner === FIELD_OWNER_APPLICANT) {
+            return { owner: FIELD_OWNER_APPLICANT, editable: true };
+        }
+        if (explicitOwner === FIELD_OWNER_STAFF) {
+            return { owner: FIELD_OWNER_STAFF, editable: false };
         }
 
         const fieldRef = element.dataset.fieldRef || element.getAttribute('name') || element.dataset.uploadField || '';
@@ -189,6 +199,27 @@
                 node.textContent = initial;
             }
         });
+    }
+
+    function deriveApplicantName(payload = {}) {
+        const authName = String(state.authUser?.name || '').trim();
+        if (authName) {
+            return authName;
+        }
+
+        const participantName = String(payload?.participantSignature?.signedName || '').trim();
+        if (participantName) {
+            return participantName;
+        }
+
+        const applicant = payload?.applicantDetails || {};
+        const fullName = [
+            applicant.firstName,
+            applicant.middleName,
+            applicant.lastName,
+        ].filter((part) => String(part || '').trim() !== '').join(' ').trim();
+
+        return fullName;
     }
 
     function renderTask() {
@@ -237,10 +268,10 @@
             staffSections.innerHTML = renderStaffSections(task.staffSections || [], task.reviewerRemarks);
         }
         if (saveButton) {
-            saveButton.disabled = task.status === 'Submitted' || task.status === 'Verified';
+            saveButton.disabled = !isTaskEditable(task);
         }
         if (submitButton) {
-            submitButton.disabled = task.status === 'Submitted' || task.status === 'Verified';
+            submitButton.disabled = !isTaskEditable(task);
         }
 
         applyFormEditability(task);
@@ -272,6 +303,12 @@
                 : renderBusinessPlanMobile(payload);
         }
 
+        if (code === 'fund_release_evidence') {
+            return state.renderMode === 'desktop'
+                ? renderFundReleaseEvidenceDesktop(payload)
+                : renderFundReleaseEvidenceMobile(payload);
+        }
+
         return state.renderMode === 'desktop'
             ? renderValidationDesktop(payload)
             : renderValidationMobile(payload);
@@ -287,9 +324,6 @@
 
     function renderAvailmentMobile(payload) {
         const data = payload || {};
-        const commitments = data.clientCommitment || {};
-        const agreedToRollBackSchedule = Boolean(commitments.agreedToRollBackSchedule ?? commitments.agreedToSavingsCommitment);
-        const agreedToWeeklySavings = Boolean(commitments.agreedToWeeklySavings ?? commitments.agreedToSavingsCommitment);
         const familyMembers = Array.isArray(data.familyEnterprise?.members) && data.familyEnterprise.members.length > 0
             ? data.familyEnterprise.members
             : [{ name: '', age: '', activities: '' }];
@@ -443,6 +477,27 @@
                 </div>
             </section>
         `;
+    }
+
+    function renderFundReleaseEvidenceDesktop(payload) {
+        const data = payload?.fundReleaseEvidence || {};
+        return `
+            <section class="post-approval-section">
+                <div class="post-approval-section__header">
+                    <h4>Proof of Fund Release</h4>
+                    <p>This is the final requirement. You stay under applicant status until CSWDD verifies an uploaded attachment that proves the fund was released.</p>
+                </div>
+                <div class="post-approval-fields">
+                    ${renderField('Release date', 'fundReleaseEvidence.releaseDate', data.releaseDate || '', 'date')}
+                    ${renderTextarea('Applicant note', 'fundReleaseEvidence.notes', data.notes || '', true, 'Optional note describing the release or the attached evidence.')}
+                    ${renderUploadField('Proof of fund release attachment', 'fundReleaseEvidence.releaseAttachment', data.releaseAttachment || null)}
+                </div>
+            </section>
+        `;
+    }
+
+    function renderFundReleaseEvidenceMobile(payload) {
+        return renderFundReleaseEvidenceDesktop(payload);
     }
 
     function renderBusinessPlanDesktop(payload) {
@@ -1352,12 +1407,6 @@
                 <section class="paper-sheet">
                     <div class="paper-block">
                         <h4>IV. Social Responsibility and Willingness to Save (Client)</h4>
-                        <div class="paper-inline-grid paper-inline-grid--three">
-                            ${renderDocumentCheckbox('Will abide by SMART LEAP policies', 'clientCommitment.agreedToPolicies', Boolean(commitments.agreedToPolicies))}
-                            ${renderDocumentCheckbox('Will pay roll-back on time', 'clientCommitment.agreedToRollBackSchedule', agreedToRollBackSchedule)}
-                            ${renderDocumentCheckbox('Will generate weekly savings', 'clientCommitment.agreedToWeeklySavings', agreedToWeeklySavings)}
-                            ${renderDocumentTextarea('Applicant note', 'clientCommitment.notes', data.clientCommitment?.notes || '', 'span-3')}
-                        </div>
                     </div>
 
                     <div class="paper-block">
@@ -1534,7 +1583,6 @@
                     <input type="checkbox" name="clientCommitment.agreedToWeeklySavings" ${agreedToWeeklySavings ? 'checked' : ''}>
                     <span>I will generate weekly savings to prepare for emergencies that may affect my family.</span>
                 </label>
-                ${renderTextarea('Applicant note', 'clientCommitment.notes', data.clientCommitment?.notes || '', false, 'Add any clarifying note related to your availment commitment.')}
             </section>
             <section class="post-approval-section">
                 <div class="post-approval-section__header">
@@ -1551,12 +1599,6 @@
                 <div class="post-approval-section__header">
                     <h4>IV. Social Responsibility and Willingness to Save (Client)</h4>
                     <p>Applicant commitment details only.</p>
-                </div>
-                <div class="post-approval-fields">
-                    ${renderField('Will abide by SMART LEAP policies', 'clientCommitment.agreedToPolicies', commitments.agreedToPolicies ? 'Yes' : 'No', 'text', true, true)}
-                    ${renderField('Will pay roll-back on time', 'clientCommitment.agreedToRollBackSchedule', agreedToRollBackSchedule ? 'Yes' : 'No', 'text', true, true)}
-                    ${renderField('Will generate weekly savings', 'clientCommitment.agreedToWeeklySavings', agreedToWeeklySavings ? 'Yes' : 'No', 'text', true, true)}
-                    ${renderTextarea('Applicant note', 'clientCommitment.notes', data.clientCommitment?.notes || '', false)}
                 </div>
             </section>
         `;
@@ -1739,73 +1781,93 @@
         `;
     }
 
-    function renderDocumentFamilyTable(rows) {
+    function renderDocumentFamilyTable(rows, options = {}) {
         const safeRows = Array.isArray(rows) && rows.length > 0 ? rows : [{ name: '', age: '', activities: '' }];
+        const paperMode = Boolean(options.paperMode);
         return `
             <div class="paper-table-wrap">
-                <table class="paper-table">
+                <table class="paper-table ${paperMode ? 'paper-table--govform' : ''}">
                     <thead>
                         <tr>
                             <th>Family Member Participating</th>
                             <th>Age</th>
                             <th>Activities</th>
-                            <th class="paper-table__actions">Actions</th>
+                            ${paperMode ? '' : '<th class="paper-table__actions">Actions</th>'}
                         </tr>
                     </thead>
                     <tbody>
                         ${safeRows.map((row, index) => `
                             <tr>
-                                <td><input class="paper-table__input" type="text" name="familyEnterprise.members.${index}.name" value="${escapeAttribute(row.name || '')}"></td>
-                                <td><input class="paper-table__input" type="number" name="familyEnterprise.members.${index}.age" value="${escapeAttribute(row.age || '')}"></td>
-                                <td><input class="paper-table__input" type="text" name="familyEnterprise.members.${index}.activities" value="${escapeAttribute(row.activities || '')}"></td>
-                                <td class="paper-table__actions"><button type="button" class="btn-outline small post-approval-row-action" data-row-action="remove-family" data-row-index="${index}">Remove</button></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="text" name="familyEnterprise.members.${index}.name" value="${escapeAttribute(row.name || '')}"></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="number" name="familyEnterprise.members.${index}.age" value="${escapeAttribute(row.age || '')}"></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="text" name="familyEnterprise.members.${index}.activities" value="${escapeAttribute(row.activities || '')}"></td>
+                                ${paperMode ? '' : `<td class="paper-table__actions"><button type="button" class="btn-outline small post-approval-row-action" data-row-action="remove-family" data-row-index="${index}">Remove</button></td>`}
                             </tr>
                         `).join('')}
                     </tbody>
                 </table>
             </div>
-            <div class="paper-table-toolbar">
-                <button type="button" class="btn-outline small" data-row-action="add-family">Add family member</button>
-            </div>
+            ${paperMode
+                ? renderMungkahingTableControls('add-family', 'remove-family', safeRows, 'Family row')
+                : `<div class="paper-table-toolbar"><button type="button" class="btn-outline small" data-row-action="add-family">Add family member</button></div>`
+            }
         `;
     }
 
-    function renderDocumentIncomeTable(rows, totalFamilyIncome) {
+    function renderDocumentIncomeTable(rows, totalFamilyIncome, options = {}) {
         const safeRows = Array.isArray(rows) && rows.length > 0 ? rows : [{ memberName: '', cashIncome: '', nonCashIncome: '', totalIncome: '' }];
+        const paperMode = Boolean(options.paperMode);
+        const headerHtml = paperMode
+            ? `
+                <tr>
+                    <th rowspan="2">Name of Working Family Members</th>
+                    <th colspan="3" class="center-text">Monthly Income</th>
+                    <th rowspan="2">Total Family Income</th>
+                </tr>
+                <tr>
+                    <th>Cash</th>
+                    <th>Non-Cash</th>
+                    <th>Total</th>
+                </tr>
+            `
+            : `
+                <tr>
+                    <th>Name of Working Family Members</th>
+                    <th>Cash Income</th>
+                    <th>Non-Cash</th>
+                    <th>Total</th>
+                    <th class="paper-table__actions">Actions</th>
+                </tr>
+            `;
         return `
             <div class="paper-table-wrap">
-                <table class="paper-table">
+                <table class="paper-table ${paperMode ? 'paper-table--govform paper-table--dense' : ''}">
                     <thead>
-                        <tr>
-                            <th>Name of Working Family Members</th>
-                            <th>Cash Income</th>
-                            <th>Non-Cash</th>
-                            <th>Total</th>
-                            <th class="paper-table__actions">Actions</th>
-                        </tr>
+                        ${headerHtml}
                     </thead>
                     <tbody>
                         ${safeRows.map((row, index) => `
                             <tr>
-                                <td><input class="paper-table__input" type="text" name="incomeEligibility.rows.${index}.memberName" value="${escapeAttribute(row.memberName || '')}"></td>
-                                <td><input class="paper-table__input" type="number" name="incomeEligibility.rows.${index}.cashIncome" value="${escapeAttribute(row.cashIncome || '')}"></td>
-                                <td><input class="paper-table__input" type="number" name="incomeEligibility.rows.${index}.nonCashIncome" value="${escapeAttribute(row.nonCashIncome || '')}"></td>
-                                <td><input class="paper-table__input" type="number" name="incomeEligibility.rows.${index}.totalIncome" value="${escapeAttribute(row.totalIncome || '')}"></td>
-                                <td class="paper-table__actions"><button type="button" class="btn-outline small post-approval-row-action" data-row-action="remove-income" data-row-index="${index}">Remove</button></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="text" name="incomeEligibility.rows.${index}.memberName" value="${escapeAttribute(row.memberName || '')}"></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="number" name="incomeEligibility.rows.${index}.cashIncome" value="${escapeAttribute(row.cashIncome || '')}"></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="number" name="incomeEligibility.rows.${index}.nonCashIncome" value="${escapeAttribute(row.nonCashIncome || '')}"></td>
+                                <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="number" name="incomeEligibility.rows.${index}.totalIncome" value="${escapeAttribute(row.totalIncome || '')}"></td>
+                                ${paperMode ? '<td class="paper-table__blank"></td>' : `<td class="paper-table__actions"><button type="button" class="btn-outline small post-approval-row-action" data-row-action="remove-income" data-row-index="${index}">Remove</button></td>`}
                             </tr>
                         `).join('')}
                     </tbody>
                     <tfoot>
                         <tr>
-                            <td colspan="3"><strong>Total Family Income</strong></td>
-                            <td colspan="2"><input class="paper-table__input" type="number" name="incomeEligibility.totalFamilyIncome" value="${escapeAttribute(totalFamilyIncome || '')}"></td>
+                            <td colspan="4"><strong>Total Family Income</strong></td>
+                            <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="number" name="incomeEligibility.totalFamilyIncome" value="${escapeAttribute(totalFamilyIncome || '')}"></td>
                         </tr>
                     </tfoot>
                 </table>
             </div>
-            <div class="paper-table-toolbar">
-                <button type="button" class="btn-outline small" data-row-action="add-income">Add income row</button>
-            </div>
+            ${paperMode
+                ? renderMungkahingTableControls('add-income', 'remove-income', safeRows, 'Income row')
+                : `<div class="paper-table-toolbar"><button type="button" class="btn-outline small" data-row-action="add-income">Add income row</button></div>`
+            }
         `;
     }
 
@@ -1813,7 +1875,7 @@
         const safeRows = Array.isArray(rows) && rows.length > 0 ? rows : [{ requirement: '', age: '', healthStatus: '' }];
         return `
             <div class="paper-table-wrap">
-                <table class="paper-table">
+                <table class="paper-table paper-table--govform paper-table--dense">
                     <thead>
                         <tr>
                             <th>Health and Age Requirements</th>
@@ -1824,9 +1886,9 @@
                     <tbody>
                         ${safeRows.map((row, index) => `
                             <tr>
-                                <td><input class="paper-table__input" type="text" name="staffReview.physicalRequirements.healthAgeRows.${index}.requirement" value="${escapeAttribute(row.requirement || '')}" disabled></td>
-                                <td><input class="paper-table__input" type="text" name="staffReview.physicalRequirements.healthAgeRows.${index}.age" value="${escapeAttribute(row.age || '')}" disabled></td>
-                                <td><input class="paper-table__input" type="text" name="staffReview.physicalRequirements.healthAgeRows.${index}.healthStatus" value="${escapeAttribute(row.healthStatus || '')}" disabled></td>
+                                <td><input class="paper-table__input paper-table__input--line" type="text" name="staffReview.physicalRequirements.healthAgeRows.${index}.requirement" value="${escapeAttribute(row.requirement || '')}" disabled></td>
+                                <td><input class="paper-table__input paper-table__input--line" type="text" name="staffReview.physicalRequirements.healthAgeRows.${index}.age" value="${escapeAttribute(row.age || '')}" disabled></td>
+                                <td><input class="paper-table__input paper-table__input--line" type="text" name="staffReview.physicalRequirements.healthAgeRows.${index}.healthStatus" value="${escapeAttribute(row.healthStatus || '')}" disabled></td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1835,17 +1897,18 @@
         `;
     }
 
-    function renderValidationChecklistTable(checklist) {
+    function renderValidationChecklistTable(checklist, options = {}) {
+        const paperMode = Boolean(options.paperMode);
         const rows = [
             ['Pantawid Member', 'membershipChecklist.pantawidMember', 'membershipChecklist.pantawidSpecify'],
             ['SLPA Member', 'membershipChecklist.slpaMember', 'membershipChecklist.slpaSpecify'],
         ];
         return `
             <div class="paper-table-wrap">
-                <table class="paper-table paper-table--checklist">
+                <table class="paper-table ${paperMode ? 'paper-table--govform paper-table--validation' : 'paper-table--checklist'}">
                     <thead>
                         <tr>
-                            <th>Checklist</th>
+                            <th>${paperMode ? 'Is He/She' : 'Checklist'}</th>
                             <th>Yes</th>
                             <th>No</th>
                             <th>Specify</th>
@@ -1858,9 +1921,9 @@
                             return `
                                 <tr>
                                     <td>${escapeHtml(label)}</td>
-                                    <td class="paper-table__choice"><input type="radio" name="${escapeAttribute(key)}" value="Yes" ${value === 'Yes' ? 'checked' : ''}></td>
-                                    <td class="paper-table__choice"><input type="radio" name="${escapeAttribute(key)}" value="No" ${value === 'No' ? 'checked' : ''}></td>
-                                    <td><input class="paper-table__input" type="text" name="${escapeAttribute(specifyKey)}" value="${escapeAttribute(specifyValue)}"></td>
+                                    <td class="paper-table__choice"><input class="${paperMode ? 'paper-table__radio' : ''}" type="radio" name="${escapeAttribute(key)}" value="Yes" ${value === 'Yes' ? 'checked' : ''}></td>
+                                    <td class="paper-table__choice"><input class="${paperMode ? 'paper-table__radio' : ''}" type="radio" name="${escapeAttribute(key)}" value="No" ${value === 'No' ? 'checked' : ''}></td>
+                                    <td><input class="paper-table__input ${paperMode ? 'paper-table__input--line' : ''}" type="text" name="${escapeAttribute(specifyKey)}" value="${escapeAttribute(specifyValue)}"></td>
                                 </tr>
                             `;
                         }).join('')}
@@ -2407,48 +2470,57 @@
         if (task.status === 'Verified') {
             return 'This form is already done and checked by CSWDD.';
         }
+        if (task.status === 'Locked') {
+            return 'This final requirement will open only after the earlier post-approval forms are verified.';
+        }
         if (task.staged) {
             return task.helpText || 'This form will open later after the earlier steps are finished.';
         }
-        return task.helpText || 'Fill out the form below. You can save first and submit when everything is complete.';
+        return '';
     }
 
     function buildFormGuidance(task) {
         const taskGuides = {
             availment_form: {
-                step: 'Step 1 of 4',
+                step: 'Application requirement',
                 time: 'About 10 to 15 minutes',
                 prepare: 'Personal details, family income details, and signature file',
                 summary: 'This form records your basic application details and the information needed to continue your assistance record.',
             },
             validation_form: {
-                step: 'Step 2 of 4',
+                step: 'Application requirement',
                 time: 'About 10 minutes',
                 prepare: 'Updated household details and supporting answers',
                 summary: 'This form checks and updates your beneficiary information before the next documents are reviewed.',
             },
             business_plan: {
-                step: 'Step 3 of 4',
+                step: 'Application requirement',
                 time: 'About 20 to 30 minutes',
                 prepare: 'Business idea, cost estimates, and income plan',
                 summary: 'This form helps explain your livelihood plan in a clearer, structured way.',
             },
             mungkahing_proyekto: {
-                step: 'Step 3 of 4',
+                step: 'Application requirement',
                 time: 'About 20 to 30 minutes',
                 prepare: 'Project details, budget estimates, and signature file',
                 summary: 'This form captures the proposed project details that support your request for assistance.',
             },
             buhat_sa_pagpanumpa: {
-                step: 'Step 4 of 4',
+                step: 'Application requirement',
                 time: 'About 10 minutes',
                 prepare: 'Final review of your answers and signature file',
                 summary: 'This form is your final statement and confirmation before the task can move for review.',
             },
+            fund_release_evidence: {
+                step: 'Final requirement',
+                time: 'About 3 to 5 minutes',
+                prepare: 'Any attachment that proves the fund was released',
+                summary: 'Upload the proof of fund release. You remain an applicant until this final attachment is reviewed and verified.',
+            },
         };
 
         return taskGuides[task.code] || {
-            step: 'Current application form step',
+            step: 'Application requirement',
             time: 'Usually 10 to 20 minutes',
             prepare: 'Your details and any files mentioned in the form',
             summary: 'Read the task title, review the note below, and complete the form carefully before submitting.',
@@ -2488,9 +2560,12 @@
             'applicantSignature.signedName': 'Ngalan sa mipirma',
             'applicantSignature.signedDate': 'Petsa sa pirma',
             'applicantSignature.signatureUpload': 'Pirma sa aplikante',
+            'fundReleaseEvidence.releaseDate': 'Release date',
+            'fundReleaseEvidence.notes': 'Applicant note',
+            'fundReleaseEvidence.releaseAttachment': 'Proof of fund release attachment',
         };
 
-        if (taskCode === 'business_plan' && businessPlanLabels[field]) {
+        if (['business_plan', 'fund_release_evidence'].includes(taskCode) && businessPlanLabels[field]) {
             return businessPlanLabels[field];
         }
 
@@ -2510,6 +2585,7 @@
             fieldNodes.forEach((node) => {
                 node.classList.add('is-field-error');
                 node.closest('.form-field, .bp-inline, .bp-textarea-wrap, .bp-product-card, .bp-schedule-wrap, .upload-field')?.classList.add('is-field-error');
+                node.closest('details')?.setAttribute('open', '');
             });
 
             form.querySelector(`[data-error-group="${cssEscape(field)}"]`)?.classList.add('is-field-error');
@@ -2517,7 +2593,7 @@
     }
 
     function isTaskEditable(task) {
-        return !['Submitted', 'Verified'].includes(String(task?.status || ''));
+        return !['Submitted', 'Verified', 'Locked'].includes(String(task?.status || ''));
     }
 
     function applyFormEditability(task) {
@@ -2698,7 +2774,9 @@
         `;
     }
 
-    function renderGovernmentPaperHeader(documentTitle, subtitle = '') {
+    function renderGovernmentPaperHeader(documentTitle = '', subtitle = '') {
+        const safeTitle = String(documentTitle || '').trim();
+        const safeSubtitle = String(subtitle || '').trim();
         return `
             <header class="paper-gov-header">
                 <div class="paper-gov-header__logos">
@@ -2712,9 +2790,50 @@
                     <img src="${escapeAttribute(mungkahingAssetUrl('dswd-logo.png'))}" alt="CSWDD" class="paper-gov-header__logo paper-gov-header__logo--right">
                 </div>
                 <div class="paper-gov-header__bar"></div>
-                <div class="paper-gov-header__title">${escapeHtml(documentTitle)}</div>
-                ${subtitle ? `<div class="paper-gov-header__subtitle">${escapeHtml(subtitle)}</div>` : ''}
+                ${safeTitle ? `<div class="paper-gov-header__title">${escapeHtml(safeTitle)}</div>` : ''}
+                ${safeSubtitle ? `<div class="paper-gov-header__subtitle">${escapeHtml(safeSubtitle)}</div>` : ''}
             </header>
+        `;
+    }
+
+    function renderGovernmentPaperFooter(pageNumber, totalPages) {
+        return `
+            <div class="page-no">Page ${pageNumber} of ${totalPages}</div>
+            <footer class="footer">
+                <div class="footer-left">
+                    <div><strong>Phone:</strong> &nbsp;&nbsp; +639562241679 / +639816016317</div>
+                    <div><strong>Email:</strong> &nbsp;&nbsp; cswdobutuan@gmail.com</div>
+                    <div><strong>Website:</strong> &nbsp; http://www.butuan.gov.ph</div>
+                </div>
+                <div class="footer-right">
+                    <img src="${escapeAttribute(mungkahingAssetUrl('butuanon-logo.png'))}" alt="ButuanON logo">
+                </div>
+            </footer>
+        `;
+    }
+
+    function renderGovernmentPaperTopStrip() {
+        return `
+            <header class="top-strip">
+                <img src="${escapeAttribute(mungkahingAssetUrl('city-of-butuan-logo.png'))}" alt="City of Butuan Official Seal" class="logo logo-left">
+                <div class="gov-header">
+                    <div class="small">Republic of the Philippines</div>
+                    <div class="big">CITY GOVERNMENT OF BUTUAN</div>
+                    <div class="dept">City Social Welfare and Development Department</div>
+                    <div class="addr">J.P. Rosales Ave., Tandang Sora, Butuan City</div>
+                    <div class="blue-bar"></div>
+                </div>
+                <img src="${escapeAttribute(mungkahingAssetUrl('dswd-logo.png'))}" alt="CSWDD Logo" class="logo logo-right">
+            </header>
+        `;
+    }
+
+    function renderGovernmentPaperTitleBlock(title, subtitle) {
+        return `
+            <div class="title-wrap">
+                <div class="title-main">${escapeHtml(title)}</div>
+                <div class="title-sub">${escapeHtml(subtitle)}</div>
+            </div>
         `;
     }
 
@@ -2727,7 +2846,6 @@
         const psycho = staff.psychoSocialRequirements || {};
         const residency = psycho.residencyAndCharacter || {};
         const relationships = psycho.familyRelationshipsWorkHabitsAspiration || {};
-        const social = psycho.socialResponsibility || {};
         const commitments = data.clientCommitment || {};
         const agreedToRollBackSchedule = Boolean(commitments.agreedToRollBackSchedule ?? commitments.agreedToSavingsCommitment);
         const agreedToWeeklySavings = Boolean(commitments.agreedToWeeklySavings ?? commitments.agreedToSavingsCommitment);
@@ -2757,7 +2875,7 @@
                     <section class="paper-page-section">
                         ${renderMungkahingPaperSectionTitle('II.', 'TYPE OF PROJECT:')}
                         <div class="paper-page-subtitle paper-page-subtitle--plain">A. Family Enterprise:</div>
-                        ${renderDocumentFamilyTable(familyMembers)}
+                        ${renderDocumentFamilyTable(familyMembers, { paperMode: true })}
                         <div class="paper-page-subtitle paper-page-subtitle--plain">B. Individual Assistance:</div>
                         <div class="paper-line-grid paper-line-grid--two paper-line-grid--govform">
                             ${renderMungkahingLineField('Clientele Category', 'individualAssistance.clienteleCategory', data.individualAssistance?.clienteleCategory || '', 'text')}
@@ -2782,12 +2900,13 @@
                     </section>
                     <section class="paper-page-section">
                         ${renderMungkahingPaperSectionTitle('III.', 'INCOME ELIGIBILITY REQUIREMENT:')}
-                        ${renderDocumentIncomeTable(incomeRows, data.incomeEligibility?.totalFamilyIncome || '')}
+                        ${renderDocumentIncomeTable(incomeRows, data.incomeEligibility?.totalFamilyIncome || '', { paperMode: true })}
                     </section>
+                    ${renderGovernmentPaperFooter(1, 2)}
                 </section>
 
                 <section class="paper-sheet paper-sheet--govform">
-                    ${renderGovernmentPaperHeader('SMART LEAP AVAILMENT FORM')}
+                    ${renderGovernmentPaperHeader()}
                     <section class="paper-page-section">
                         ${renderMungkahingPaperSectionTitle('IV.', 'PHYSICAL REQUIREMENTS')}
                         <div class="paper-page-subtitle paper-page-subtitle--plain">A. Health Age Requirements</div>
@@ -2818,12 +2937,6 @@
                             ${renderPaperValueLine(residency.residentName || '', { long: true })}
                             a bona fide resident of the barangay and is of good moral character and has no adverse reputation.
                         </div>
-                        <div class="paper-line-grid paper-line-grid--two paper-line-grid--govform">
-                            ${renderDocumentSelect('Bona fide resident', 'staffReview.psychoSocialRequirements.residencyAndCharacter.isBonaFideResident', residency.isBonaFideResident || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentSelect('Good moral character', 'staffReview.psychoSocialRequirements.residencyAndCharacter.goodMoralCharacter', residency.goodMoralCharacter || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentSelect('No adverse reputation', 'staffReview.psychoSocialRequirements.residencyAndCharacter.hasNoAdverseReputation', residency.hasNoAdverseReputation || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentField('Barangay', 'staffReview.psychoSocialRequirements.residencyAndCharacter.barangay', residency.barangay || '', 'text')}
-                        </div>
                         <div class="paper-signature-table paper-signature-table--compact">
                             <div class="paper-signature-row paper-signature-row--staff">
                                 <div class="paper-signature-row__label">Name and Signature of Certifying Officer</div>
@@ -2841,12 +2954,6 @@
                             ${renderPaperValueLine(relationships.applicantName || '', { long: true })}
                             manifest positive relationships, good work habits and attitude as well as demonstrated capacity and adequate level of economic aspiration.
                         </div>
-                        <div class="paper-line-grid paper-line-grid--two paper-line-grid--govform">
-                            ${renderDocumentSelect('Positive relationships', 'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.positiveRelationships', relationships.positiveRelationships || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentSelect('Good work habits and attitude', 'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.goodWorkHabitsAndAttitude', relationships.goodWorkHabitsAndAttitude || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentSelect('Adequate economic aspiration', 'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.adequateEconomicAspiration', relationships.adequateEconomicAspiration || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentTextarea('Finding / verification note', 'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.findingText', relationships.findingText || '', 'span-2')}
-                        </div>
                         <div class="paper-signature-table paper-signature-table--compact">
                             <div class="paper-signature-row paper-signature-row--staff">
                                 <div class="paper-signature-row__label">Name and Signature of Direct Worker</div>
@@ -2857,22 +2964,6 @@
                                     ${renderDocumentUpload('Direct worker signature upload', 'psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload', relationships.signatureUpload || null)}
                                 </div>
                             </div>
-                        </div>
-                        <div class="paper-page-subtitle paper-page-subtitle--plain">C. Social Responsibility and willingness to save (client)</div>
-                        <div class="paper-gov-certification">
-                            I will abide by all the policies and guidelines set by CSWDD for the SMART LEAP and I promise to pay the roll-back at the time stipulated and to generate weekly savings to meet emergencies that may affect my family.
-                        </div>
-                        <div class="paper-inline-grid paper-inline-grid--three">
-                            ${renderDocumentCheckbox('Will abide by SMART LEAP policies', 'clientCommitment.agreedToPolicies', commitments.agreedToPolicies)}
-                            ${renderDocumentCheckbox('Will pay roll-back on time', 'clientCommitment.agreedToRollBackSchedule', agreedToRollBackSchedule)}
-                            ${renderDocumentCheckbox('Will generate weekly savings', 'clientCommitment.agreedToWeeklySavings', agreedToWeeklySavings)}
-                            ${renderDocumentTextarea('Applicant note', 'clientCommitment.notes', commitments.notes || '', 'span-3')}
-                        </div>
-                        <div class="paper-line-grid paper-line-grid--two paper-line-grid--govform">
-                            ${renderDocumentSelect('Staff review: abide policies', 'staffReview.psychoSocialRequirements.socialResponsibility.abidePolicies', social.abidePolicies || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentSelect('Staff review: pay roll-back on time', 'staffReview.psychoSocialRequirements.socialResponsibility.payRollBackOnTime', social.payRollBackOnTime || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentSelect('Staff review: generate weekly savings', 'staffReview.psychoSocialRequirements.socialResponsibility.generateWeeklySavings', social.generateWeeklySavings || '', ['', 'Yes', 'No'])}
-                            ${renderDocumentTextarea('Staff acknowledgement text', 'staffReview.psychoSocialRequirements.socialResponsibility.acknowledgementText', social.acknowledgementText || '', 'span-2')}
                         </div>
                         <div class="paper-signature-table paper-signature-table--compact">
                             <div class="paper-signature-row">
@@ -2885,6 +2976,7 @@
                             </div>
                         </div>
                     </section>
+                    ${renderGovernmentPaperFooter(2, 2)}
                 </section>
             </div>
         `;
@@ -2897,107 +2989,72 @@
         const eligibility = data.staffReview?.eligibilityAssessment || {};
         const identity = data.staffReview?.validatorIdentity || {};
         const applicantDetails = data.applicantDetails || {};
+        const applicantName = deriveApplicantName(data);
 
         return `
-            <div class="paper-document">
-                <section class="paper-sheet">
-                    <header class="paper-head">
-                        <div class="paper-head__eyebrow">Sustainable Market and Technology and Employment Assistance Program</div>
-                        <h3>VALIDATION FORM</h3>
-                    </header>
-                    <section class="paper-block">
-                        <div class="paper-inline-grid paper-inline-grid--two">
-                            ${renderDocumentField('Date of Validation', 'applicantDetails.validationDate', applicantDetails.validationDate || '', 'date')}
+            <div class="paper-document paper-document--validation">
+                <section class="paper-sheet paper-sheet--govform paper-sheet--validation paper-sheet--govpage">
+                    ${renderGovernmentPaperTopStrip()}
+                    ${renderGovernmentPaperTitleBlock(
+                        'VALIDATION FORM',
+                        'Sustainable Market and Technology and Employment Assistance Program (SMART LEAP)'
+                    )}
+                    <section class="paper-page-section">
+                        <div class="paper-line-grid paper-line-grid--govform paper-line-grid--validation-date">
+                            ${renderMungkahingLineField('Date of Validation', 'applicantDetails.validationDate', applicantDetails.validationDate || '', 'date')}
                         </div>
-                        ${renderPaperStatementBlock(
-                            'Applicant Identifying Data',
-                            `
-                                <p class="post-approval-statement">
-                                    Name:
-                                    ${renderPaperValueLine(applicantDetails.lastName, { long: true })}
-                                    ${renderPaperValueLine(applicantDetails.firstName, { long: true })}
-                                    ${renderPaperValueLine(applicantDetails.middleName, { long: true })}
-                                </p>
-                                <div class="paper-inline-grid paper-inline-grid--three">
-                                    ${renderDocumentField('Last Name', 'applicantDetails.lastName', applicantDetails.lastName || '', 'text')}
-                                    ${renderDocumentField('First Name', 'applicantDetails.firstName', applicantDetails.firstName || '', 'text')}
-                                    ${renderDocumentField('Middle Name', 'applicantDetails.middleName', applicantDetails.middleName || '', 'text')}
-                                </div>
-                                <p class="post-approval-statement">
-                                    Address : Purok
-                                    ${renderPaperValueLine(applicantDetails.purok, { long: true })}
-                                    Barangay:
-                                    ${renderPaperValueLine(applicantDetails.barangay, { long: true })}
-                                </p>
-                                <div class="paper-inline-grid paper-inline-grid--two">
-                                    ${renderDocumentField('Purok', 'applicantDetails.purok', applicantDetails.purok || '', 'text')}
-                                    ${renderDocumentField('Barangay', 'applicantDetails.barangay', applicantDetails.barangay || '', 'text')}
-                                </div>
-                                <p class="post-approval-statement">
-                                    Birthday :
-                                    ${renderPaperValueLine(applicantDetails.birthdate, { long: true })}
-                                    Educational Attainment:
-                                    ${renderPaperValueLine(applicantDetails.educationalAttainment, { long: true })}
-                                </p>
-                                <div class="paper-inline-grid paper-inline-grid--two">
-                                    ${renderDocumentField('Birthdate', 'applicantDetails.birthdate', applicantDetails.birthdate || '', 'date')}
-                                    ${renderDocumentField('Educational Attainment', 'applicantDetails.educationalAttainment', applicantDetails.educationalAttainment || '', 'text')}
-                                </div>
-                                <p class="post-approval-statement">
-                                    Contact number :
-                                    ${renderPaperValueLine(applicantDetails.contactNumber, { long: true })}
-                                </p>
-                                <div class="paper-inline-grid paper-inline-grid--two">
-                                    ${renderDocumentField('Contact Number', 'applicantDetails.contactNumber', applicantDetails.contactNumber || '', 'text')}
-                                </div>
-                            `
-                        )}
+                        <div class="paper-validation-lines">
+                            <div class="paper-validation-name-row">
+                                <span class="paper-validation-label">Name:</span>
+                                ${renderMungkahingLineField('Last Name', 'applicantDetails.lastName', applicantDetails.lastName || '', 'text')}
+                                ${renderMungkahingLineField('First Name', 'applicantDetails.firstName', applicantDetails.firstName || '', 'text')}
+                                ${renderMungkahingLineField('Middle Name', 'applicantDetails.middleName', applicantDetails.middleName || '', 'text')}
+                            </div>
+                            <div class="paper-validation-meta-row">
+                                ${renderMungkahingLineField('Address: Purok', 'applicantDetails.purok', applicantDetails.purok || '', 'text')}
+                                ${renderMungkahingLineField('Barangay', 'applicantDetails.barangay', applicantDetails.barangay || '', 'text')}
+                            </div>
+                            <div class="paper-validation-meta-row">
+                                ${renderMungkahingLineField('Birthday', 'applicantDetails.birthdate', applicantDetails.birthdate || '', 'date')}
+                                ${renderMungkahingLineField('Educational Attainment', 'applicantDetails.educationalAttainment', applicantDetails.educationalAttainment || '', 'text')}
+                            </div>
+                            <div class="paper-validation-contact-row">
+                                ${renderMungkahingLineField('Contact number', 'applicantDetails.contactNumber', applicantDetails.contactNumber || '', 'text')}
+                            </div>
+                        </div>
                     </section>
-                    <section class="paper-block">
-                        ${renderValidationChecklistTable(checklist)}
+                    <section class="paper-page-section">
+                        ${renderValidationChecklistTable(checklist, { paperMode: true })}
                     </section>
-                    ${renderPaperStatementBlock(
-                        `Validator's Recommendation`,
-                        renderPaperCertificationSentence(renderPaperValueLine(recommendation.recommendationText, { long: true })) + `
-                            <div class="paper-inline-grid paper-inline-grid--two">
-                                ${renderDocumentTextarea('Recommendation', 'staffReview.validatorRecommendation.recommendationText', recommendation.recommendationText || '', 'span-2', true)}
+                    <section class="paper-page-section">
+                        <div class="paper-validation-inline-label">Validator's Recommendation:</div>
+                        <div class="paper-validation-recommendation">
+                            <textarea class="paper-validation-lines-input" name="staffReview.validatorRecommendation.recommendationText" data-field-owner="staff" data-field-ref="staffReview.validatorRecommendation.recommendationText" rows="3" disabled>${escapeHtml(recommendation.recommendationText || '')}</textarea>
+                        </div>
+                    </section>
+                    <section class="paper-page-section paper-page-section--validation-closing">
+                        <div class="paper-gov-certification paper-gov-certification--validation">
+                            Ako si
+                            ${renderPaperValueLine(eligibility.residentName || data.participantSignature?.signedName || '', { long: true })}
+                            ,
+                            ${renderPaperValueLine(eligibility.age || '', { short: true })}
+                            anyos, lumulupyo sa Barangay
+                            ${renderPaperValueLine(eligibility.barangay || applicantDetails.barangay || '', { long: true })}
+                            , Butuan City, Agusan Del Norte. Ako nakasabot sa tumong ug proseso niining Livelihood Assistance kung diin ako
+                            ${renderPaperInlineChoiceField('staffReview.eligibilityAssessment.eligibilityDecision', eligibility.eligibilityDecision || '', ['ANGAYAN', 'DILI ANGAYAN'], false, true)}
+                            mamahimong benepisyo sa among program nga gidumala sa SMART LEAP ng City Social Welfare and Development Department (CSWDD).
+                        </div>
+                        <div class="paper-validation-signatures">
+                            <div class="paper-validation-signature">
+                                ${renderApplicantSignatureStamp(applicantName, 'participantSignature.signatureUpload', data.participantSignature?.signatureUpload || null)}
                             </div>
-                        `
-                    )}
-                    ${renderPaperStatementBlock(
-                        'Eligibility Assessment',
-                        renderPaperCertificationSentence(`Ako si ${renderPaperValueLine(eligibility.residentName, { long: true })}, ${renderPaperValueLine(eligibility.age, { short: true })} anyos, lumulupyo sa Barangay ${renderPaperValueLine(eligibility.barangay, { long: true })}, Butuan City, Agusan Del Norte. Ako nakasabot sa tumong ug proseso niining Livelihood Assistance kung diin ako ${renderPaperValueLine(eligibility.eligibilityDecision, { long: true })} (ANGAYAN/DILI ANGAYAN) mamahimong benepisyo sa among program nga gidumala sa SMART LEAP ng City Social Welfare and Development Department (CSWDD).`) + `
-                            <div class="paper-inline-grid paper-inline-grid--two">
-                                ${renderDocumentField('Resident name', 'staffReview.eligibilityAssessment.residentName', eligibility.residentName || '', 'text', '', true)}
-                                ${renderDocumentField('Age', 'staffReview.eligibilityAssessment.age', eligibility.age || '', 'number', '', true)}
-                                ${renderDocumentField('Barangay', 'staffReview.eligibilityAssessment.barangay', eligibility.barangay || '', 'text', '', true)}
-                                ${renderDocumentSelect('Eligibility decision', 'staffReview.eligibilityAssessment.eligibilityDecision', eligibility.eligibilityDecision || '', ['', 'ANGAYAN', 'DILI ANGAYAN'], true)}
-                                ${renderDocumentSelect('Understands assistance process', 'staffReview.eligibilityAssessment.understandsAssistanceProcess', eligibility.understandsAssistanceProcess || '', ['', 'Yes', 'No'], true)}
-                                ${renderDocumentTextarea('Assistance process understanding', 'staffReview.eligibilityAssessment.assistanceProcessUnderstanding', eligibility.assistanceProcessUnderstanding || '', 'span-2', true)}
+                            <div class="paper-validation-signature">
+                                <div class="paper-validation-signature__line"></div>
+                                <div class="paper-validation-signature__label">Ngalan/Perma sa Validator</div>
                             </div>
-                        `,
-                        `
-                            <div class="paper-signature-dual">
-                                ${renderPaperSignatureArea(
-                                    'Ngalan/Perma sa Partisipante',
-                                    `
-                                        ${renderDocumentField('Participant signed name', 'participantSignature.signedName', data.participantSignature?.signedName || '', 'text')}
-                                        ${renderDocumentField('Date signed', 'participantSignature.signedDate', data.participantSignature?.signedDate || '', 'date')}
-                                        ${renderDocumentUpload('Participant signature upload', 'participantSignature.signatureUpload', data.participantSignature?.signatureUpload || null)}
-                                    `
-                                )}
-                                ${renderPaperSignatureArea(
-                                    'Ngalan/Perma sa Validator',
-                                    `
-                                        ${renderDocumentField('Validator name', 'staffReview.validatorIdentity.validatorName', identity.validatorName || '', 'text', '', true)}
-                                        ${renderDocumentField('Validator title', 'staffReview.validatorIdentity.validatorTitle', identity.validatorTitle || '', 'text', '', true)}
-                                        ${renderDocumentField('Date signed', 'staffReview.validatorIdentity.signedDate', identity.signedDate || '', 'date', '', true)}
-                                        ${renderDocumentUpload('Validator signature upload', 'validatorIdentity.signatureUpload', identity.signatureUpload || null, true)}
-                                    `
-                                )}
-                            </div>
-                        `
-                    )}
+                        </div>
+                    </section>
+                    ${renderGovernmentPaperFooter(1, 1)}
                 </section>
             </div>
         `;
@@ -3076,10 +3133,6 @@
                     `
                         <p>I will abide by all the policies and guidelines set by CSWDD for the SMART LEAP and I promise to pay the roll-back at the time stipulated and to generate weekly savings to meet emergencies that may affect my family.</p>
                         <div class="post-approval-fields">
-                            ${renderDocumentCheckbox('Will abide by SMART LEAP policies', 'clientCommitment.agreedToPolicies', commitments.agreedToPolicies)}
-                            ${renderDocumentCheckbox('Will pay roll-back on time', 'clientCommitment.agreedToRollBackSchedule', agreedToRollBackSchedule)}
-                            ${renderDocumentCheckbox('Will generate weekly savings', 'clientCommitment.agreedToWeeklySavings', agreedToWeeklySavings)}
-                            ${renderTextarea('Applicant note', 'clientCommitment.notes', data.clientCommitment?.notes || '', true)}
                             ${renderField('Participant signed name', 'applicantSignature.signedName', data.applicantSignature?.signedName || '', 'text')}
                             ${renderField('Date signed', 'applicantSignature.signedDate', data.applicantSignature?.signedDate || '', 'date')}
                             ${renderUploadField('Participant signature upload', 'applicantSignature.signatureUpload', data.applicantSignature?.signatureUpload || null)}
@@ -3869,6 +3922,48 @@
         return `<label class="paper-line-field ${ownership.owner === FIELD_OWNER_STAFF ? 'is-staff-only' : ''}"><span class="paper-line-field__label">${escapeHtml(label)}:</span><input class="paper-line-field__input ${ownership.owner === FIELD_OWNER_STAFF ? 'is-staff-locked' : ''}" type="${escapeAttribute(type || 'text')}" name="${escapeAttribute(name)}" value="${escapeAttribute(value || '')}" ${ownership.attrs} ${ownership.disabled ? 'disabled' : ''}>${ownership.note}</label>`;
     }
 
+    function renderPaperInlineChoiceField(name, value, options, disabled = false, forceApplicant = false) {
+        const ownership = buildFieldOwnershipAttributes(name, disabled, forceApplicant);
+        return `
+            <span class="paper-inline-choice ${ownership.owner === FIELD_OWNER_STAFF ? 'is-staff-only' : ''}">
+                ${(options || []).map((option) => `
+                    <label class="paper-inline-choice__item">
+                        <input
+                            type="radio"
+                            name="${escapeAttribute(name)}"
+                            value="${escapeAttribute(option)}"
+                            ${value === option ? 'checked' : ''}
+                            ${ownership.attrs}
+                            ${ownership.disabled ? 'disabled' : ''}
+                        >
+                        <span>${escapeHtml(option)}</span>
+                    </label>
+                `).join('')}
+                ${ownership.note}
+            </span>
+        `;
+    }
+
+    function renderApplicantSignatureStamp(name, uploadField, metadata) {
+        const safeName = String(name || '').trim();
+        const ownership = buildFieldOwnershipAttributes(uploadField, false);
+        const fileName = metadata?.original_name || '';
+        const fileUrl = metadata?.file_path ? routeUrl(metadata.file_path) : '';
+        return `
+            <div class="paper-applicant-signature">
+                <label class="paper-signature-upload ${ownership.disabled ? 'is-disabled' : ''}">
+                    <input type="file" class="upload-input" data-upload-field="${escapeAttribute(uploadField)}" ${ownership.attrs} accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf" ${ownership.disabled ? 'disabled' : ''}>
+                    <span>${fileName ? 'Ilisi ang pirma' : 'Upload pirma'}</span>
+                </label>
+                ${fileUrl ? `<a class="paper-signature-upload__link" href="${escapeAttribute(fileUrl)}" target="_blank" rel="noopener">${escapeHtml(fileName || 'Tan-awa ang uploaded nga pirma')}</a>` : ''}
+                <input type="hidden" name="participantSignature.signedName" value="${escapeAttribute(safeName)}">
+                <div class="paper-applicant-signature__name">${escapeHtml(safeName || ' ')}</div>
+                <div class="paper-applicant-signature__line"></div>
+                <div class="paper-applicant-signature__label">Pirma ibabaw sa &nbsp; pangalan sa Partisipante</div>
+            </div>
+        `;
+    }
+
     function renderMungkahingSignatureBox(nameKey, nameValue, labelText, uploadField, metadata, disabled = false, titleKey = '', titleValue = '') {
         const nameOwnership = buildFieldOwnershipAttributes(nameKey, disabled);
         const uploadOwnership = buildFieldOwnershipAttributes(uploadField, disabled);
@@ -4063,5 +4158,578 @@
 
     function escapeAttribute(value) {
         return escapeHtml(value).replace(/"/g, '&quot;');
+    }
+
+    function renderStaffSections(sections, reviewerRemarks) {
+        return renderApplicantReviewerNote(reviewerRemarks);
+    }
+
+    function renderUploadField(label, fieldKey, metadata, disabled = false) {
+        const ownership = buildFieldOwnershipAttributes(fieldKey, disabled);
+        const fileName = metadata?.original_name || '';
+        const fileUrl = metadata?.file_path ? routeUrl(metadata.file_path) : '';
+        const uploadedAt = metadata?.uploaded_at ? formatDateTime(metadata.uploaded_at) : '';
+
+        return `
+            <div class="form-field full upload-field">
+                <span>${escapeHtml(label)}</span>
+                ${ownership.note}
+                <div class="upload-card upload-card--guided ${ownership.disabled ? 'is-disabled' : ''}">
+                    <div class="upload-card__copy">
+                        <strong>${escapeHtml(fileName || 'No file uploaded yet')}</strong>
+                        <small>${fileName ? `Uploaded ${escapeHtml(uploadedAt || '')}` : 'Accepted: JPG, PNG, WEBP, HEIC, HEIF, or PDF'}</small>
+                    </div>
+                    <div class="upload-card__actions">
+                        ${fileUrl ? `<a class="btn-outline small" href="${escapeAttribute(fileUrl)}" target="_blank" rel="noopener">View uploaded file</a>` : `
+                            <label class="btn-primary small upload-trigger ${ownership.disabled ? 'is-disabled' : ''}">
+                                <input type="file" class="upload-input" data-upload-field="${escapeAttribute(fieldKey)}" ${ownership.attrs} accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf" ${ownership.disabled ? 'disabled' : ''}>
+                                Upload file
+                            </label>
+                        `}
+                        ${fileUrl ? `
+                            <label class="btn-outline small upload-trigger ${ownership.disabled ? 'is-disabled' : ''}">
+                                <input type="file" class="upload-input" data-upload-field="${escapeAttribute(fieldKey)}" ${ownership.attrs} accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf" ${ownership.disabled ? 'disabled' : ''}>
+                                Replace file
+                            </label>
+                        ` : ''}
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderFamilyMemberRow(row, index) {
+        return renderRepeatableMiniCard(
+            `Family member ${index + 1}`,
+            `
+                ${renderField('Family member name', `familyEnterprise.members.${index}.name`, row.name || '', 'text')}
+                ${renderField('Age', `familyEnterprise.members.${index}.age`, row.age || '', 'number')}
+                ${renderField('Activities', `familyEnterprise.members.${index}.activities`, row.activities || '', 'text', true)}
+            `,
+            'remove-family',
+            index
+        );
+    }
+
+    function renderIncomeRow(row, index) {
+        return renderRepeatableMiniCard(
+            `Income row ${index + 1}`,
+            `
+                ${renderField('Working family member', `incomeEligibility.rows.${index}.memberName`, row.memberName || '', 'text')}
+                ${renderField('Cash income', `incomeEligibility.rows.${index}.cashIncome`, row.cashIncome || '', 'number')}
+                ${renderField('Non-cash income', `incomeEligibility.rows.${index}.nonCashIncome`, row.nonCashIncome || '', 'number')}
+                ${renderField('Total income', `incomeEligibility.rows.${index}.totalIncome`, row.totalIncome || '', 'number')}
+            `,
+            'remove-income',
+            index
+        );
+    }
+
+    function renderAvailmentMobile(payload) {
+        const data = payload || {};
+        const familyMembers = ensureRows(data.familyEnterprise?.members, { name: '', age: '', activities: '' });
+        const incomeRows = ensureRows(data.incomeEligibility?.rows, { memberName: '', cashIncome: '', nonCashIncome: '', totalIncome: '' });
+        return `
+            ${renderBeforeYouStart(['Prepare your personal details.', 'Prepare family or project details.', 'Prepare your signature file.'])}
+            ${renderGuidedSection('section-client-data', '1. Client Identifying Data', 'Basic personal details used in your application.', `
+                <div class="post-approval-fields">
+                    ${renderField('Name', 'clientIdentifyingData.name', data.clientIdentifyingData?.name || '', 'text')}
+                    ${renderField('Age', 'clientIdentifyingData.age', data.clientIdentifyingData?.age || '', 'number')}
+                    ${renderField('Address', 'clientIdentifyingData.address', data.clientIdentifyingData?.address || '', 'text', true)}
+                    ${renderField('Name of spouse', 'clientIdentifyingData.spouseName', data.clientIdentifyingData?.spouseName || '', 'text')}
+                    ${renderReadOnlyField('City', data.clientIdentifyingData?.city || 'Butuan City')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-project-type', '2. Type of Project', 'Describe the project and participating family members.', `
+                <div class="post-approval-fields">
+                    ${renderField('Project type', 'familyEnterprise.projectType', data.familyEnterprise?.projectType || '', 'text')}
+                </div>
+                <div class="post-approval-repeatable__header">
+                    <span class="post-approval-repeatable__title">Family members participating</span>
+                    <button type="button" class="btn-outline small" data-row-action="add-family">Add family member</button>
+                </div>
+                <div class="guided-repeatable-stack">${familyMembers.map((row, index) => renderFamilyMemberRow(row, index)).join('')}</div>
+            `)}
+            ${renderGuidedSection('section-income', '3. Income Eligibility Requirement', 'Add each working family member and income row.', `
+                <div class="post-approval-repeatable__header">
+                    <span class="post-approval-repeatable__title">Income rows</span>
+                    <button type="button" class="btn-outline small" data-row-action="add-income">Add income row</button>
+                </div>
+                <div class="guided-repeatable-stack">${incomeRows.map((row, index) => renderIncomeRow(row, index)).join('')}</div>
+                <div class="post-approval-fields">
+                    ${renderField('Total family income', 'incomeEligibility.totalFamilyIncome', data.incomeEligibility?.totalFamilyIncome || '', 'number')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-signature', '4. Signature and Upload', 'Add the signature details used for this form.', `
+                <div class="post-approval-fields">
+                    ${renderField('Participant signed name', 'applicantSignature.signedName', data.applicantSignature?.signedName || '', 'text')}
+                    ${renderField('Date signed', 'applicantSignature.signedDate', data.applicantSignature?.signedDate || '', 'date')}
+                    ${renderUploadField('Participant signature upload', 'applicantSignature.signatureUpload', data.applicantSignature?.signatureUpload || null)}
+                </div>
+            `)}
+            ${renderApplicantReviewerNote(state.task?.reviewerRemarks)}
+        `;
+    }
+
+    function renderBusinessPlanMobile(payload) {
+        const data = payload || {};
+        return `
+            ${renderBeforeYouStart(['Prepare your business idea.', 'Prepare sales and cost estimates.', 'Prepare your signature upload.'])}
+            ${renderGuidedSection('section-overview', '1. Overview', 'Basic business or project overview.', `
+                <div class="post-approval-fields">
+                    ${renderTextarea('Brief description of business/project', 'executiveSummary', data.executiveSummary || '', true)}
+                    ${renderTextarea('Brief profile of entrepreneur', 'overview.businessGoal', data.overview?.businessGoal || '', true)}
+                    ${renderTextarea('Contribution of project to economy', 'overview.economicContribution', data.overview?.economicContribution || '', true)}
+                    ${renderTextarea('Product description', 'overview.productDescription', data.overview?.productDescription || '', true)}
+                </div>
+            `, { collapsible: true })}
+            ${renderGuidedSection('section-marketing-plan', '2. Marketing Plan', 'Customer, competitor, and promotion details.', `
+                <div class="post-approval-fields">
+                    ${renderTextarea('Comparison with competitors', 'marketStrategy.competitors', data.marketStrategy?.competitors || '', true)}
+                    ${renderField('Location', 'marketStrategy.location', data.marketStrategy?.location || '', 'text')}
+                    ${renderField('Market area', 'marketStrategy.marketArea', data.marketStrategy?.marketArea || '', 'text')}
+                    ${renderTextarea('Primary customers', 'marketStrategy.customerProfile', data.marketStrategy?.customerProfile || '', true)}
+                    ${renderField('Total demand', 'marketStrategy.totalDemand', data.marketStrategy?.totalDemand || '', 'text')}
+                    ${renderField('Selling price', 'marketStrategy.sellingPrice', data.marketStrategy?.sellingPrice || '', 'text')}
+                    ${renderTextarea('Promotional measures', 'marketStrategy.promotionalMeasures', data.marketStrategy?.promotionalMeasures || '', true)}
+                    ${renderTextarea('Marketing strategy', 'marketStrategy.marketingStrategy', data.marketStrategy?.marketingStrategy || '', true)}
+                    ${renderField('Marketing budget', 'marketStrategy.marketingBudget', data.marketStrategy?.marketingBudget || '', 'text')}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-production-plan', '3. Production Plan', 'Production process, materials, labor, and capacity.', `
+                <div class="post-approval-fields">
+                    ${renderTextarea('Production or service process', 'operationsPlan.productionProcess', data.operationsPlan?.productionProcess || '', true)}
+                    ${renderField('Fixed capital', 'operationsPlan.fixedCapital', data.operationsPlan?.fixedCapital || '', 'text')}
+                    ${renderField('Life of fixed capital', 'operationsPlan.fixedCapitalLife', data.operationsPlan?.fixedCapitalLife || '', 'text')}
+                    ${renderField('Sources of equipment', 'operationsPlan.equipmentSources', data.operationsPlan?.equipmentSources || '', 'text')}
+                    ${renderField('Planned capacity', 'operationsPlan.plannedCapacity', data.operationsPlan?.plannedCapacity || '', 'text')}
+                    ${renderField('Future capacity', 'operationsPlan.futureCapacity', data.operationsPlan?.futureCapacity || '', 'text')}
+                    ${renderTextarea('Raw materials', 'operationsPlan.rawMaterials', data.operationsPlan?.rawMaterials || '', true)}
+                    ${renderField('Cost of raw materials', 'operationsPlan.rawMaterialCost', data.operationsPlan?.rawMaterialCost || '', 'text')}
+                    ${renderTextarea('Availability of raw materials', 'operationsPlan.rawMaterialAvailability', data.operationsPlan?.rawMaterialAvailability || '', true)}
+                    ${renderTextarea('Labor', 'operationsPlan.labor', data.operationsPlan?.labor || '', true)}
+                    ${renderField('Cost of labor', 'operationsPlan.laborCost', data.operationsPlan?.laborCost || '', 'text')}
+                    ${renderTextarea('Availability of labor', 'operationsPlan.laborAvailability', data.operationsPlan?.laborAvailability || '', true)}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-management-plan', '4. Organization and Management', 'Pre-operating activities and costs.', `
+                <div class="post-approval-fields">
+                    ${renderTextarea('Pre-operating activities', 'implementationSchedule.summary', data.implementationSchedule?.summary || '', true)}
+                    ${renderField('Pre-operating costs', 'implementationSchedule.preOperatingCosts', data.implementationSchedule?.preOperatingCosts || '', 'text')}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-financial-plan', '5. Financial Plan', 'Project cost and financial plan details.', `
+                <div class="post-approval-fields">
+                    ${renderField('Project cost', 'financialPlan.startupCapital', data.financialPlan?.startupCapital || '', 'text')}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-signature', '6. Signature', 'Add the final signature details for your business plan.', `
+                <div class="post-approval-fields">
+                    ${renderField('Signed name', 'applicantSignature.signedName', data.applicantSignature?.signedName || '', 'text')}
+                    ${renderField('Signed date', 'applicantSignature.signedDate', data.applicantSignature?.signedDate || '', 'date')}
+                    ${renderUploadField('Signature upload', 'applicantSignature.signatureUpload', data.applicantSignature?.signatureUpload || null)}
+                </div>
+            `)}
+            ${renderApplicantReviewerNote(state.task?.reviewerRemarks)}
+        `;
+    }
+
+    function renderBuhatSaPagpanumpaMobile(payload) {
+        const data = payload || {};
+        return `
+            ${renderBeforeYouStart(['Review your answers first.', 'Prepare beneficiary signature file.', 'Prepare co-maker signature file.'])}
+            ${renderGuidedSection('section-beneficiary-info', '1. Beneficiary Information', 'Review the beneficiary details.', `
+                <div class="post-approval-fields">
+                    ${renderField('Full name', 'beneficiary.fullName', data.beneficiary?.fullName || '', 'text')}
+                    ${renderField('Age', 'beneficiary.age', data.beneficiary?.age || '', 'number')}
+                    ${renderField('Address line', 'beneficiary.addressLine', data.beneficiary?.addressLine || '', 'text', true)}
+                    ${renderField('Barangay', 'beneficiary.barangay', data.beneficiary?.barangay || '', 'text')}
+                    ${renderField('City', 'beneficiary.city', data.beneficiary?.city || '', 'text')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-program-details', '2. Program and Project', 'Program details tied to this undertaking.', `
+                <div class="post-approval-fields">
+                    ${renderField('Program name', 'program.programName', data.program?.programName || '', 'text')}
+                    ${renderField('Project name', 'program.projectName', data.program?.projectName || '', 'text')}
+                    ${renderField('Awarded amount', 'program.awardedAmount', data.program?.awardedAmount || '', 'text')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-co-maker', '3. Co-maker Information', 'Review the co-maker details.', `
+                <div class="post-approval-fields">
+                    ${renderField('Co-maker full name', 'coMaker.fullName', data.coMaker?.fullName || '', 'text')}
+                    ${renderField('Address line', 'coMaker.addressLine', data.coMaker?.addressLine || '', 'text', true)}
+                    ${renderField('Barangay', 'coMaker.barangay', data.coMaker?.barangay || '', 'text')}
+                    ${renderField('City', 'coMaker.city', data.coMaker?.city || '', 'text')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-dates', '4. Dates', 'Review the signing dates.', `
+                <div class="post-approval-fields">
+                    ${renderField('Date signed', 'documentDates.signedDate', data.documentDates?.signedDate || '', 'date')}
+                    ${renderField('Year', 'documentDates.signedYear', data.documentDates?.signedYear || '', 'number')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-signatures', '5. Signatures', 'Upload the beneficiary and co-maker signatures.', `
+                <div class="post-approval-fields">
+                    ${renderField('Beneficiary signed name', 'applicantSignature.signedName', data.applicantSignature?.signedName || '', 'text')}
+                    ${renderUploadField('Beneficiary signature upload', 'applicantSignature.signatureUpload', data.applicantSignature?.signatureUpload || null)}
+                    ${renderField('Co-maker signed name', 'coMakerSignature.signedName', data.coMakerSignature?.signedName || '', 'text')}
+                    ${renderUploadField('Co-maker signature upload', 'coMakerSignature.signatureUpload', data.coMakerSignature?.signatureUpload || null)}
+                </div>
+            `)}
+            ${renderApplicantReviewerNote(state.task?.reviewerRemarks)}
+        `;
+    }
+
+    function renderMungkahingMobile(payload) {
+        const data = payload || {};
+        const modalityRows = ensureRows(data.modalityApplication?.rows, { partnerSource: '', contribution: '', quantity: '' });
+        const materialsRows = ensureRows(data.businessOperation?.materials?.rows, { material: '', quantity: '', unit: '', unitPrice: '', productionCycle: '', estimatedQuantity: '' });
+        const laborRows = ensureRows(data.businessOperation?.labor?.rows, { workerName: '', position: '', dailyWage: '' });
+        const toolRows = ensureRows(data.businessOperation?.toolsEquipment?.rows, { toolName: '', quantity: '', unit: '', currentCost: '', estimatedCost: '', usefulLife: '', productionCycle: '', depreciationCost: '' });
+        const expenseRows = ensureRows(data.businessOperation?.operatingExpenses?.rows, { expenseType: '', paymentInterval: '', estimatedAmount: '' });
+        const salesRows = ensureRows(data.businessOperation?.salesProjection?.rows, { product: '', quantity: '', unit: '', sellingQuantityPerPiece: '', estimatedSales: '' });
+        const spendingRows = ensureRows(data.capitalFundSpendingPlan?.rows, { expense: '', amount: '', usageSchedule: '' });
+        const mapRows = (rows, action, builder) => `<div class="guided-repeatable-stack">${rows.map((row, index) => builder(row, index, action)).join('')}</div>`;
+        const basicRowCard = (title, fields, action, index) => renderRepeatableMiniCard(`${title} ${index + 1}`, fields, action, index);
+
+        return `
+            ${renderBeforeYouStart(['Prepare project details.', 'Prepare budget estimates.', 'Prepare your signature upload.'])}
+            ${renderGuidedSection('section-project-info', '1. Project Information', 'Basic information about the proposed project.', `
+                <div class="post-approval-fields">
+                    ${renderField('Participant name', 'projectInformation.participantName', data.projectInformation?.participantName || '', 'text')}
+                    ${renderField('Project location', 'projectInformation.projectLocation', data.projectInformation?.projectLocation || '', 'text')}
+                    ${renderField('Project name', 'projectInformation.projectName', data.projectInformation?.projectName || '', 'text')}
+                    ${renderField('Date', 'projectInformation.date', data.projectInformation?.date || '', 'date')}
+                    ${renderField('Estimated quantity', 'projectInformation.estimatedQuantity', data.projectInformation?.estimatedQuantity || '', 'text')}
+                    ${renderField('Amount from CSWDD', 'projectInformation.amountFromCSWDD', data.projectInformation?.amountFromCSWDD || '', 'text')}
+                    ${renderField('Other funding', 'projectInformation.otherFunding', data.projectInformation?.otherFunding || '', 'text')}
+                    ${renderField('Savings account number', 'projectInformation.savingsAccountNumber', data.projectInformation?.savingsAccountNumber || '', 'text')}
+                </div>
+            `, { collapsible: true })}
+            ${renderGuidedSection('section-rationale', '2. Rationale', 'Explain why this project is needed.', `
+                <div class="post-approval-fields">
+                    ${renderTextarea('Project rationale', 'projectInformation.rationale', data.projectInformation?.rationale || '', true)}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-modality', '3. Modality Application / Partner Contribution', 'Add each partner or contribution row.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Partner rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-contribution">Add partner row</button></div>
+                ${mapRows(modalityRows, 'remove-mp-contribution', (row, index, action) => basicRowCard('Partner row', `
+                    ${renderField('Partner/source', `modalityApplication.rows.${index}.partnerSource`, row.partnerSource || '', 'text')}
+                    ${renderField('Contribution', `modalityApplication.rows.${index}.contribution`, row.contribution || '', 'text')}
+                    ${renderField('Quantity', `modalityApplication.rows.${index}.quantity`, row.quantity || '', 'text')}
+                `, action, index))}
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-materials', '4. Materials', 'Add the materials needed for the project.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Material rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-material">Add material row</button></div>
+                ${mapRows(materialsRows, 'remove-mp-material', (row, index, action) => basicRowCard('Material row', `
+                    ${renderField('Material', `businessOperation.materials.rows.${index}.material`, row.material || '', 'text')}
+                    ${renderField('Quantity', `businessOperation.materials.rows.${index}.quantity`, row.quantity || '', 'text')}
+                    ${renderField('Unit', `businessOperation.materials.rows.${index}.unit`, row.unit || '', 'text')}
+                    ${renderField('Unit price', `businessOperation.materials.rows.${index}.unitPrice`, row.unitPrice || '', 'number')}
+                    ${renderField('Production cycle', `businessOperation.materials.rows.${index}.productionCycle`, row.productionCycle || '', 'text')}
+                    ${renderField('Estimated quantity', `businessOperation.materials.rows.${index}.estimatedQuantity`, row.estimatedQuantity || '', 'text')}
+                `, action, index))}
+                <div class="post-approval-fields">${renderField('Materials total', 'businessOperation.materials.totalCost', data.businessOperation?.materials?.totalCost || '', 'number')}</div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-labor', '5. Labor', 'Add the labor rows for the project.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Labor rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-labor">Add labor row</button></div>
+                ${mapRows(laborRows, 'remove-mp-labor', (row, index, action) => basicRowCard('Labor row', `
+                    ${renderField('Worker name', `businessOperation.labor.rows.${index}.workerName`, row.workerName || '', 'text')}
+                    ${renderField('Position', `businessOperation.labor.rows.${index}.position`, row.position || '', 'text')}
+                    ${renderField('Daily wage', `businessOperation.labor.rows.${index}.dailyWage`, row.dailyWage || '', 'number')}
+                `, action, index))}
+                <div class="post-approval-fields">${renderField('Labor total', 'businessOperation.labor.totalWages', data.businessOperation?.labor?.totalWages || '', 'number')}</div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-tools', '6. Tools / Equipment', 'Add equipment rows with estimated costs.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Tool rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-equipment">Add tool row</button></div>
+                ${mapRows(toolRows, 'remove-mp-equipment', (row, index, action) => basicRowCard('Tool row', `
+                    ${renderField('Tool name', `businessOperation.toolsEquipment.rows.${index}.toolName`, row.toolName || '', 'text')}
+                    ${renderField('Quantity', `businessOperation.toolsEquipment.rows.${index}.quantity`, row.quantity || '', 'text')}
+                    ${renderField('Unit', `businessOperation.toolsEquipment.rows.${index}.unit`, row.unit || '', 'text')}
+                    ${renderField('Current cost', `businessOperation.toolsEquipment.rows.${index}.currentCost`, row.currentCost || '', 'number')}
+                    ${renderField('Estimated cost', `businessOperation.toolsEquipment.rows.${index}.estimatedCost`, row.estimatedCost || '', 'number')}
+                    ${renderField('Useful life', `businessOperation.toolsEquipment.rows.${index}.usefulLife`, row.usefulLife || '', 'text')}
+                    ${renderField('Production cycle', `businessOperation.toolsEquipment.rows.${index}.productionCycle`, row.productionCycle || '', 'text')}
+                    ${renderField('Depreciation cost', `businessOperation.toolsEquipment.rows.${index}.depreciationCost`, row.depreciationCost || '', 'number')}
+                `, action, index))}
+                <div class="post-approval-fields">${renderField('Tools total', 'businessOperation.toolsEquipment.totalCost', data.businessOperation?.toolsEquipment?.totalCost || '', 'number')}</div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-expenses', '7. Operating Expenses', 'Add the operating expense entries.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Expense rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-expense">Add expense row</button></div>
+                ${mapRows(expenseRows, 'remove-mp-expense', (row, index, action) => basicRowCard('Expense row', `
+                    ${renderField('Expense type', `businessOperation.operatingExpenses.rows.${index}.expenseType`, row.expenseType || '', 'text')}
+                    ${renderField('Payment interval', `businessOperation.operatingExpenses.rows.${index}.paymentInterval`, row.paymentInterval || '', 'text')}
+                    ${renderField('Estimated amount', `businessOperation.operatingExpenses.rows.${index}.estimatedAmount`, row.estimatedAmount || '', 'number')}
+                `, action, index))}
+                <div class="post-approval-fields">${renderField('Grand total', 'businessOperation.operatingExpenses.grandTotal', data.businessOperation?.operatingExpenses?.grandTotal || '', 'number')}</div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-sales', '8. Product / Sales', 'Add product or sales entries.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Product rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-sale">Add product row</button></div>
+                ${mapRows(salesRows, 'remove-mp-sale', (row, index, action) => basicRowCard('Product row', `
+                    ${renderField('Product', `businessOperation.salesProjection.rows.${index}.product`, row.product || '', 'text')}
+                    ${renderField('Quantity', `businessOperation.salesProjection.rows.${index}.quantity`, row.quantity || '', 'text')}
+                    ${renderField('Unit', `businessOperation.salesProjection.rows.${index}.unit`, row.unit || '', 'text')}
+                    ${renderField('Selling quantity per piece', `businessOperation.salesProjection.rows.${index}.sellingQuantityPerPiece`, row.sellingQuantityPerPiece || '', 'text')}
+                    ${renderField('Estimated sales', `businessOperation.salesProjection.rows.${index}.estimatedSales`, row.estimatedSales || '', 'number')}
+                `, action, index))}
+                <div class="post-approval-fields">${renderField('Gross sales', 'businessOperation.salesProjection.grossSales', data.businessOperation?.salesProjection?.grossSales || '', 'number')}</div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-profit', '9. Profit Computation', 'Review the profit computation values.', `
+                <div class="post-approval-fields">
+                    ${renderField('Sales', 'profitComputation.sales', data.profitComputation?.sales || '', 'number')}
+                    ${renderField('Raw materials', 'profitComputation.rawMaterials', data.profitComputation?.rawMaterials || '', 'number')}
+                    ${renderField('Labor', 'profitComputation.labor', data.profitComputation?.labor || '', 'number')}
+                    ${renderField('Depreciation', 'profitComputation.depreciation', data.profitComputation?.depreciation || '', 'number')}
+                    ${renderField('Other expenses', 'profitComputation.otherExpenses', data.profitComputation?.otherExpenses || '', 'number')}
+                    ${renderField('Operating cost', 'profitComputation.operatingCost', data.profitComputation?.operatingCost || '', 'number')}
+                    ${renderField('Gross profit', 'profitComputation.grossProfit', data.profitComputation?.grossProfit || '', 'number')}
+                    ${renderField('Net profit', 'profitComputation.netProfit', data.profitComputation?.netProfit || '', 'number')}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-capital-fund', '10. Capital Fund Spending Plan', 'Add the capital fund spending plan rows.', `
+                <div class="post-approval-repeatable__header"><span class="post-approval-repeatable__title">Spending rows</span><button type="button" class="btn-outline small" data-row-action="add-mp-spending">Add spending row</button></div>
+                ${mapRows(spendingRows, 'remove-mp-spending', (row, index, action) => basicRowCard('Spending row', `
+                    ${renderField('Expense', `capitalFundSpendingPlan.rows.${index}.expense`, row.expense || '', 'text')}
+                    ${renderField('Amount', `capitalFundSpendingPlan.rows.${index}.amount`, row.amount || '', 'number')}
+                    ${renderField('Usage schedule', `capitalFundSpendingPlan.rows.${index}.usageSchedule`, row.usageSchedule || '', 'text')}
+                `, action, index))}
+            `, { collapsible: true, open: false })}
+            ${renderGuidedSection('section-signature', '11. Participant Signature', 'Add your final signature details.', `
+                <div class="post-approval-fields">
+                    ${renderField('Signed name', 'applicantSignature.signedName', data.applicantSignature?.signedName || '', 'text')}
+                    ${renderField('Signed date', 'applicantSignature.signedDate', data.applicantSignature?.signedDate || '', 'date')}
+                    ${renderUploadField('Signature upload', 'applicantSignature.signatureUpload', data.applicantSignature?.signatureUpload || null)}
+                </div>
+            `, { collapsible: true, open: false })}
+            ${renderApplicantReviewerNote(state.task?.reviewerRemarks)}
+        `;
+    }
+
+    function renderValidationMobile(payload) {
+        const data = payload || {};
+        return `
+            ${renderBeforeYouStart(['Review your personal details.', 'Prepare updated household answers.', 'Prepare your signature upload.'])}
+            ${renderGuidedSection('section-applicant-info', '1. Applicant Information', 'Fill in the personal details requested in the validation form.', `
+                <div class="post-approval-fields">
+                    ${renderField('Date of validation', 'applicantDetails.validationDate', data.applicantDetails?.validationDate || '', 'date')}
+                    ${renderField('Last name', 'applicantDetails.lastName', data.applicantDetails?.lastName || '', 'text')}
+                    ${renderField('First name', 'applicantDetails.firstName', data.applicantDetails?.firstName || '', 'text')}
+                    ${renderField('Middle name', 'applicantDetails.middleName', data.applicantDetails?.middleName || '', 'text')}
+                    ${renderField('Purok', 'applicantDetails.purok', data.applicantDetails?.purok || '', 'text')}
+                    ${renderField('Barangay', 'applicantDetails.barangay', data.applicantDetails?.barangay || '', 'text')}
+                    ${renderField('Birthdate', 'applicantDetails.birthdate', data.applicantDetails?.birthdate || '', 'date')}
+                    ${renderField('Educational attainment', 'applicantDetails.educationalAttainment', data.applicantDetails?.educationalAttainment || '', 'text')}
+                    ${renderField('Contact number', 'applicantDetails.contactNumber', data.applicantDetails?.contactNumber || '', 'text')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-checklist', '2. Checklist', 'Answer the membership checklist items below.', `
+                <div class="post-approval-fields">
+                    ${renderSelectField('Pantawid Member', 'membershipChecklist.pantawidMember', data.membershipChecklist?.pantawidMember || '', ['', 'Yes', 'No'])}
+                    ${renderField('Specify', 'membershipChecklist.pantawidSpecify', data.membershipChecklist?.pantawidSpecify || '', 'text')}
+                    ${renderSelectField('SLPA Member', 'membershipChecklist.slpaMember', data.membershipChecklist?.slpaMember || '', ['', 'Yes', 'No'])}
+                    ${renderField('Specify', 'membershipChecklist.slpaSpecify', data.membershipChecklist?.slpaSpecify || '', 'text')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-assessment', '3. Eligibility Assessment', 'Confirm the applicant-side assessment details only.', `
+                <div class="post-approval-fields">
+                    ${renderTextarea('Assistance process understanding', 'participantAssessment.assistanceUnderstanding', data.participantAssessment?.assistanceUnderstanding || '', true)}
+                    ${renderField('Participant signed name', 'participantSignature.signedName', data.participantSignature?.signedName || '', 'text')}
+                    ${renderField('Date signed', 'participantSignature.signedDate', data.participantSignature?.signedDate || '', 'date')}
+                </div>
+            `)}
+            ${renderGuidedSection('section-signature', '4. Signature and Upload', 'Upload the participant signature for this form.', `
+                <div class="post-approval-fields">
+                    ${renderUploadField('Participant signature upload', 'participantSignature.signatureUpload', data.participantSignature?.signatureUpload || null)}
+                </div>
+            `)}
+            ${renderApplicantReviewerNote(state.task?.reviewerRemarks)}
+        `;
+    }
+
+    function renderGuidedSection(id, title, description, body, options = {}) {
+        const tag = options.collapsible ? 'details' : 'section';
+        const openAttr = options.collapsible && options.open !== false ? ' open' : '';
+        const summary = options.collapsible
+            ? `<summary class="guided-form-section__summary"><span>${escapeHtml(title)}</span><small>${escapeHtml(description || '')}</small></summary>`
+            : `<div class="guided-form-section__header"><h3>${escapeHtml(title)}</h3>${description ? `<p>${escapeHtml(description)}</p>` : ''}</div>`;
+
+        return `
+            <${tag} class="guided-form-section${options.collapsible ? ' guided-form-section--accordion' : ''}" id="${escapeAttribute(id)}"${openAttr}>
+                ${summary}
+                <div class="guided-form-section__body">${body}</div>
+            </${tag}>
+        `;
+    }
+
+    function renderBeforeYouStart(items) {
+        return `
+            <section class="guided-form-start" id="section-before-you-start">
+                <div class="guided-form-start__header">
+                    <h3>Before you start</h3>
+                    <p>Prepare these details first so the form is easier to complete on mobile.</p>
+                </div>
+                <ul class="guided-form-start__list">
+                    ${(items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
+                </ul>
+            </section>
+        `;
+    }
+
+    function renderRepeatableMiniCard(title, fieldsHtml, action, index) {
+        return `
+            <article class="guided-repeatable-card">
+                <div class="guided-repeatable-card__header">
+                    <strong>${escapeHtml(title)}</strong>
+                    <button type="button" class="btn-outline small post-approval-row-action" data-row-action="${escapeAttribute(action)}" data-row-index="${index}">Remove entry</button>
+                </div>
+                <div class="post-approval-fields">${fieldsHtml}</div>
+            </article>
+        `;
+    }
+
+    function renderApplicantReviewerNote(remarks) {
+        if (!remarks) {
+            return '';
+        }
+
+        return `
+            <section class="guided-review-note">
+                <span class="overview-label">Review note</span>
+                <p>${escapeHtml(remarks)}</p>
+            </section>
+        `;
+    }
+
+    function renderTask() {
+        const task = state.task;
+        const subtitle = document.getElementById('postApprovalWorkspaceSubtitle');
+        const notice = document.getElementById('postApprovalWorkspaceNotice');
+        const form = document.getElementById('postApprovalForm');
+        const sections = document.getElementById('postApprovalFormSections');
+        const staffSections = document.getElementById('postApprovalStaffSections');
+        const saveButton = document.getElementById('postApprovalSaveButton');
+        const submitButton = document.getElementById('postApprovalSubmitButton');
+
+        if (!task) {
+            renderFatalState('This application form is unavailable.');
+            return;
+        }
+
+        setText('formPageTitle', task.title);
+        setText('formPageSubtitle', task.summary || task.helpText || 'Complete the required sections below.');
+        setText('formPageStatus', task.status);
+        setText('formPageCompletion', `${task.completion || 0}%`);
+        setText('formPageReview', buildReviewState(task));
+        setText('postApprovalWorkspaceStatus', task.status);
+        document.body.dataset.renderMode = state.renderMode;
+        renderFormGuidance(task);
+        renderSectionNavigator(task);
+
+        if (subtitle) {
+            subtitle.textContent = task.summary || task.helpText || '';
+        }
+
+        if (!task.interactive) {
+            if (notice) {
+                notice.hidden = false;
+                notice.textContent = task.helpText || 'This requirement will open after the earlier application steps are complete.';
+            }
+            form?.classList.add('is-hidden');
+            if (sections) sections.innerHTML = '';
+            if (staffSections) {
+                staffSections.innerHTML = renderStaffSections(task.staffSections || [], task.reviewerRemarks);
+                staffSections.hidden = staffSections.innerHTML.trim() === '';
+            }
+            return;
+        }
+
+        if (notice) {
+            const workspaceNotice = buildPostApprovalNotice(task);
+            notice.hidden = workspaceNotice === '';
+            notice.textContent = workspaceNotice;
+        }
+        form?.classList.remove('is-hidden');
+        if (sections) {
+            sections.innerHTML = `${renderFormErrorSummary(state.formErrors, task.code)}${renderTaskSections(task.code, state.activePayload || task.payload || {})}`;
+        }
+        if (staffSections) {
+            staffSections.innerHTML = renderStaffSections(task.staffSections || [], task.reviewerRemarks);
+            staffSections.hidden = staffSections.innerHTML.trim() === '';
+        }
+        if (saveButton) {
+            saveButton.disabled = task.status === 'Submitted' || task.status === 'Verified';
+        }
+        if (submitButton) {
+            submitButton.disabled = task.status === 'Submitted' || task.status === 'Verified';
+        }
+
+        applyFormEditability(task);
+        applyFieldErrors(state.formErrors);
+    }
+
+    function renderSectionNavigator(task) {
+        const nav = document.getElementById('formSectionNav');
+        if (!nav) {
+            return;
+        }
+
+        const sections = sectionDefinitionsForTask(task.code || '');
+        if (sections.length === 0) {
+            nav.hidden = true;
+            nav.innerHTML = '';
+            return;
+        }
+
+        nav.hidden = false;
+        nav.innerHTML = sections.map((section) => `
+            <a class="form-section-nav__link" href="#${escapeAttribute(section.id)}">${escapeHtml(section.label)}</a>
+        `).join('');
+    }
+
+    function sectionDefinitionsForTask(code) {
+        const map = {
+            availment_form: [
+                { id: 'section-client-data', label: 'Client Data' },
+                { id: 'section-project-type', label: 'Project Type' },
+                { id: 'section-income', label: 'Income' },
+                { id: 'section-signature', label: 'Signature' },
+            ],
+            validation_form: [
+                { id: 'section-applicant-info', label: 'Applicant Info' },
+                { id: 'section-checklist', label: 'Checklist' },
+                { id: 'section-assessment', label: 'Assessment' },
+                { id: 'section-signature', label: 'Signature' },
+            ],
+            mungkahing_proyekto: [
+                { id: 'section-project-info', label: 'Project Info' },
+                { id: 'section-rationale', label: 'Rationale' },
+                { id: 'section-modality', label: 'Modality' },
+                { id: 'section-materials', label: 'Materials' },
+                { id: 'section-labor', label: 'Labor' },
+                { id: 'section-tools', label: 'Tools' },
+                { id: 'section-expenses', label: 'Expenses' },
+                { id: 'section-sales', label: 'Sales' },
+                { id: 'section-profit', label: 'Profit' },
+                { id: 'section-capital-fund', label: 'Capital Fund' },
+                { id: 'section-signature', label: 'Signature' },
+            ],
+            business_plan: [
+                { id: 'section-overview', label: 'Overview' },
+                { id: 'section-marketing-plan', label: 'Marketing Plan' },
+                { id: 'section-production-plan', label: 'Production Plan' },
+                { id: 'section-management-plan', label: 'Organization & Management' },
+                { id: 'section-financial-plan', label: 'Financial Plan' },
+                { id: 'section-signature', label: 'Signature' },
+            ],
+            buhat_sa_pagpanumpa: [
+                { id: 'section-beneficiary-info', label: 'Beneficiary Info' },
+                { id: 'section-program-details', label: 'Program Details' },
+                { id: 'section-co-maker', label: 'Co-maker' },
+                { id: 'section-dates', label: 'Dates' },
+                { id: 'section-signatures', label: 'Signatures' },
+            ],
+        };
+
+        return map[code] || [];
     }
 })();

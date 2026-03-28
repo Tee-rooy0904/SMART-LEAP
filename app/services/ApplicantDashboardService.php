@@ -277,6 +277,7 @@ class ApplicantDashboardService
             'scheduled' => 0,
             'notified' => 0,
             'attended' => 0,
+            'excused' => 0,
             'missed' => 0,
             'completed' => 0,
         ];
@@ -291,6 +292,9 @@ class ApplicantDashboardService
             }
             if ($status === TRAINING_STATUS_ATTENDED) {
                 $summary['attended']++;
+            }
+            if ($status === TRAINING_STATUS_EXCUSED) {
+                $summary['excused']++;
             }
             if ($status === TRAINING_STATUS_MISSED) {
                 $summary['missed']++;
@@ -406,10 +410,10 @@ class ApplicantDashboardService
             ];
         }
 
-        if (in_array($status, [APPLICATION_STATUS_SUBMITTED, APPLICATION_STATUS_UNDER_REVIEW, APPLICATION_STATUS_CHECKED_BY_PDO], true)) {
+        if (in_array($status, [APPLICATION_STATUS_SUBMITTED, APPLICATION_STATUS_UNDER_REVIEW, APPLICATION_STATUS_CHECKED_BY_PDO, APPLICATION_STATUS_REQUIREMENTS_VERIFIED, APPLICATION_STATUS_FOR_ASSESSMENT], true)) {
             return [
-                'title' => 'Wait for review updates',
-                'description' => 'Your application is already in the review workflow. Watch this dashboard for status changes and remarks.',
+                'title' => 'Wait for review and assessment updates',
+                'description' => 'Your application is already in the review workflow. Watch this dashboard for requirement remarks, assessment movement, and status changes.',
                 'actionLabel' => 'View application status',
                 'actionPath' => 'applicant-dashboard#application-status',
             ];
@@ -433,11 +437,11 @@ class ApplicantDashboardService
             ];
         }
 
-        if ($status === APPLICATION_STATUS_APPROVED) {
+        if (in_array($status, [APPLICATION_STATUS_APPROVED, APPLICATION_STATUS_APPROVED_FOR_TRAINING], true)) {
             if (($training['summary']['totalPrograms'] ?? 0) === 0) {
                 return [
                     'title' => 'Wait for your training schedule',
-                    'description' => 'Your application is approved. CSWDD will schedule you for the next SMART LEAP training session.',
+                    'description' => 'Your application is approved for training. CSWDD will schedule you for the next SMART LEAP training session.',
                     'actionLabel' => 'View training progress',
                     'actionPath' => 'applicant-dashboard#training-progress',
                 ];
@@ -448,6 +452,15 @@ class ApplicantDashboardService
                 return [
                     'title' => 'Prepare for your training schedule',
                     'description' => 'You already have a training record. Review the schedule, notice updates, and attendance guidance below.',
+                    'actionLabel' => 'View training progress',
+                    'actionPath' => 'applicant-dashboard#training-progress',
+                ];
+            }
+
+            if (in_array($currentTrainingStatus, [TRAINING_STATUS_EXCUSED, TRAINING_STATUS_MISSED], true)) {
+                return [
+                    'title' => 'Review your training attendance record',
+                    'description' => 'A training attendance record was marked as missed or excused. Coordinate with CSWDD if you need follow-up guidance on the next session.',
                     'actionLabel' => 'View training progress',
                     'actionPath' => 'applicant-dashboard#training-progress',
                 ];
@@ -483,6 +496,7 @@ class ApplicantDashboardService
                 'scheduled' => 0,
                 'notified' => 0,
                 'attended' => 0,
+                'excused' => 0,
                 'missed' => 0,
                 'completed' => 0,
             ],
@@ -512,9 +526,14 @@ class ApplicantDashboardService
             'under review', 'under_review', 'underreview' => APPLICATION_STATUS_UNDER_REVIEW,
             'checked by pdo', 'checked_by_pdo', 'checkedbypdo' => APPLICATION_STATUS_CHECKED_BY_PDO,
             'approved' => APPLICATION_STATUS_APPROVED,
+            'requirements verified', 'requirements_verified', 'requirementsverified' => APPLICATION_STATUS_REQUIREMENTS_VERIFIED,
+            'for assessment', 'for_assessment', 'forassessment' => APPLICATION_STATUS_FOR_ASSESSMENT,
+            'approved for training', 'approved_for_training', 'approvedfortraining' => APPLICATION_STATUS_APPROVED_FOR_TRAINING,
             'rejected' => APPLICATION_STATUS_REJECTED,
             'flagged' => APPLICATION_STATUS_FLAGGED,
             'needs correction', 'needs_correction', 'needscorrection' => APPLICATION_STATUS_NEEDS_CORRECTION,
+            'training ongoing', 'training_ongoing', 'trainingongoing' => APPLICATION_STATUS_TRAINING_ONGOING,
+            'completed' => APPLICATION_STATUS_COMPLETED,
             default => $status,
         };
     }

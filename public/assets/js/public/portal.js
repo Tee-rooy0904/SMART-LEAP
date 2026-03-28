@@ -9,138 +9,73 @@
         return `${publicBase()}/${trimmed}`;
     }
 
-    function resolveTargetId(targetId) {
-        if (targetId === 'authShell') return 'signin';
-        if (targetId === 'help') return 'support';
-        return targetId;
-    }
-
-    function getSectionTarget(targetId) {
-        const canonicalId = resolveTargetId(targetId);
-        const target = document.getElementById(canonicalId);
-        if (!target) return null;
-        return { canonicalId, target };
-    }
-
-    function scrollToSectionWithOffset(targetId) {
-        const resolved = getSectionTarget(targetId);
-        if (!resolved) return false;
-        try {
-            resolved.target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        } catch {
-            resolved.target.scrollIntoView(true);
+    function setAuthLoading(active, message) {
+        const overlay = document.getElementById('authLoadingScreen');
+        const copy = document.getElementById('authLoadingCopy');
+        if (!overlay) return;
+        if (copy && message) {
+            copy.textContent = message;
         }
-        return true;
-    }
-
-    function updateNavState(targetId) {
-        const canonicalId = resolveTargetId(targetId);
-        document.querySelectorAll('.nav-link, .mobile-link, .help-link').forEach((link) => {
-            link.classList.remove('is-active');
-        });
-
-        document.querySelectorAll(`.nav-link[href="#${canonicalId}"], .mobile-link[href="#${canonicalId}"], .help-link[href="#${canonicalId}"]`).forEach((link) => {
-            link.classList.add('is-active');
-        });
+        overlay.hidden = !active;
+        document.body.classList.toggle('auth-loading', active);
     }
 
     function closeMobileNav() {
         const mobileNav = document.getElementById('mobileNav');
         const menuBtn = document.getElementById('menuBtn');
-        if (mobileNav && !mobileNav.hidden) {
-            mobileNav.hidden = true;
-            menuBtn?.setAttribute('aria-expanded', 'false');
-            document.body.classList.remove('menu-open');
-        }
+        if (!mobileNav) return;
+        mobileNav.hidden = true;
+        menuBtn?.setAttribute('aria-expanded', 'false');
+        document.body.classList.remove('menu-open');
     }
 
-    function initHeaderMenu() {
+    function setupMobileNav() {
         const menuBtn = document.getElementById('menuBtn');
         const mobileNav = document.getElementById('mobileNav');
+        if (!menuBtn || !mobileNav) return;
 
-        function toggleMenu(open) {
-            if (!menuBtn || !mobileNav) return;
-            mobileNav.hidden = !open;
-            menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-            document.body.classList.toggle('menu-open', open);
-        }
-
-        menuBtn?.addEventListener('click', () => {
-            toggleMenu(menuBtn.getAttribute('aria-expanded') !== 'true');
+        menuBtn.addEventListener('click', () => {
+            const isOpen = menuBtn.getAttribute('aria-expanded') === 'true';
+            mobileNav.hidden = isOpen;
+            menuBtn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+            document.body.classList.toggle('menu-open', !isOpen);
         });
 
-        document.querySelectorAll('.mobile-cta').forEach((btn) => {
-            btn.addEventListener('click', closeMobileNav);
+        document.querySelectorAll('.mobile-link').forEach((link) => {
+            link.addEventListener('click', closeMobileNav);
         });
 
         document.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') toggleMenu(false);
-        });
-    }
-
-    function setupActiveNav() {
-        const sections = ['program', 'guide', 'support']
-            .map((id) => document.getElementById(id))
-            .filter(Boolean);
-        if (!sections.length) return;
-
-        const headerHeight = document.querySelector('.site-header')?.offsetHeight ?? 0;
-        const observer = new IntersectionObserver((entries) => {
-            entries.forEach((entry) => {
-                if (entry.isIntersecting) {
-                    updateNavState(entry.target.id);
-                }
-            });
-        }, {
-            rootMargin: `-${headerHeight + 12}px 0px -55% 0px`,
-            threshold: 0.1
-        });
-
-        sections.forEach((section) => observer.observe(section));
-    }
-
-    function setupSectionNav() {
-        document.querySelectorAll('.nav-link, .mobile-link, .help-link').forEach((link) => {
-            link.addEventListener('click', (event) => {
-                const href = link.getAttribute('href');
-                if (!href || !href.startsWith('#')) return;
-
-                const targetId = href.slice(1);
-                const resolved = getSectionTarget(targetId);
-                if (!resolved) return;
-
-                event.preventDefault();
-                if (!scrollToSectionWithOffset(targetId)) return;
-                history.replaceState(null, '', `#${resolved.canonicalId}`);
-                updateNavState(targetId);
-                closeMobileNav();
-            });
+            if (event.key === 'Escape') closeMobileNav();
         });
     }
 
     function setupAuth() {
-        const authError = document.querySelector('.auth-error');
         const form = document.getElementById('authForm');
         const email = document.getElementById('email');
         const password = document.getElementById('password');
-        const entryPoint = form?.querySelector('input[name="entryPoint"]');
-        const toggle = document.querySelector('[data-action="toggle-password"]');
-        const capsHint = document.getElementById('capsHint');
+        const authError = document.querySelector('.auth-error');
         const signInBtn = document.getElementById('signInBtn');
+        const entryPoint = form?.querySelector('input[name="entryPoint"]');
+        const capsHint = document.getElementById('capsHint');
 
-        document.querySelectorAll('[data-action="open-auth"], [data-action="focus-login"]').forEach((btn) => {
-            btn.addEventListener('click', (event) => {
+        document.querySelectorAll('[data-action="open-auth"]').forEach((button) => {
+            button.addEventListener('click', (event) => {
+                const authShell = document.getElementById('authShell');
+                if (!authShell) return;
                 event.preventDefault();
-                scrollToSectionWithOffset('authShell');
+                authShell.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 email?.focus({ preventScroll: true });
+                closeMobileNav();
             });
         });
 
-        toggle?.addEventListener('click', () => {
+        document.querySelector('[data-action="toggle-password"]')?.addEventListener('click', (event) => {
+            event.preventDefault();
             if (!password) return;
-            const isPassword = password.type === 'password';
-            password.type = isPassword ? 'text' : 'password';
-            toggle.textContent = isPassword ? 'Hide' : 'Show';
+            const show = password.type === 'password';
+            password.type = show ? 'text' : 'password';
+            event.currentTarget.textContent = show ? 'Hide' : 'Show';
         });
 
         password?.addEventListener('keyup', (event) => {
@@ -175,6 +110,7 @@
                 signInBtn.disabled = true;
                 signInBtn.textContent = 'Signing in...';
             }
+            setAuthLoading(true, 'Securing your SMART LEAP session...');
 
             try {
                 const response = await fetch(routeUrl('auth/login'), {
@@ -193,21 +129,29 @@
 
                 const payload = await response.json();
                 if (!response.ok || !payload.ok) {
+                    if (payload.requiresVerification && payload.redirect) {
+                        window.location.href = routeUrl(payload.redirect);
+                        return;
+                    }
                     if (authError) {
                         authError.textContent = payload.message || 'Incorrect email or password.';
                         authError.hidden = false;
                     }
+                    setAuthLoading(false);
                     return;
                 }
 
                 window.location.href = routeUrl(payload.redirect || 'applicant-dashboard#profile-page');
             } catch (error) {
-                console.error('Portal login failed', error);
+                setAuthLoading(false);
                 if (authError) {
                     authError.textContent = 'Unable to sign in right now.';
                     authError.hidden = false;
                 }
             } finally {
+                if (document.visibilityState !== 'hidden') {
+                    setAuthLoading(false);
+                }
                 if (signInBtn) {
                     signInBtn.disabled = false;
                     signInBtn.textContent = 'Sign in';
@@ -216,35 +160,63 @@
         });
     }
 
-    function setupGuideSearch() {
-        const input = document.getElementById('guideSearch');
-        const accordion = document.getElementById('guideAccordion');
-        if (!input || !accordion) return;
+    function setupAccordions() {
+        document.querySelectorAll('[data-accordion-trigger]').forEach((trigger) => {
+            const panel = trigger.querySelector('[data-accordion-panel]');
+            if (!panel) return;
 
-        const items = Array.from(accordion.querySelectorAll('.module'));
-        const normalize = (value) => (value || '').toLowerCase().trim();
-
-        const applyFilter = () => {
-            const query = normalize(input.value);
-            items.forEach((detail) => {
-                const text = normalize(detail.innerText || '');
-                detail.style.display = query === '' || text.includes(query) ? '' : 'none';
+            trigger.addEventListener('click', () => {
+                const isOpen = trigger.getAttribute('aria-expanded') === 'true';
+                trigger.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+                trigger.classList.toggle('is-open', !isOpen);
+                panel.hidden = isOpen;
             });
+        });
+    }
+
+    function setupSelectableCards() {
+        const cards = Array.from(document.querySelectorAll('[data-select-card]'));
+        if (!cards.length) return;
+
+        const activate = (card) => {
+            cards.forEach((item) => item.classList.toggle('is-active', item === card));
         };
 
-        input.addEventListener('input', applyFilter);
-        document.querySelector('[data-action="search-guide"]')?.addEventListener('click', () => {
-            applyFilter();
-            scrollToSectionWithOffset('guide');
-            updateNavState('guide');
+        cards.forEach((card) => {
+            card.addEventListener('click', () => activate(card));
+            card.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    activate(card);
+                }
+            });
+        });
+    }
+
+    function setupTimelineDetails() {
+        const items = Array.from(document.querySelectorAll('[data-timeline-item]'));
+        if (!items.length) return;
+
+        const activate = (item) => {
+            items.forEach((entry) => entry.classList.toggle('is-active', entry === item));
+        };
+
+        items.forEach((item) => {
+            item.addEventListener('click', () => activate(item));
+            item.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    activate(item);
+                }
+            });
         });
     }
 
     document.addEventListener('DOMContentLoaded', () => {
-        initHeaderMenu();
-        setupSectionNav();
-        setupActiveNav();
+        setupMobileNav();
         setupAuth();
-        setupGuideSearch();
+        setupAccordions();
+        setupSelectableCards();
+        setupTimelineDetails();
     });
 })();

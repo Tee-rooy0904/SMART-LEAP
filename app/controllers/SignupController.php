@@ -24,10 +24,6 @@ class SignupController extends Controller
             response_json($result, 422);
         }
 
-        ensure_session_started();
-        session_regenerate_id(true);
-        login_user($result['user']);
-
         response_json($result, 201);
     }
 }

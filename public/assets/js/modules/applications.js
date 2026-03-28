@@ -6,6 +6,7 @@
     filters: { status: '', barangayId: '', assignedPdoId: '', search: '' },
     data: { applications: [], summary: {}, barangays: [], assignedPdos: [] },
     activeApplication: null,
+    activePreviewToken: '',
   };
 
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
@@ -56,6 +57,23 @@
     }
   };
 
+  const apiJsonPost = async (path, payload) => {
+    try {
+      const response = await fetch(routeUrl(path), {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json;charset=UTF-8',
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload || {}),
+      });
+      return await parseJson(response);
+    } catch (error) {
+      return { ok: false, message: 'Unable to reach the server right now.' };
+    }
+  };
+
   const section = () => qs('#applications-section');
 
   const renderShell = () => {
@@ -64,8 +82,7 @@
     setHTML(target, `
       <div class="applications-header">
         <div>
-          <h3>Application Review</h3>
-          <p>Review applicant submissions, inspect requirements, and update decision history.</p>
+          <h3>Applications</h3>
         </div>
       </div>
       <div id="applications-kpis"></div>
@@ -81,12 +98,13 @@
     if (!root) return;
     setHTML(root, `
       <div class="applications-kpis">
-        <div class="summary-chip">Total <strong>${summary.total || 0}</strong></div>
         <div class="summary-chip">Submitted <strong>${summary.submitted || 0}</strong></div>
         <div class="summary-chip">Under Review <strong>${summary.underReview || 0}</strong></div>
         <div class="summary-chip">Checked by PDO <strong>${summary.checkedByPdo || 0}</strong></div>
         <div class="summary-chip">Approved <strong>${summary.approved || 0}</strong></div>
-        <div class="summary-chip">Needs Attention <strong>${summary.needsAttention || 0}</strong></div>
+        <div class="summary-chip">Rejected <strong>${summary.rejected || 0}</strong></div>
+        <div class="summary-chip">Flagged <strong>${summary.flagged || 0}</strong></div>
+        <div class="summary-chip">Needs Correction <strong>${summary.needsCorrection || 0}</strong></div>
       </div>
     `);
   };
@@ -95,7 +113,7 @@
     const root = qs('#applications-filters');
     if (!root) return;
 
-    const statuses = ['', 'Submitted', 'Under Review', 'Checked by PDO', 'Approved', 'Rejected', 'Flagged', 'Needs Correction'];
+    const statuses = ['', 'Submitted', 'Under Review', 'Requirements Verified', 'For Assessment', 'Approved for Training', 'Rejected', 'Flagged', 'Needs Correction'];
     setHTML(root, `
       <div class="filter-group">
         <span class="filter-label">Status</span>
@@ -144,7 +162,10 @@
         <td><span class="status-badge ${statusClass(application.status)}">${escapeHtml(application.status)}</span></td>
         <td>${formatDate(application.submittedAt)}</td>
         <td class="actions">
-          <button class="app-btn-outline" data-open-application="${application.id}">Open</button>
+          <button class="action-button" data-open-application="${application.id}">
+            <i class="fas fa-folder-open"></i>
+            <span>Open Review</span>
+          </button>
         </td>
       </tr>
     `).join('');
@@ -174,101 +195,316 @@
   const renderModal = (application) => {
     const root = qs('#modal-root');
     if (!root || !application) return;
+    setHTML(root, buildModalMarkup(application));
+    ensureActivePreview(application);
+    renderRequirementNavigator();
+    renderPreviewPanel();
+    renderRequirementInspector();
+  };
 
-    setHTML(root, `
+  const buildModalMarkup = (application) => {
+    const readiness = application.approvalReadiness || {};
+    const uploadSummary = readiness.uploadSummary || { approved: 0, total: 0 };
+    const formSummary = readiness.formSummary || { approved: 0, total: 0 };
+    const trainingStatus = readiness.trainingStatus || {};
+    const blockers = (readiness.blockers || []).length
+      ? readiness.blockers.map((item) => `<li class="po-blocker-item"><span class="po-blocker-item__icon" aria-hidden="true">!</span><span>${escapeHtml(item)}</span></li>`).join('')
+      : '<li class="po-blocker-item po-blocker-item--clear"><span class="po-blocker-item__icon" aria-hidden="true">OK</span><span>Ready for approval action. No blocking reasons recorded.</span></li>';
+
+    return `
       <div class="modal-overlay application-review-modal" data-app-modal>
-        <div class="modal-card" role="dialog" aria-modal="true">
+        <div class="modal-card application-review-modal__card" role="dialog" aria-modal="true">
           <div class="modal-header">
-            <div class="app-modal-title">
-              <h3>${escapeHtml(application.applicantName)}</h3>
-              <div class="app-modal-meta">
-                <span>${escapeHtml(application.barangay || '--')}</span>
-                <span class="app-meta-dot"></span>
-                <span>${escapeHtml(application.status)}</span>
-                <span class="app-meta-dot"></span>
-                <span>Assigned PDO: ${escapeHtml(application.assignedPdoName || '--')}</span>
-              </div>
+            <div class="po-modal-title-block">
+              <span class="po-panel-label po-modal-eyebrow">Application Case</span>
+              <h3 class="modal-title">${escapeHtml(application.applicantName || '--')}</h3>
+              <small class="po-modal-subtitle">Submitted on <span>${formatDate(application.submittedAt)}</span></small>
             </div>
-            <button class="modal-close" type="button" data-close-modal aria-label="Close">&times;</button>
+            <div class="po-modal-header-actions">
+              <span class="po-status-chip po-status-chip--header ${statusClass(application.status)}">${escapeHtml(application.status || '--')}</span>
+              <button class="modal-close" type="button" data-close-modal aria-label="Close">&times;</button>
+            </div>
           </div>
-          <div class="modal-body application-modal__grid">
-            <div class="application-modal__col detail-summary-stack">
-              <div class="detail-summary-card">
-                <h6>Profile</h6>
-                <strong>${escapeHtml(application.businessName || '--')}</strong>
-                <span>${escapeHtml(application.livelihood || '--')}</span>
-                <span>${escapeHtml(application.address || '--')}</span>
-              </div>
-              <div class="detail-summary-card">
-                <h6>Applicant Details</h6>
-                <span>Contact: ${escapeHtml(application.contactNumber || '--')}</span>
-                <span>Sector: ${escapeHtml(application.sector || '--')}</span>
-                <span>Household: ${application.householdSize ?? '--'}</span>
-              </div>
-            </div>
-            <div class="application-modal__col">
-              <div class="table-card light">
-                <div class="table-toolbar"><h4>Requirements</h4></div>
-                <ul class="profile-checklist">
-                  ${(application.requirements || []).map((requirement) => `
-                    <li>
-                      <div>
-                        <strong>${escapeHtml(requirement.label)}</strong>
-                        <div>${escapeHtml(requirement.status || 'missing')}</div>
-                      </div>
-                      ${requirement.file?.url ? `<a href="${escapeHtml(requirement.file.url)}" target="_blank" rel="noopener">Open file</a>` : '<span>No file</span>'}
-                    </li>
-                  `).join('')}
-                </ul>
-              </div>
-              <div class="table-card light">
-                <div class="table-toolbar"><h4>Status History</h4></div>
-                <ul class="profile-checklist">
-                  ${(application.history || []).map((entry) => `
-                    <li>
-                      <div>
-                        <strong>${escapeHtml(entry.toStatus)}</strong>
-                        <div>${escapeHtml(entry.actorName)} • ${formatDate(entry.createdAt)}</div>
-                      </div>
-                      <span>${escapeHtml(entry.remarks || '--')}</span>
-                    </li>
-                  `).join('') || '<li>No status history yet.</li>'}
-                </ul>
-              </div>
-              <div class="table-card light">
-                <div class="table-toolbar"><h4>Reviewer Comments</h4></div>
-                <ul class="profile-checklist">
-                  ${(application.comments || []).map((entry) => `
-                    <li>
-                      <div>
-                        <strong>${escapeHtml(entry.actorName)}</strong>
-                        <div>${formatDate(entry.createdAt)}</div>
-                      </div>
-                      <span>${escapeHtml(entry.comment || '--')}</span>
-                    </li>
-                  `).join('') || '<li>No comments yet.</li>'}
-                </ul>
-              </div>
-              <div class="table-card light">
-                <div class="table-toolbar"><h4>Review Action</h4></div>
-                <div class="review-form-grid">
-                  <label class="review-full">
-                    <span>Remarks / Comment</span>
-                    <textarea id="application-review-remarks" rows="4" placeholder="Add internal remarks or reviewer notes"></textarea>
-                  </label>
-                  <div class="review-full app-action-panel__actions">
-                    <button class="app-btn-ghost" data-review-action="flag">Flag</button>
-                    <button class="app-btn-outline" data-review-action="needs_correction">Needs correction</button>
-                    <button class="app-btn-danger" data-review-action="reject">Reject</button>
-                    <button class="app-btn-primary" data-review-action="approve">Approve</button>
-                  </div>
+          <div class="modal-body">
+            <section class="po-case-identity">
+              <article class="po-case-identity__block">
+                <span class="po-panel-label">Applicant</span>
+                <strong>${escapeHtml(application.applicantName || '--')}</strong>
+                <div class="po-case-identity__row"><span>Business</span><strong>${escapeHtml(application.businessName || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Barangay</span><strong>${escapeHtml(application.barangay || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Assigned PDO</span><strong>${escapeHtml(application.assignedPdoName || '--')}</strong></div>
+              </article>
+              <article class="po-case-identity__block">
+                <span class="po-panel-label">Case Details</span>
+                <div class="po-case-identity__row"><span>Contact</span><strong>${escapeHtml(application.contactNumber || application.email || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Sector</span><strong>${escapeHtml(application.sector || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Livelihood</span><strong>${escapeHtml(application.livelihood || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Household</span><strong>${escapeHtml(String(application.householdSize ?? '--'))}</strong></div>
+              </article>
+            </section>
+            <section class="po-readiness-panel">
+              <div class="po-readiness-panel__header">
+                <div>
+                  <span class="po-panel-label">Readiness Summary</span>
+                  <h6>${escapeHtml(readiness.overallStatus || 'Under Review')}</h6>
                 </div>
+                <span class="po-status-chip ${trainingStatus.completed ? 'is-success' : 'is-warning'}">${trainingStatus.completed ? 'Training Completed' : 'Training Pending'}</span>
+              </div>
+              <div class="po-readiness-grid">
+                <article class="po-readiness-card"><span>Upload Requirements</span><strong>${uploadSummary.approved || 0} / ${uploadSummary.total || 0}</strong></article>
+                <article class="po-readiness-card"><span>Fill-up Form Requirements</span><strong>${formSummary.approved || 0} / ${formSummary.total || 0}</strong></article>
+                <article class="po-readiness-card"><span>Training Status</span><strong>${escapeHtml(trainingStatus.status || '--')}</strong></article>
+              </div>
+              <div class="po-blocker-box">
+                <span class="po-panel-label">Blocking Reasons</span>
+                <ul class="po-blocker-list">${blockers}</ul>
+              </div>
+            </section>
+            <section class="po-review-workspace">
+              <article class="po-requirement-nav">
+                <div class="po-review-section__header">
+                  <div>
+                    <span class="po-panel-label">Requirement Navigator</span>
+                    <h6>All Requirements</h6>
+                  </div>
+                  <span class="po-status-chip is-muted">${formatRequirementCount([...(application.requirements || []), ...(application.formRequirements || [])])}</span>
+                </div>
+                <div id="admin-requirement-nav" class="po-requirement-nav__list"></div>
+              </article>
+              <article class="po-preview-panel">
+                <div class="po-review-section__header">
+                  <div>
+                    <span class="po-panel-label">Requirement Viewer</span>
+                    <h6 id="admin-preview-title">Select a requirement</h6>
+                  </div>
+                  <span class="po-status-chip is-muted" id="admin-preview-chip">No preview</span>
+                </div>
+                <div id="admin-app-preview" class="po-preview-surface"></div>
+              </article>
+              <article class="po-review-inspector">
+                <div class="po-review-section__header">
+                  <div>
+                    <span class="po-panel-label">Requirement Decision</span>
+                    <h6 id="admin-inspector-title">Select a requirement</h6>
+                  </div>
+                  <span class="po-status-chip is-muted" id="admin-inspector-chip">No selection</span>
+                </div>
+                <div id="admin-review-inspector" class="po-review-inspector__body"></div>
+              </article>
+            </section>
+            <section class="po-readiness-panel">
+              <div class="po-review-section__header">
+                <div>
+                  <span class="po-panel-label">Status History</span>
+                  <h6>Application Timeline</h6>
+                </div>
+              </div>
+              <ul class="profile-checklist profile-checklist--timeline">
+                ${(application.history || []).map((entry) => `<li><div><strong>${escapeHtml(entry.toStatus)}</strong><div>${escapeHtml(entry.actorName)} • ${formatDate(entry.createdAt)}</div></div><span>${escapeHtml(entry.remarks || '--')}</span></li>`).join('') || '<li>No status history yet.</li>'}
+              </ul>
+            </section>
+            <section class="po-readiness-panel">
+              <div class="po-review-section__header">
+                <div>
+                  <span class="po-panel-label">Reviewer Comments</span>
+                  <h6>Staff Notes</h6>
+                </div>
+              </div>
+              <ul class="profile-checklist profile-checklist--timeline">
+                ${(application.comments || []).map((entry) => `<li><div><strong>${escapeHtml(entry.actorName)}</strong><div>${formatDate(entry.createdAt)}</div></div><span>${escapeHtml(entry.comment || '--')}</span></li>`).join('') || '<li>No comments yet.</li>'}
+              </ul>
+            </section>
+            <section class="po-decision-panel">
+              <label for="application-review-remarks" class="po-panel-label">Application-level Remarks</label>
+              <textarea id="application-review-remarks" rows="4" placeholder="Record application-level remarks for the next status action."></textarea>
+            </section>
+          </div>
+          <div class="modal-footer">
+            <div class="po-decision-rail">
+              <div class="po-decision-rail__summary">
+                <span class="po-panel-label">Decision Control</span>
+                <strong>${readiness.canApprove ? 'Application is ready for approval.' : 'Approval is currently blocked.'}</strong>
+                <small>${readiness.canApprove ? 'All required upload requirements, fill-up form requirements, and training conditions are satisfied.' : escapeHtml((readiness.blockers || []).slice(0, 2).join(' | ') || 'Resolve any blocking requirement or training issue before approval.')}</small>
+              </div>
+              <div class="po-decision-rail__actions">
+                <button type="button" class="btn btn-outline-secondary" data-close-modal>Close</button>
+                <button type="button" class="btn btn-outline-warning" data-review-action="flag">Needs Documents</button>
+                <button type="button" class="btn btn-outline-primary" data-review-action="needs_correction">Needs Correction</button>
+                <button type="button" class="btn btn-danger" data-review-action="reject">Reject</button>
+                <button type="button" class="btn btn-success" data-review-action="approve" ${readiness.canApprove ? '' : 'disabled'}>Approve</button>
               </div>
             </div>
           </div>
         </div>
       </div>
-    `);
+    `;
+  };
+
+  const formatRequirementCount = (items) => {
+    const total = items.length || 0;
+    return `${total} ${total === 1 ? 'item' : 'items'}`;
+  };
+
+  const ensureActivePreview = (application) => {
+    if (resolvePreviewItem(state.activePreviewToken, application)) return;
+    const firstUpload = (application.requirements || []).find((item) => item.file?.url);
+    if (firstUpload) {
+      state.activePreviewToken = `upload:${String(firstUpload.key)}`;
+      return;
+    }
+    const firstForm = (application.formRequirements || []).find((item) => item.reviewUrl);
+    state.activePreviewToken = firstForm ? `form:${String(firstForm.id)}` : '';
+  };
+
+  const resolvePreviewItem = (token, application = state.activeApplication) => {
+    if (!token || !application) return null;
+    const [kind, rawId] = String(token).split(':');
+    if (kind === 'upload') {
+      const item = (application.requirements || []).find((entry) => String(entry.key) === rawId);
+      return item ? { kind, item } : null;
+    }
+    if (kind === 'form') {
+      const item = (application.formRequirements || []).find((entry) => String(entry.id) === rawId);
+      return item ? { kind, item } : null;
+    }
+    return null;
+  };
+
+  const requirementStatusLabel = (status) => {
+    const value = String(status || '').toLowerCase();
+    if (['verified', 'approved'].includes(value)) return 'Approved';
+    if (['rejected', 'needs correction'].includes(value)) return 'Rejected';
+    if (['submitted', 'pending', 'unlocked', 'in progress'].includes(value)) return 'Pending';
+    return value === 'missing' ? 'Missing' : (status || 'Pending');
+  };
+
+  const requirementStatusClass = (status) => {
+    const value = requirementStatusLabel(status).toLowerCase();
+    if (value === 'approved') return 'is-success';
+    if (value === 'rejected' || value === 'missing') return 'is-danger';
+    if (value === 'pending') return 'is-warning';
+    return 'is-muted';
+  };
+
+  const requirementSubmissionLabel = (kind, item) => {
+    if (kind === 'upload') return item.file?.url ? 'Submitted' : 'Missing';
+    return ['submitted', 'verified', 'rejected', 'needs correction'].includes(String(item.status || '').toLowerCase()) ? 'Submitted' : 'Missing';
+  };
+
+  const requirementSubmissionClass = (kind, item) => requirementSubmissionLabel(kind, item) === 'Submitted' ? 'is-info' : 'is-danger';
+
+  const getReviewItems = (application = state.activeApplication) => {
+    if (!application) return [];
+    return [
+      ...(application.requirements || []).map((item) => ({ token: `upload:${String(item.key)}`, kind: 'upload', item })),
+      ...(application.formRequirements || []).map((item) => ({ token: `form:${String(item.id)}`, kind: 'form', item })),
+    ];
+  };
+
+  const renderRequirementNavigator = () => {
+    const root = qs('#admin-requirement-nav');
+    if (!root) return;
+    const items = getReviewItems();
+    if (!items.length) {
+      setHTML(root, '<div class="po-preview-empty">No requirements loaded.</div>');
+      return;
+    }
+    setHTML(root, items.map(({ token, kind, item }) => {
+      const selected = state.activePreviewToken === token;
+      return `<button type="button" class="po-requirement-card ${selected ? 'is-active' : ''}" data-select-requirement="${escapeHtml(token)}"><div class="po-requirement-card__top"><strong>${escapeHtml(item.label || '--')}</strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(requirementStatusLabel(item.status))}</span></div><div class="po-requirement-card__meta"><span>${escapeHtml(item.typeLabel || '--')}</span><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></div></button>`;
+    }).join(''));
+  };
+
+  const renderPreviewPanel = () => {
+    const root = qs('#admin-app-preview');
+    if (!root) return;
+    const preview = resolvePreviewItem(state.activePreviewToken);
+    const title = qs('#admin-preview-title');
+    const chip = qs('#admin-preview-chip');
+    if (!preview) {
+      if (title) title.textContent = 'Select a requirement';
+      if (chip) chip.textContent = 'No preview';
+      setHTML(root, '<div class="po-preview-empty">Select an uploaded requirement or fill-up form to review it here.</div>');
+      return;
+    }
+
+    const item = preview.item;
+    if (title) title.textContent = preview.kind === 'upload' ? (item.file?.name || item.label || '--') : (item.label || '--');
+    if (chip) chip.textContent = preview.kind === 'upload' ? 'Upload Requirement' : 'Fill-up Form Requirement';
+
+    if (preview.kind === 'upload') {
+      const url = item.file?.url || '';
+      const mime = String(item.file?.type || '').toLowerCase();
+      if (!url) {
+        setHTML(root, '<div class="po-preview-empty">No file was submitted for this requirement.</div>');
+        return;
+      }
+      if (mime.startsWith('image/')) {
+        setHTML(root, `<div class="po-preview-frame po-preview-frame--image"><img src="${escapeHtml(url)}" alt="${escapeHtml(item.label || 'Requirement preview')}"></div>`);
+        return;
+      }
+      if (mime.includes('pdf') || mime.startsWith('text/')) {
+        setHTML(root, `<div class="po-preview-frame"><iframe src="${escapeHtml(url)}" title="${escapeHtml(item.label || 'Requirement preview')}"></iframe></div>`);
+        return;
+      }
+      setHTML(root, `<div class="po-preview-file-card"><strong>${escapeHtml(item.file?.name || item.label || 'Requirement file')}</strong><span>${escapeHtml(item.file?.type || 'File preview is not available in-panel.')}</span><a class="action-button" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open file</a></div>`);
+      return;
+    }
+
+    if (!item.reviewUrl) {
+      setHTML(root, '<div class="po-preview-empty">Form preview is not available for this requirement.</div>');
+      return;
+    }
+    setHTML(root, `<div class="po-native-form-preview"><div class="po-preview-loading">Loading form...</div><iframe class="po-native-form-loader" src="${escapeHtml(item.reviewUrl)}" title="${escapeHtml(item.label || 'Fill-up form review')}"></iframe><div class="po-native-form-content"></div></div>`);
+    hydrateNativeFormPreview(root, state.activePreviewToken);
+  };
+
+  const hydrateNativeFormPreview = (root, token) => {
+    const iframe = root.querySelector('.po-native-form-loader');
+    const content = root.querySelector('.po-native-form-content');
+    const loading = root.querySelector('.po-preview-loading');
+    if (!iframe || !content || !loading) return;
+
+    iframe.addEventListener('load', () => {
+      window.setTimeout(() => {
+        if (state.activePreviewToken !== token) return;
+        try {
+          const doc = iframe.contentDocument;
+          const applicantCard = doc?.querySelector('#reviewApplicantCard');
+          const applicantSections = doc?.querySelector('#reviewApplicantSections');
+          if (!applicantSections) {
+            loading.textContent = 'Unable to render this form in-panel.';
+            return;
+          }
+          content.innerHTML = `${applicantCard?.innerHTML ? `<div class="applicant-card">${applicantCard.innerHTML}</div>` : ''}<div class="workspace-sections">${applicantSections.innerHTML}</div>`;
+          loading.remove();
+          iframe.remove();
+        } catch (error) {
+          loading.textContent = 'Unable to render this form in-panel.';
+        }
+      }, 60);
+    }, { once: true });
+  };
+
+  const renderRequirementInspector = () => {
+    const root = qs('#admin-review-inspector');
+    const title = qs('#admin-inspector-title');
+    const chip = qs('#admin-inspector-chip');
+    if (!root) return;
+    const preview = resolvePreviewItem(state.activePreviewToken);
+    if (!preview) {
+      if (title) title.textContent = 'Select a requirement';
+      if (chip) chip.textContent = 'No selection';
+      setHTML(root, '<div class="po-preview-empty">Select a requirement from the navigator to review it.</div>');
+      return;
+    }
+
+    const { kind, item } = preview;
+    const itemKey = String(kind === 'upload' ? item.key : item.id);
+    const statusLabel = requirementStatusLabel(item.status);
+    if (title) title.textContent = item.label || 'Requirement';
+    if (chip) chip.textContent = item.typeLabel || '--';
+    setHTML(root, `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Submission State</span><strong><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></strong></div><div class="po-inspector-summary__row"><span>Requirement Status</span><strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(statusLabel)}</span></strong></div></div><label class="po-inspector-field"><span>Staff Remarks</span><textarea class="po-inline-remarks" data-${kind}-staff-remarks="${escapeHtml(itemKey)}" rows="4" placeholder="Internal note for staff only.">${escapeHtml(item.reviewerRemarks || '')}</textarea></label><label class="po-inspector-field"><span>Applicant-visible Remark</span><textarea class="po-inline-remarks" data-${kind}-applicant-remarks="${escapeHtml(itemKey)}" rows="4" placeholder="Shown to the applicant when needed."></textarea></label><div class="po-inspector-links">${(kind === 'upload' ? item.file?.url : item.reviewUrl) ? `${kind === 'upload' ? `<a class="action-link" href="${escapeHtml(item.file.url)}" target="_blank" rel="noopener">Open file in new tab</a>` : `<a class="action-link" href="${escapeHtml(item.reviewUrl)}" target="_blank" rel="noopener">Open form in new tab</a>`}` : '<span class="muted-cell">No external preview available.</span>'}</div><div class="po-inspector-actions"><button type="button" class="action-button" data-review-${kind}="${escapeHtml(itemKey)}" data-decision="approve">Approve Requirement</button><button type="button" class="action-button action-button--danger" data-review-${kind}="${escapeHtml(itemKey)}" data-decision="reject">Reject Requirement</button></div>`);
   };
 
   const load = async () => {
@@ -301,6 +537,76 @@
     renderModal(state.activeApplication);
   };
 
+  const refreshActiveApplication = async () => {
+    if (!state.activeApplication?.id) return;
+    const response = await apiGet('api/applications/show', { id: state.activeApplication.id });
+    if (response.redirect) {
+      window.location.href = routeUrl(response.redirect);
+      return;
+    }
+    if (response.ok && response.application) {
+      state.activeApplication = response.application;
+      renderModal(state.activeApplication);
+    }
+  };
+
+  const refreshAfterReview = async (response, fallbackMessage) => {
+    if (response.redirect) {
+      window.location.href = routeUrl(response.redirect);
+      return;
+    }
+    if (!response.ok) {
+      showNotice(firstError(response.errors) || response.message || fallbackMessage, 'danger');
+      return;
+    }
+    if (response.application) {
+      state.activeApplication = response.application;
+      renderModal(state.activeApplication);
+    } else {
+      await refreshActiveApplication();
+    }
+    await load();
+  };
+
+  const reviewUpload = async (requirementKey, decision) => {
+    const staffRemarks = String(document.querySelector(`[data-upload-staff-remarks="${cssEscape(requirementKey)}"]`)?.value || '').trim();
+    const applicantRemark = String(document.querySelector(`[data-upload-applicant-remarks="${cssEscape(requirementKey)}"]`)?.value || '').trim();
+    if (decision === 'reject' && !applicantRemark) {
+      showNotice('Applicant-visible remark is required when rejecting a requirement.', 'danger');
+      return;
+    }
+    const response = await apiPost('api/applications/review-requirement', {
+      applicationId: state.activeApplication.id,
+      requirementKey,
+      decision,
+      staffRemarks,
+      applicantRemark,
+    });
+    await refreshAfterReview(response, 'Unable to save the requirement review.');
+  };
+
+  const reviewForm = async (taskId, decision) => {
+    const staffRemarks = String(document.querySelector(`[data-form-staff-remarks="${taskId}"]`)?.value || '').trim();
+    const applicantVisibleRemark = String(document.querySelector(`[data-form-applicant-remarks="${taskId}"]`)?.value || '').trim();
+    if (decision === 'reject' && !applicantVisibleRemark) {
+      showNotice('Applicant-visible remark is required when rejecting a requirement.', 'danger');
+      return;
+    }
+    const response = await apiJsonPost('api/post-approval-review/review', {
+      taskId: Number(taskId),
+      status: decision === 'approve' ? 'Verified' : 'Rejected',
+      remarks: staffRemarks,
+      applicantVisibleRemark,
+      staffForm: {},
+    });
+    if (!response.ok) {
+      showNotice(firstError(response.errors) || response.message || 'Unable to save the form review.', 'danger');
+      return;
+    }
+    await refreshActiveApplication();
+    await load();
+  };
+
   const submitReview = async (decision) => {
     if (!state.activeApplication) return;
     const remarks = qs('#application-review-remarks')?.value || '';
@@ -325,6 +631,7 @@
   const closeModal = () => {
     setHTML(qs('#modal-root'), '');
     state.activeApplication = null;
+    state.activePreviewToken = '';
   };
 
   const showNotice = (message, tone = 'info') => {
@@ -382,6 +689,27 @@
         return;
       }
 
+      const select = event.target.closest('[data-select-requirement]');
+      if (select) {
+        state.activePreviewToken = select.dataset.selectRequirement || '';
+        renderRequirementNavigator();
+        renderPreviewPanel();
+        renderRequirementInspector();
+        return;
+      }
+
+      const upload = event.target.closest('[data-review-upload]');
+      if (upload) {
+        reviewUpload(upload.dataset.reviewUpload, upload.dataset.decision);
+        return;
+      }
+
+      const form = event.target.closest('[data-review-form]');
+      if (form) {
+        reviewForm(Number(form.dataset.reviewForm), form.dataset.decision);
+        return;
+      }
+
       const action = event.target.closest('[data-review-action]');
       if (action) {
         submitReview(action.dataset.reviewAction);
@@ -391,9 +719,10 @@
 
   const statusClass = (status) => {
     const value = String(status || '').toLowerCase();
-    if (value === 'approved') return 'is-success';
-    if (value === 'rejected') return 'is-danger';
-    if (value === 'flagged' || value === 'needs correction') return 'is-warning';
+    if (['approved', 'approved for training', 'verified', 'completed', 'attended'].includes(value)) return 'is-success';
+    if (['rejected', 'flagged', 'missing', 'missed'].includes(value)) return 'is-danger';
+    if (['needs correction', 'submitted', 'under review', 'pending', 'for assessment', 'requirements verified', 'notified', 'scheduled'].includes(value)) return 'is-warning';
+    if (value === 'info') return 'is-info';
     return 'is-muted';
   };
 
@@ -409,6 +738,11 @@
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+  const cssEscape = (value) => {
+    if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(value));
+    return String(value).replace(/"/g, '\\"');
+  };
 
   const init = () => {
     renderShell();

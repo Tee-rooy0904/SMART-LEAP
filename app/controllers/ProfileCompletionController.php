@@ -8,16 +8,16 @@ class ProfileCompletionController extends Controller
 {
     public function show(): never
     {
-        if (!is_authenticated()) {
+        $user = auth_user();
+        if ($user === null) {
             $this->redirectTo('login');
         }
 
-        $target = 'applicant-dashboard#profile-page';
-        if (isset($_GET['welcome']) && trim((string) $_GET['welcome']) !== '') {
-            $target = 'applicant-dashboard?welcome=' . urlencode((string) $_GET['welcome']) . '#profile-page';
+        if (str_contains(strtolower((string) ($user['role'] ?? '')), 'beneficiary')) {
+            $this->redirectTo('beneficiary-dashboard');
         }
 
-        $this->redirectTo($target);
+        $this->view('public/profile-completion');
     }
 
     public function state(): never

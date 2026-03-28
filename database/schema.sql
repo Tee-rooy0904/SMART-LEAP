@@ -23,6 +23,19 @@ CREATE TABLE IF NOT EXISTS users (
     CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles(id)
 );
 
+CREATE TABLE IF NOT EXISTS account_verification_codes (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    challenge_type VARCHAR(40) NOT NULL DEFAULT 'account_activation',
+    code_hash VARCHAR(255) NOT NULL,
+    attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,
+    expires_at DATETIME NOT NULL,
+    consumed_at DATETIME NULL,
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_account_verification_codes_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS barangays (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(120) NOT NULL UNIQUE,
@@ -128,6 +141,31 @@ CREATE TABLE IF NOT EXISTS application_status_history (
     CONSTRAINT fk_application_status_history_user FOREIGN KEY (changed_by_user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS application_assessments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    application_id BIGINT UNSIGNED NOT NULL,
+    assessor_user_id BIGINT UNSIGNED NOT NULL,
+    assessor_staff_profile_id BIGINT UNSIGNED NULL,
+    identity_residency_status VARCHAR(40) NOT NULL,
+    document_validity_status VARCHAR(40) NOT NULL,
+    livelihood_confirmation_status VARCHAR(40) NOT NULL,
+    program_fit_status VARCHAR(40) NOT NULL,
+    readiness_commitment_status VARCHAR(40) NOT NULL,
+    recommendation VARCHAR(40) NOT NULL,
+    remarks TEXT NOT NULL,
+    direct_worker_user_id BIGINT UNSIGNED NULL,
+    direct_worker_name VARCHAR(160) NULL,
+    certifying_officer_user_id BIGINT UNSIGNED NULL,
+    certifying_officer_name VARCHAR(160) NULL,
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_application_assessments_application FOREIGN KEY (application_id) REFERENCES applications(id),
+    CONSTRAINT fk_application_assessments_assessor_user FOREIGN KEY (assessor_user_id) REFERENCES users(id),
+    CONSTRAINT fk_application_assessments_assessor_staff FOREIGN KEY (assessor_staff_profile_id) REFERENCES staff_profiles(id),
+    CONSTRAINT fk_application_assessments_direct_worker FOREIGN KEY (direct_worker_user_id) REFERENCES users(id),
+    CONSTRAINT fk_application_assessments_certifying_officer FOREIGN KEY (certifying_officer_user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS initial_requirement_types (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     code VARCHAR(80) NOT NULL UNIQUE,
@@ -167,6 +205,9 @@ CREATE TABLE IF NOT EXISTS training_programs (
     ends_at DATETIME NULL,
     what_to_bring TEXT NULL,
     instructions TEXT NULL,
+    training_scope_mode VARCHAR(20) NOT NULL DEFAULT 'all',
+    batch_group_count TINYINT UNSIGNED NOT NULL DEFAULT 3,
+    batch_group_size SMALLINT UNSIGNED NOT NULL DEFAULT 85,
     status VARCHAR(40) NOT NULL DEFAULT 'scheduled',
     created_by_user_id BIGINT UNSIGNED NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
@@ -185,6 +226,7 @@ CREATE TABLE IF NOT EXISTS training_invitees (
     last_notice_sent_at DATETIME NULL,
     updated_by_user_id BIGINT UNSIGNED NULL,
     post_approval_unlocked_at DATETIME NULL,
+    batch_group_number TINYINT UNSIGNED NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_training_invitees_program FOREIGN KEY (training_program_id) REFERENCES training_programs(id),
@@ -202,6 +244,10 @@ CREATE TABLE IF NOT EXISTS attendance_records (
     beneficiary_profile_id BIGINT UNSIGNED NULL,
     attendance_status VARCHAR(40) NOT NULL DEFAULT 'Scheduled',
     remarks TEXT NULL,
+    proof_file_path VARCHAR(255) NULL,
+    proof_original_name VARCHAR(255) NULL,
+    proof_mime_type VARCHAR(120) NULL,
+    proof_file_size BIGINT UNSIGNED NULL,
     recorded_by_user_id BIGINT UNSIGNED NULL,
     checked_in_at DATETIME NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,

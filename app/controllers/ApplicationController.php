@@ -12,7 +12,7 @@ class ApplicationController extends Controller
     {
         $user = auth_user() ?? [];
         $role = strtolower((string) ($user['role'] ?? ''));
-        if (!str_contains($role, 'admin') && !str_contains($role, 'project')) {
+        if (!str_contains($role, 'admin') && !str_contains($role, 'project') && !str_contains($role, 'social')) {
             response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
         }
 
@@ -70,6 +70,18 @@ class ApplicationController extends Controller
         $applicationId = (int) ($_POST['applicationId'] ?? 0);
         $service = new ApplicationService();
         $result = $service->reviewRequirement($applicationId, $_POST, $this->authorizeReviewer());
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function saveAssessment(): never
+    {
+        $applicationId = (int) ($_POST['applicationId'] ?? 0);
+        $service = new ApplicationService();
+        $result = $service->saveAssessment($applicationId, $_POST, $this->authorizeReviewer());
         if (!$result['ok']) {
             response_json($result, 422);
         }

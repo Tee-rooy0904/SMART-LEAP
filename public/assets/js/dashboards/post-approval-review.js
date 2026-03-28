@@ -68,7 +68,8 @@
                     <span class="task-card__type">${escapeHtml(task.title)}</span>
                 </div>
                 <strong>${escapeHtml(task.applicant.name)}</strong>
-                <p>${escapeHtml(task.applicant.barangay || 'No barangay')} | ${escapeHtml(task.applicant.businessName || 'No business name')}</p>
+                <p>${escapeHtml(task.applicant.barangay || 'No barangay')}</p>
+                <p>${escapeHtml(task.applicant.businessName || 'No business name')}</p>
                 <small>${escapeHtml(task.submittedAt ? `Submitted ${formatDateTime(task.submittedAt)}` : 'Not yet submitted')}</small>
             </button>
         `).join('');
@@ -109,6 +110,7 @@
         const history = document.getElementById('reviewSubmissionHistory');
         const decisionStatus = document.getElementById('reviewDecisionStatus');
         const decisionRemarks = document.getElementById('reviewDecisionRemarks');
+        const decisionApplicantRemark = document.getElementById('reviewDecisionApplicantRemark');
 
         if (!state.activeTask) {
             title && (title.textContent = 'Select a submitted form');
@@ -148,6 +150,8 @@
                     ? renderApplicantBusinessPlan(task.payload || {})
                 : task.code === 'mungkahing_proyekto'
                     ? renderApplicantMungkahingPaper(task.payload || {})
+                    : task.code === 'fund_release_evidence'
+                        ? renderApplicantFundReleaseEvidence(task.payload || {})
                     : renderApplicantValidation(task.payload || {});
         }
 
@@ -160,6 +164,8 @@
                     ? renderStaffBusinessPlan(task.payload?.staffReview || {})
                 : task.code === 'mungkahing_proyekto'
                     ? renderStaffMungkahingPaper(task.payload?.staffReview || {}, task.payload || {})
+                    : task.code === 'fund_release_evidence'
+                        ? renderStaffFundReleaseEvidence(task.payload || {})
                     : renderStaffValidation(task.payload?.staffReview || {});
         }
 
@@ -181,6 +187,9 @@
         }
         if (decisionRemarks) {
             decisionRemarks.value = task.reviewerRemarks || '';
+        }
+        if (decisionApplicantRemark) {
+            decisionApplicantRemark.value = task.applicantVisibleRemark || '';
         }
     }
 
@@ -272,6 +281,16 @@
                 ['Signed name', payload.participantSignature?.signedName],
                 ['Date signed', payload.participantSignature?.signedDate],
             ], [renderReadOnlyUpload('Signature upload', payload.participantSignature?.signatureUpload)])}
+        `;
+    }
+
+    function renderApplicantFundReleaseEvidence(payload) {
+        const evidence = payload.fundReleaseEvidence || {};
+        return `
+            ${renderReadOnlySection('Proof of Fund Release', [
+                ['Release date', evidence.releaseDate],
+                ['Applicant note', evidence.notes || 'No note provided'],
+            ], [renderReadOnlyUpload('Release evidence attachment', evidence.releaseAttachment)])}
         `;
     }
 
@@ -501,6 +520,22 @@
                         ${renderUploadField('Validator signature upload', 'validatorIdentity.signatureUpload', identity.signatureUpload || null)}
                     </div>
                 `)
+            )}
+        `;
+    }
+
+    function renderStaffFundReleaseEvidence(payload) {
+        const evidence = payload.fundReleaseEvidence || {};
+        return `
+            ${renderReviewStatementBlock(
+                'Final Requirement Review',
+                `
+                    <p class="review-copy">This is the last requirement before the applicant can be promoted to beneficiary. Verify the uploaded proof of fund release, then save the review decision below.</p>
+                    ${renderReadOnlySection('Submitted release evidence', [
+                        ['Release date', evidence.releaseDate],
+                        ['Applicant note', evidence.notes || 'No note provided'],
+                    ], [renderReadOnlyUpload('Release evidence attachment', evidence.releaseAttachment)])}
+                `
             )}
         `;
     }
@@ -1247,6 +1282,15 @@
             return;
         }
 
+        const status = document.getElementById('reviewDecisionStatus')?.value || '';
+        const remarks = document.getElementById('reviewDecisionRemarks')?.value || '';
+        const applicantVisibleRemark = document.getElementById('reviewDecisionApplicantRemark')?.value || '';
+        if (['Needs Correction', 'Rejected'].includes(status) && !String(applicantVisibleRemark).trim()) {
+            showToast('Applicant-visible remark is required for correction or rejection.', 'warning');
+            document.getElementById('reviewDecisionApplicantRemark')?.focus();
+            return;
+        }
+
         const payload = gatherStaffForm();
         try {
             await fetchJson('api/post-approval-review/review', {
@@ -1257,8 +1301,9 @@
                 },
                 body: JSON.stringify({
                     taskId: state.activeTask.id,
-                    status: document.getElementById('reviewDecisionStatus')?.value || '',
-                    remarks: document.getElementById('reviewDecisionRemarks')?.value || '',
+                    status,
+                    remarks,
+                    applicantVisibleRemark,
                     staffForm: payload,
                 }),
             });

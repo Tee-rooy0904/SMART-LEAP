@@ -495,8 +495,15 @@
 
     function checkStatusAndRoute() {
         const status = normalizeStatus(currentState?.application?.status || '');
+        const role = normalizeStatus(currentState?.user?.role || '');
+
+        if (!isDashboardEmbedded() && role === 'beneficiary') {
+            window.location.href = routeUrl('beneficiary-dashboard');
+            return;
+        }
+
         if (!isDashboardEmbedded() && (status === 'approved' || status === 'active' || status === 'released')) {
-            window.location.href = routeUrl('applicant-dashboard');
+            window.location.href = routeUrl(role === 'beneficiary' ? 'beneficiary-dashboard' : 'applicant-dashboard');
             return;
         }
         if (status === 'submitted' || status === 'pendingverification') {
@@ -610,13 +617,18 @@
 
     async function handleLogout() {
         try {
-            await fetch(routeUrl('auth/logout'), {
+            const response = await fetch(routeUrl('auth/logout'), {
                 method: 'POST',
-                headers: { Accept: 'application/json' },
+                headers: {
+                    Accept: 'application/json',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 credentials: 'same-origin'
             });
+            const payload = await response.json().catch(() => ({}));
+            window.location.href = routeUrl(payload.redirect || 'portal');
         } finally {
-            window.location.href = routeUrl('login');
+            // Redirect is handled from the logout response or falls back to portal.
         }
     }
 

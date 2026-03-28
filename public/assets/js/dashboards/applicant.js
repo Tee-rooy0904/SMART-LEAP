@@ -5,7 +5,9 @@
         dashboard: null,
         nextStepPath: null,
         notificationsExpanded: false,
+        loaderStartedAt: Date.now(),
     };
+    const PORTAL_LOADER_MIN_MS = 3000;
 
     document.addEventListener('DOMContentLoaded', init);
 
@@ -70,8 +72,10 @@
             state.dashboard = payload.state || null;
             renderDashboard();
             applyRouteVisibility();
+            markPortalReady();
         } catch (error) {
             renderFatalState(error.message || 'Unable to load applicant dashboard.');
+            markPortalReady();
         }
     }
 
@@ -262,9 +266,17 @@
         const application = state.dashboard.application;
         const remarks = application?.remarks || [];
         const latestRemark = remarks[0] || null;
+        const currentStatus = application?.status || 'Draft';
+        const nextStepSummary = buildApplicationNextStepSummary(application, latestRemark);
 
         setText('applicationStatusValue', application?.status || 'No application yet');
+        setText('applicationStatusPill', currentStatus);
+        setText('applicationStatusValue', currentStatus);
+        setText('applicationReviewStatusValue', currentStatus);
+        setText('applicationStatusNextStep', nextStepSummary);
+        setText('applicationReviewStatusNote', nextStepSummary);
         setText('applicationStatusDates', buildApplicationDateMeta(application));
+        setText('applicationStatusReviewedDate', application?.reviewedAt ? formatDate(application.reviewedAt) : 'Not reviewed yet');
         const assignedPdo = application?.assignedPdo || null;
         setText('assignedPdoName', assignedPdo?.name || 'Not assigned');
         setText('assignedPdoEmail', assignedPdo?.email || 'Assigned PDO details will appear here once scoped.');
@@ -288,6 +300,13 @@
             latestRemark
                 ? `${latestRemark.actorName || 'CSWDD'}: ${truncateText(latestRemark.comment || 'Applicant-visible note available.', 92)}`
                 : 'Applicant-visible review notes will be summarized here.'
+        );
+        setText('applicationLatestRemarkTitle', latestRemark?.actorName || 'No message yet');
+        setText(
+            'applicationLatestRemarkCopy',
+            latestRemark
+                ? truncateText(latestRemark.comment || 'Applicant-visible note available.', 150)
+                : 'Applicant-visible review notes will appear here first.'
         );
         setText('dashboardSnapshotStatus', application?.status || 'Draft');
         setText('dashboardSnapshotDate', buildApplicationDateMeta(application));
@@ -320,14 +339,9 @@
                 ? 'No training assignment has been recorded yet.'
                 : `${invitees.length} training assignment${invitees.length === 1 ? '' : 's'} recorded for your applicant profile.`
         );
-        setText('trainingScheduledCount', String(summary.scheduled || 0));
         setText('trainingNotifiedCount', String(summary.notified || 0));
         setText('trainingCompletedCount', String(summary.completed || 0));
         setText('trainingMissedCount', String(summary.missed || 0));
-        setText('attendanceScheduledCount', String(summary.scheduled || 0));
-        setText('attendanceNotifiedCount', String(summary.notified || 0));
-        setText('attendanceMissedCount', String(summary.missed || 0));
-        setText('attendanceCompletedCount', String(summary.completed || 0));
         setText('trainingProgressMeta', `${progressPercent}% completion`);
 
         const ring = document.getElementById('trainingRing');
@@ -433,7 +447,7 @@
                     <div class="post-approval-taskcard__footer">
                         <span>${escapeHtml(progressText)}</span>
                         <span class="post-approval-taskcard__actions">
-                            ${task.reviewerRemarks ? '<span class="post-approval-taskcard__issue">Reviewer remarks</span>' : ''}
+                            ${task.reviewerRemarks ? '<span class="post-approval-taskcard__issue">Review note</span>' : ''}
                             ${task.interactive ? '<span class="tracker-task-open">Open requirement</span>' : '<span class="post-approval-taskcard__locked-note">Unavailable</span>'}
                         </span>
                     </div>
@@ -524,7 +538,7 @@
         setJourneyState('journeyStepProfile', (profile.completionPercent || 0) >= 100 ? 'complete' : 'current');
 
         const applicationStatus = String(application.status || '').toLowerCase();
-        const applicationReady = ['approved', 'for training', 'training', 'post-approval', 'completed'].includes(applicationStatus);
+        const applicationReady = ['approved', 'for training', 'training', 'completed'].includes(applicationStatus);
         setJourneyState('journeyStepApplication', applicationReady ? 'complete' : ((profile.completionPercent || 0) >= 100 ? 'current' : 'upcoming'));
 
         const trainingSummary = training.summary || {};
@@ -648,16 +662,20 @@
 
     function renderAttendanceTable(invitees) {
         const body = document.getElementById('attendanceTableBody');
+        const cardList = document.getElementById('attendanceCardList');
         if (!body) {
             return;
         }
 
         if (invitees.length === 0) {
             body.innerHTML = '<tr class="empty"><td colspan="5">Attendance updates will appear once sessions are assigned.</td></tr>';
+            if (cardList) {
+                cardList.innerHTML = '<article class="attendance-card attendance-card--empty">Attendance updates will appear once sessions are assigned.</article>';
+            }
             return;
         }
 
-        body.innerHTML = invitees.map((invitee) => {
+        const rows = invitees.map((invitee) => {
             const program = invitee.program || {};
             return `
                 <tr>
@@ -675,6 +693,26 @@
                 </tr>
             `;
         }).join('');
+
+        body.innerHTML = rows;
+
+        if (cardList) {
+            cardList.innerHTML = invitees.map((invitee) => {
+                const program = invitee.program || {};
+                return `
+                    <article class="attendance-card">
+                        <div class="attendance-card__top">
+                            <strong>${escapeHtml(program.programName || 'Training session')}</strong>
+                            <span class="badge-status ${attendanceBadgeClass(invitee.status)}">${escapeHtml(invitee.status || 'Not Scheduled')}</span>
+                        </div>
+                        <p class="attendance-card__meta">${escapeHtml(formatDate(program.startsAt))} | ${escapeHtml(formatTimeRange(program.startsAt, program.endsAt))}</p>
+                        <p class="attendance-card__meta">${escapeHtml(program.venue || 'Venue TBA')}</p>
+                        <p class="attendance-card__copy">${escapeHtml(invitee.remarks || 'No remarks yet.')}</p>
+                        <p class="attendance-card__hint">${escapeHtml(buildNoticeMeta(invitee))}</p>
+                    </article>
+                `;
+            }).join('');
+        }
     }
 
     function renderTimelineList(id, items, renderer, emptyCopy) {
@@ -736,14 +774,52 @@
         }
     }
 
+    function showPortalLoader(copy) {
+        const loader = document.getElementById('portalLoader');
+        const copyNode = document.getElementById('portalLoaderCopy');
+        if (!loader) {
+            return;
+        }
+
+        if (copyNode && copy) {
+            copyNode.textContent = copy;
+        }
+
+        state.loaderStartedAt = Date.now();
+        loader.hidden = false;
+        document.body.classList.remove('portal-ready');
+    }
+
+    function hidePortalLoader() {
+        const loader = document.getElementById('portalLoader');
+        if (!loader) {
+            document.body.classList.add('portal-ready');
+            return;
+        }
+
+        loader.setAttribute('hidden', 'hidden');
+        document.body.classList.add('portal-ready');
+    }
+
+    function markPortalReady() {
+        document.body.classList.add('portal-ready');
+        const remaining = Math.max(0, PORTAL_LOADER_MIN_MS - (Date.now() - state.loaderStartedAt));
+        window.setTimeout(hidePortalLoader, remaining);
+    }
+
     async function handleLogout() {
+        showPortalLoader('Signing you out of SMART LEAP...');
         try {
             const payload = await fetchJson('auth/logout', {
                 method: 'POST',
                 headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
             });
-            window.location.href = routeUrl(payload.redirect || 'portal');
+            const remaining = Math.max(0, PORTAL_LOADER_MIN_MS - (Date.now() - state.loaderStartedAt));
+            window.setTimeout(() => {
+                window.location.href = routeUrl(payload.redirect || 'portal');
+            }, remaining);
         } catch (error) {
+            hidePortalLoader();
             showToast(error.message || 'Unable to log out right now.', 'warning');
         }
     }
@@ -1128,6 +1204,24 @@
             .replace(/application forms/gi, 'application requirements');
     }
 
+    function buildApplicationNextStepSummary(application, latestRemark) {
+        if (latestRemark?.comment) {
+            return truncateText(latestRemark.comment, 120);
+        }
+
+        const status = String(application?.status || '').toLowerCase();
+        if (status === 'draft') {
+            return 'Upload your required files and complete the form requirements before you submit.';
+        }
+        if (status.includes('checked') || status.includes('review')) {
+            return 'Wait for the latest review result and check if any requirement needs fixing.';
+        }
+        if (status.includes('approved')) {
+            return 'Your application is approved. Continue watching your training schedule and certificate status.';
+        }
+        return 'Review the latest updates and complete any missing requirement.';
+    }
+
     function sanitizeApplicantWording(text) {
         return String(text || '')
             .replace(/post-approval compliance/gi, 'application requirements')
@@ -1135,7 +1229,12 @@
             .replace(/post-approval tasks/gi, 'application requirements')
             .replace(/post-approval forms/gi, 'application requirements')
             .replace(/application forms/gi, 'application requirements')
-            .replace(/compliance/gi, 'requirements');
+            .replace(/compliance/gi, 'requirements')
+            .replace(/applicant workspace/gi, 'beneficiary portal')
+            .replace(/applicant dashboard/gi, 'beneficiary portal')
+            .replace(/applicant record/gi, 'beneficiary record')
+            .replace(/applicant-visible/gi, 'beneficiary-visible')
+            .replace(/applicant/gi, 'beneficiary');
     }
 
     function buildTrainingMeta(invitee) {

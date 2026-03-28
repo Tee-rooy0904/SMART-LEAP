@@ -111,6 +111,12 @@ class PostApprovalReviewService
                 'post_approval_task_id' => $taskId,
             ]);
 
+            if ((string) $task['code'] === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE && $status === POST_APPROVAL_STATUS_VERIFIED) {
+                (new BeneficiaryProfileService())->activateForApplicantProfile((int) ($task['applicant_profile_id'] ?? 0));
+            }
+
+            (new PostApprovalComplianceService())->syncFundReleaseRequirement((int) ($task['beneficiary_profile_id'] ?? 0));
+
             $pdo->commit();
         } catch (Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -254,7 +260,7 @@ class PostApprovalReviewService
                  INNER JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
                  INNER JOIN users AS applicant_users ON applicant_users.id = applicant_profiles.user_id'
                  . $scopeJoin .
-                ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
+                ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
                   AND post_approval_tasks.status IN ("Submitted", "Needs Correction", "Rejected", "Verified")'
             );
         }
@@ -285,9 +291,9 @@ class PostApprovalReviewService
              LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
              LEFT JOIN users AS reviewer_users ON reviewer_users.id = post_approval_tasks.reviewed_by_user_id'
              . $scopeJoin .
-            ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
+            ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
               AND post_approval_tasks.status IN ("Submitted", "Needs Correction", "Rejected", "Verified")
-             ORDER BY FIELD(post_approval_tasks.status, "Submitted", "Needs Correction", "Rejected", "Verified", "In Progress", "Unlocked"), post_approval_tasks.updated_at DESC, post_approval_tasks.id DESC'
+             ORDER BY FIELD(post_approval_tasks.status, "Submitted", "Needs Correction", "Rejected", "Verified", "In Progress", "Unlocked"), FIELD(post_approval_task_types.code, "availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence"), post_approval_tasks.updated_at DESC, post_approval_tasks.id DESC'
         );
     }
 
@@ -343,7 +349,7 @@ class PostApprovalReviewService
 
         $sql .= '
             WHERE post_approval_tasks.id = :task_id
-              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
+              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
               AND post_approval_tasks.status IN ("Submitted", "Needs Correction", "Rejected", "Verified")
             LIMIT 1';
 
@@ -573,6 +579,10 @@ class PostApprovalReviewService
             return ['payload' => $clean, 'errors' => []];
         }
 
+        if ($code === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE) {
+            return ['payload' => [], 'errors' => []];
+        }
+
         return ['payload' => [], 'errors' => []];
     }
 
@@ -675,6 +685,10 @@ class PostApprovalReviewService
             POST_APPROVAL_STATUS_NEEDS_CORRECTION => 'Your submitted form needs correction. Review the staff remarks and resubmit.',
             default => 'Your submitted form was reviewed by CSWDD staff.',
         };
+
+        if ((string) ($task['code'] ?? '') === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE && $status === POST_APPROVAL_STATUS_VERIFIED) {
+            $message = 'Your proof of fund release was verified. Your account can now continue as a beneficiary.';
+        }
 
         if ($remarks !== '') {
             $message .= ' Remarks: ' . $remarks;

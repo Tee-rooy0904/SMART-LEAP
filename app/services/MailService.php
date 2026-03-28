@@ -46,19 +46,73 @@ class MailService
     public function sendTrainingNotice(array $user, array $program, array $invitee): bool
     {
         $subject = 'SMART LEAP Training Notice: ' . ($program['programName'] ?? $program['title'] ?? 'Training Session');
+        $formattedDate = $this->formatTrainingDate((string) ($program['date'] ?? ''));
+        $formattedTimeRange = $this->formatTrainingTimeRange(
+            (string) ($program['startTime'] ?? ''),
+            (string) ($program['endTime'] ?? '')
+        );
         $body = sprintf(
-            '<p>Hello %s,</p><p>You have been scheduled for <strong>%s</strong>.</p><p>Venue: %s<br>Date: %s<br>Time: %s - %s</p><p>What to bring: %s</p><p>Instructions: %s</p>',
+            '<p>Hello %s,</p><p>You have been scheduled for <strong>%s</strong>.</p><p>Venue: %s<br>Date: %s<br>Time: %s</p><p>What to bring: %s</p><p>Instructions: %s</p>',
             htmlspecialchars((string) ($user['name'] ?? 'Applicant'), ENT_QUOTES),
             htmlspecialchars((string) ($program['programName'] ?? $program['title'] ?? 'Training Session'), ENT_QUOTES),
             htmlspecialchars((string) ($program['venue'] ?? 'To be announced'), ENT_QUOTES),
-            htmlspecialchars((string) ($program['date'] ?? '--'), ENT_QUOTES),
-            htmlspecialchars((string) ($program['startTime'] ?? '--'), ENT_QUOTES),
-            htmlspecialchars((string) ($program['endTime'] ?? '--'), ENT_QUOTES),
+            htmlspecialchars($formattedDate, ENT_QUOTES),
+            htmlspecialchars($formattedTimeRange, ENT_QUOTES),
             htmlspecialchars((string) ($program['whatToBring'] ?? 'Bring valid ID and training materials.'), ENT_QUOTES),
             htmlspecialchars((string) ($program['instructions'] ?? ($invitee['remarks'] ?? 'Please arrive 15 minutes early.')), ENT_QUOTES)
         );
 
         return $this->send((string) ($user['email'] ?? ''), $subject, $body, (int) ($user['id'] ?? 0));
+    }
+
+    private function formatTrainingDate(string $date): string
+    {
+        $value = trim($date);
+        if ($value === '') {
+            return '--';
+        }
+
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            return $value;
+        }
+
+        return date('F j, Y', $timestamp);
+    }
+
+    private function formatTrainingTimeRange(string $startTime, string $endTime): string
+    {
+        $start = $this->formatTrainingTime($startTime);
+        $end = $this->formatTrainingTime($endTime);
+
+        if ($start === '--' && $end === '--') {
+            return '--';
+        }
+
+        if ($end === '--') {
+            return $start;
+        }
+
+        if ($start === '--') {
+            return $end;
+        }
+
+        return $start . ' - ' . $end;
+    }
+
+    private function formatTrainingTime(string $time): string
+    {
+        $value = trim($time);
+        if ($value === '') {
+            return '--';
+        }
+
+        $timestamp = strtotime($value);
+        if ($timestamp === false) {
+            return $value;
+        }
+
+        return date('g:i A', $timestamp);
     }
 
     private function storeEmailLog(?int $userId, string $recipientEmail, string $subject, string $status, ?string $providerMessageId, ?string $errorMessage, bool $sent): void

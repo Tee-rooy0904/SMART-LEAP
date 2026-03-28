@@ -6,8 +6,7 @@
         fullName: document.getElementById('signupFullName'),
         email: document.getElementById('signupEmail'),
         password: document.getElementById('signupPassword'),
-        confirmPassword: document.getElementById('signupPasswordConfirm'),
-        terms: document.getElementById('termsAgreement')
+        confirmPassword: document.getElementById('signupPasswordConfirm')
     };
 
     const feedback = document.getElementById('signupFeedback');
@@ -26,6 +25,17 @@
         return `${publicBase()}/${trimmed}`;
     }
 
+    function setAuthLoading(active, message) {
+        const overlay = document.getElementById('authLoadingScreen');
+        const copy = document.getElementById('authLoadingCopy');
+        if (!overlay) return;
+        if (copy && message) {
+            copy.textContent = message;
+        }
+        overlay.hidden = !active;
+        document.body.classList.toggle('auth-loading', active);
+    }
+
     toggleButtons.forEach((button) => {
         button.addEventListener('click', () => {
             const targetId = button.dataset.toggle;
@@ -34,6 +44,7 @@
             const isPassword = input.getAttribute('type') === 'password';
             input.setAttribute('type', isPassword ? 'text' : 'password');
             button.setAttribute('aria-label', `${isPassword ? 'Hide' : 'Show'} password`);
+            button.textContent = isPassword ? 'Hide' : 'Show';
             button.classList.toggle('is-visible', !isPassword);
         });
     });
@@ -128,11 +139,6 @@
             showFieldError(fields.confirmPassword, 'Passwords do not match.');
         }
 
-        if (!fields.terms.checked) {
-            valid = false;
-            showFieldError(fields.terms, 'You must accept the privacy notice and terms of use.');
-        }
-
         return valid;
     }
 
@@ -151,6 +157,7 @@
         }
 
         disableForm(true);
+        setAuthLoading(true, 'Creating your SMART LEAP account...');
 
         try {
             const response = await fetch(routeUrl('signup'), {
@@ -185,14 +192,17 @@
                 return;
             }
 
-            setFeedback('success', 'Account created successfully. Redirecting to profile completion...');
+            setFeedback('success', payload.message || 'Account created successfully. Redirecting to verification...');
             window.setTimeout(() => {
-                window.location.href = routeUrl(payload.redirect || 'applicant-dashboard?welcome=1#profile-page');
+                window.location.href = routeUrl(payload.redirect || 'verify-account');
             }, 1200);
         } catch (error) {
             console.error('Signup failed', error);
             setFeedback('danger', 'We could not create your account right now. Please try again.');
         } finally {
+            if (document.visibilityState !== 'hidden') {
+                setAuthLoading(false);
+            }
             disableForm(false);
         }
     });

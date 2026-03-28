@@ -18,6 +18,7 @@ class PostApprovalComplianceService
         $this->ensureRequiredTaskTypes();
         $latestUnlockAt = $this->findLatestUnlockAt((int) $context['applicant_profile_id']);
         $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $latestUnlockAt, $userId);
+        $this->syncFundReleaseRequirement((int) $context['beneficiary_profile_id']);
         $tasks = $this->fetchTasks((int) $context['beneficiary_profile_id'], $context);
 
         return [
@@ -39,6 +40,7 @@ class PostApprovalComplianceService
         $this->ensureRequiredTaskTypes();
         $latestUnlockAt = $this->findLatestUnlockAt((int) $context['applicant_profile_id']);
         $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $latestUnlockAt, $userId);
+        $this->syncFundReleaseRequirement((int) $context['beneficiary_profile_id']);
 
         $task = $this->findTaskByCode((int) $context['beneficiary_profile_id'], $code);
         if ($task === null) {
@@ -69,6 +71,9 @@ class PostApprovalComplianceService
         }
 
         $status = $this->normalizeStatus((string) $task['status']);
+        if ($status === POST_APPROVAL_STATUS_LOCKED) {
+            return ['ok' => false, 'errors' => ['task' => 'This final requirement is still locked until the earlier forms are verified.']];
+        }
         if (in_array($status, [POST_APPROVAL_STATUS_SUBMITTED, POST_APPROVAL_STATUS_VERIFIED], true)) {
             return ['ok' => false, 'errors' => ['task' => 'This form cannot be edited right now.']];
         }
@@ -122,6 +127,9 @@ class PostApprovalComplianceService
         }
 
         $status = $this->normalizeStatus((string) $task['status']);
+        if ($status === POST_APPROVAL_STATUS_LOCKED) {
+            return ['ok' => false, 'errors' => ['task' => 'This final requirement is still locked until the earlier forms are verified.']];
+        }
         if ($status === POST_APPROVAL_STATUS_VERIFIED) {
             return ['ok' => false, 'errors' => ['task' => 'This form has already been verified.']];
         }
@@ -206,6 +214,9 @@ class PostApprovalComplianceService
         }
 
         $status = $this->normalizeStatus((string) $task['status']);
+        if ($status === POST_APPROVAL_STATUS_LOCKED) {
+            return ['ok' => false, 'errors' => ['task' => 'This final requirement is still locked until the earlier forms are verified.']];
+        }
         if (in_array($status, [POST_APPROVAL_STATUS_SUBMITTED, POST_APPROVAL_STATUS_VERIFIED], true)) {
             return ['ok' => false, 'errors' => ['task' => 'This form cannot be edited right now.']];
         }
@@ -323,11 +334,18 @@ class PostApprovalComplianceService
 
         db()->prepare(
             'UPDATE post_approval_tasks
-             SET status = :status, updated_at = CURRENT_TIMESTAMP
-             WHERE beneficiary_profile_id = :beneficiary_profile_id
-               AND LOWER(status) = "pending"'
+             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
+             SET post_approval_tasks.status = CASE
+                    WHEN post_approval_task_types.code = :final_code THEN :locked_status
+                    ELSE :status
+                 END,
+                 post_approval_tasks.updated_at = CURRENT_TIMESTAMP
+             WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
+               AND LOWER(post_approval_tasks.status) = "pending"'
         )->execute([
             'status' => POST_APPROVAL_STATUS_UNLOCKED,
+            'locked_status' => POST_APPROVAL_STATUS_LOCKED,
+            'final_code' => POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
             'beneficiary_profile_id' => $beneficiaryProfileId,
         ]);
 
@@ -347,10 +365,78 @@ class PostApprovalComplianceService
             $statement->execute([
                 'beneficiary_profile_id' => $beneficiaryProfileId,
                 'task_type_id' => $typeMap[$code],
-                'status' => POST_APPROVAL_STATUS_UNLOCKED,
+                'status' => $code === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE
+                    ? POST_APPROVAL_STATUS_LOCKED
+                    : POST_APPROVAL_STATUS_UNLOCKED,
                 'assigned_by_user_id' => $actorUserId,
             ]);
         }
+
+        $this->syncFundReleaseRequirement($beneficiaryProfileId);
+    }
+
+    public function syncFundReleaseRequirement(int $beneficiaryProfileId): void
+    {
+        if ($beneficiaryProfileId <= 0) {
+            return;
+        }
+
+        $prerequisiteCodes = [
+            POST_APPROVAL_TASK_AVAILMENT_FORM,
+            POST_APPROVAL_TASK_VALIDATION_FORM,
+            POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO,
+            POST_APPROVAL_TASK_BUSINESS_PLAN,
+            POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA,
+        ];
+
+        $placeholders = implode(',', array_fill(0, count($prerequisiteCodes), '?'));
+        $statement = db()->prepare(
+            "SELECT post_approval_task_types.code, post_approval_tasks.status
+             FROM post_approval_tasks
+             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
+             WHERE post_approval_tasks.beneficiary_profile_id = ?
+               AND post_approval_task_types.code IN ($placeholders)"
+        );
+        $statement->bindValue(1, $beneficiaryProfileId, PDO::PARAM_INT);
+        foreach ($prerequisiteCodes as $index => $code) {
+            $statement->bindValue($index + 2, $code, PDO::PARAM_STR);
+        }
+        $statement->execute();
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $statuses = [];
+        foreach ($rows as $row) {
+            $statuses[(string) $row['code']] = $this->normalizeStatus((string) ($row['status'] ?? ''));
+        }
+
+        $allVerified = count($statuses) === count($prerequisiteCodes);
+        if ($allVerified) {
+            foreach ($prerequisiteCodes as $code) {
+                if (($statuses[$code] ?? null) !== POST_APPROVAL_STATUS_VERIFIED) {
+                    $allVerified = false;
+                    break;
+                }
+            }
+        }
+
+        db()->prepare(
+            'UPDATE post_approval_tasks
+             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
+             SET post_approval_tasks.status = CASE
+                    WHEN :all_verified = 1 AND post_approval_tasks.status = :locked_status THEN :unlocked_status
+                    WHEN :all_verified = 0 AND LOWER(post_approval_tasks.status) = "pending" THEN :locked_status
+                    ELSE post_approval_tasks.status
+                 END,
+                 post_approval_tasks.updated_at = CURRENT_TIMESTAMP
+             WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
+               AND post_approval_task_types.code = :final_code'
+        )->execute([
+            'all_verified' => $allVerified ? 1 : 0,
+            'locked_status' => POST_APPROVAL_STATUS_LOCKED,
+            'unlocked_status' => POST_APPROVAL_STATUS_UNLOCKED,
+            'beneficiary_profile_id' => $beneficiaryProfileId,
+            'final_code' => POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
+        ]);
     }
 
     private function taskTypeIdMap(): array
@@ -382,13 +468,14 @@ class PostApprovalComplianceService
              INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
              WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
                AND post_approval_task_types.code <> "seminar_attendance"
-             ORDER BY FIELD(
+            ORDER BY FIELD(
                   post_approval_task_types.code,
                   "availment_form",
                   "validation_form",
                   "mungkahing_proyekto",
                   "business_plan",
-                  "buhat_sa_pagpanumpa"
+                  "buhat_sa_pagpanumpa",
+                  "fund_release_evidence"
               ), post_approval_tasks.id ASC'
         );
         $statement->execute(['beneficiary_profile_id' => $beneficiaryProfileId]);
@@ -508,6 +595,7 @@ class PostApprovalComplianceService
             POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => $this->validateMungkahingPayload($payload, $context, $strict),
             POST_APPROVAL_TASK_BUSINESS_PLAN => $this->validateBusinessPlanPayload($payload, $context, $strict),
             POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => $this->validateBuhatSaPagpanumpaPayload($payload, $context, $strict),
+            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => $this->validateFundReleaseEvidencePayload($payload, $context, $strict),
             default => ['payload' => $payload, 'errors' => ['task' => 'Unsupported digital form.']],
         };
     }
@@ -1146,6 +1234,29 @@ class PostApprovalComplianceService
         return ['payload' => $clean, 'errors' => $errors];
     }
 
+    private function validateFundReleaseEvidencePayload(array $payload, array $context, bool $strict): array
+    {
+        $clean = [
+            'fundReleaseEvidence' => [
+                'releaseDate' => trim((string) ($payload['fundReleaseEvidence']['releaseDate'] ?? date('Y-m-d'))),
+                'notes' => trim((string) ($payload['fundReleaseEvidence']['notes'] ?? '')),
+                'releaseAttachment' => $this->normalizeUploadMetadata($payload['fundReleaseEvidence']['releaseAttachment'] ?? null),
+            ],
+        ];
+
+        $errors = [];
+        if ($strict) {
+            if ($clean['fundReleaseEvidence']['releaseAttachment'] === null) {
+                $errors['fundReleaseEvidence.releaseAttachment'] = 'Upload the proof of fund release attachment.';
+            }
+            if ($clean['fundReleaseEvidence']['releaseDate'] === '') {
+                $errors['fundReleaseEvidence.releaseDate'] = 'Release date is required.';
+            }
+        }
+
+        return ['payload' => $clean, 'errors' => $errors];
+    }
+
     private function defaultPayload(string $code, array $context): array
     {
         return match ($code) {
@@ -1481,6 +1592,13 @@ class PostApprovalComplianceService
                     ],
                 ],
             ],
+            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => [
+                'fundReleaseEvidence' => [
+                    'releaseDate' => date('Y-m-d'),
+                    'notes' => '',
+                    'releaseAttachment' => null,
+                ],
+            ],
             default => [],
         };
     }
@@ -1547,6 +1665,10 @@ class PostApprovalComplianceService
                 'agreement.yearSigned',
                 'applicantSignature.signedName',
                 'coMakerSignature.signedName',
+            ],
+            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => [
+                'fundReleaseEvidence.releaseDate',
+                'fundReleaseEvidence.releaseAttachment.file_path',
             ],
             default => [],
         };
@@ -1742,6 +1864,9 @@ class PostApprovalComplianceService
             POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => [
                 'applicantSignature.signatureUpload' => 'applicant-signature',
                 'coMakerSignature.signatureUpload' => 'applicant-signature',
+            ],
+            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => [
+                'fundReleaseEvidence.releaseAttachment' => 'supporting-upload',
             ],
         ];
     }
@@ -1992,6 +2117,25 @@ class PostApprovalComplianceService
                     [
                         'title' => 'Verification',
                         'description' => 'Reviewer verification name, title, date, remarks, and signature remain staff-only in the review workflow.',
+                    ],
+                ],
+            ],
+            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => [
+                'title' => 'Proof of Fund Release',
+                'summary' => 'Upload any attachment that proves the SMART LEAP fund was released. This is the final requirement before beneficiary activation.',
+                'helpText' => 'You remain an applicant until CSWDD verifies the uploaded proof of fund release. Upload the best available supporting attachment, then submit it for review.',
+                'interactive' => true,
+                'applicantSections' => [
+                    [
+                        'id' => 'fundReleaseEvidence',
+                        'title' => 'Proof of Fund Release',
+                        'description' => 'Upload any attachment that proves the SMART LEAP fund was released. This serves as the final requirement before beneficiary activation.',
+                    ],
+                ],
+                'staffSections' => [
+                    [
+                        'title' => 'Final beneficiary activation check',
+                        'description' => 'Project Officers and Administrators verify this attachment last. The applicant remains in applicant status until this requirement is verified.',
                     ],
                 ],
             ],

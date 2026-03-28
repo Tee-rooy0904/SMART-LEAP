@@ -8,6 +8,8 @@ class BeneficiaryDashboardController extends Controller
 {
     public function show(): never
     {
-        $this->view('dashboards/beneficiary');
+        $this->view('dashboards/beneficiary', [
+            'authUser' => auth_user(),
+        ]);
     }
 }

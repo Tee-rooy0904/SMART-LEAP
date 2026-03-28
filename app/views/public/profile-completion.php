@@ -200,7 +200,7 @@
                         <h2>Required documents</h2>
                         <p class="panel-subtitle">PDF, PNG, or JPG only. Max 5 MB per file.</p>
                         <p class="panel-meta">
-                            <span>Required: <span id="docsTotalCountInline">3</span> documents (Valid ID, Health Certificate, Cedula)</span>
+                            <span>Required: <span id="docsTotalCountInline">3</span> required documents</span>
                             <span class="meta-sep">•</span>
                             <span class="meta-badge">Uploaded: <span id="docsUploadedCount">0</span>/<span id="docsTotalCountInline">3</span></span>
                         </p>

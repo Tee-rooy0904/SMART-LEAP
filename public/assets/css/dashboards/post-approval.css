@@ -761,6 +761,48 @@
     font: inherit;
 }
 
+.paper-table--govform {
+    background: #fff;
+    min-width: 0;
+}
+
+.paper-table--govform th,
+.paper-table--govform td {
+    border-color: #111;
+    padding: 8px 10px;
+    font-size: 0.9rem;
+}
+
+.paper-table--govform th {
+    background: transparent;
+    color: #111;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: none;
+}
+
+.paper-table__input--line {
+    border: 0;
+    border-bottom: 1px solid #111;
+    border-radius: 0;
+    padding: 2px 2px 3px;
+    background: transparent;
+}
+
+.paper-table__input--line:disabled {
+    background: transparent;
+    color: #111;
+}
+
+.paper-table__blank {
+    min-height: 22px;
+    border-bottom: 1px solid #111;
+}
+
+.center-text {
+    text-align: center;
+}
+
 .paper-table__input:disabled {
     background: rgba(241, 245, 249, 0.95);
     color: var(--slate-700);
@@ -848,6 +890,11 @@
     justify-items: center;
 }
 
+.paper-document--validation {
+    gap: 18px;
+    justify-items: center;
+}
+
 .paper-sheet--govform {
     width: 1100px;
     max-width: 100%;
@@ -927,8 +974,16 @@
     font-weight: 700;
 }
 
+.paper-sheet--validation {
+    min-height: 1420px;
+}
+
 .paper-line-grid--govform {
     gap: 12px 36px;
+}
+
+.paper-line-grid--validation-date {
+    grid-template-columns: minmax(320px, 440px);
 }
 
 .paper-page-subtitle--plain {
@@ -938,6 +993,309 @@
 .paper-gov-certification {
     line-height: 1.75;
     font-size: 16px;
+}
+
+.paper-validation-lines {
+    display: grid;
+    gap: 10px;
+}
+
+.paper-validation-name-row,
+.paper-validation-meta-row,
+.paper-validation-contact-row {
+    display: grid;
+    gap: 12px 20px;
+    align-items: end;
+}
+
+.paper-validation-name-row {
+    grid-template-columns: auto minmax(180px, 1fr) minmax(180px, 1fr) minmax(180px, 1fr);
+}
+
+.paper-validation-meta-row {
+    grid-template-columns: minmax(320px, 1fr) minmax(260px, 1fr);
+}
+
+.paper-validation-contact-row {
+    grid-template-columns: minmax(320px, 460px);
+}
+
+.paper-validation-label,
+.paper-validation-inline-label {
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.paper-table--validation {
+    min-width: 0;
+}
+
+.paper-table--validation th,
+.paper-table--validation td {
+    padding: 4px 8px;
+    font-size: 0.86rem;
+}
+
+.paper-table--validation .paper-table__choice {
+    text-align: center;
+    vertical-align: middle;
+}
+
+.paper-table__radio {
+    width: 14px;
+    height: 14px;
+    accent-color: #111;
+}
+
+.paper-validation-recommendation {
+    margin-top: 4px;
+}
+
+.paper-validation-lines-input {
+    width: 100%;
+    min-height: 88px;
+    border: 0;
+    border-radius: 0;
+    outline: 0;
+    box-shadow: none;
+    background: repeating-linear-gradient(to bottom, transparent 0, transparent 26px, #111 26px, #111 27px);
+    padding: 0 2px;
+    font: inherit;
+    line-height: 27px;
+    resize: none;
+    color: #111;
+}
+
+.paper-validation-lines-input:disabled {
+    background: repeating-linear-gradient(to bottom, transparent 0, transparent 26px, #111 26px, #111 27px);
+    color: #111;
+    -webkit-text-fill-color: #111;
+}
+
+.paper-page-section--validation-closing {
+    margin-top: 8px;
+}
+
+.paper-gov-certification--validation {
+    line-height: 2;
+}
+
+.paper-validation-signatures {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 56px;
+    margin-top: 44px;
+    align-items: end;
+}
+
+.paper-applicant-signature {
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+}
+
+.paper-signature-upload {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 132px;
+    padding: 7px 14px;
+    border: 1px solid #111;
+    border-radius: 0;
+    background: #fff;
+    color: #111;
+    cursor: pointer;
+    font-size: 14px;
+    line-height: 1.1;
+}
+
+.paper-signature-upload.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.paper-signature-upload span {
+    display: inline-block;
+}
+
+.paper-signature-upload__link {
+    font-size: 12px;
+    color: #444;
+    text-decoration: none;
+}
+
+.paper-applicant-signature__name {
+    min-width: 320px;
+    text-align: center;
+    font-size: 16px;
+}
+
+.paper-applicant-signature__line {
+    width: 100%;
+    border-bottom: 2px solid #111;
+}
+
+.paper-applicant-signature__label {
+    font-size: 15px;
+    text-align: center;
+}
+
+.paper-inline-choice {
+    display: inline-flex;
+    align-items: center;
+    gap: 16px;
+    margin: 0 6px;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.paper-inline-choice__item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.paper-inline-choice__item input[type="radio"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #111;
+    margin: 0;
+}
+
+.paper-validation-signature {
+    display: grid;
+    gap: 8px;
+    justify-items: center;
+}
+
+.paper-validation-signature__line {
+    min-height: 1px;
+    width: 100%;
+    border-bottom: 2px solid #111;
+}
+
+.paper-validation-signature__label {
+    font-size: 15px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.paper-sheet--govpage .top-strip {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.paper-sheet--govpage .logo-left {
+    width: 88px;
+    height: 88px;
+    object-fit: contain;
+}
+
+.paper-sheet--govpage .logo-right {
+    width: 102px;
+    height: 102px;
+    object-fit: contain;
+}
+
+.paper-sheet--govpage .gov-header {
+    flex: 1;
+    max-width: 760px;
+    padding-top: 2px;
+    font-family: Arial, Helvetica, sans-serif;
+    line-height: 1.12;
+}
+
+.paper-sheet--govpage .gov-header .small {
+    font-size: 17px;
+}
+
+.paper-sheet--govpage .gov-header .big {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+}
+
+.paper-sheet--govpage .gov-header .dept {
+    font-size: 16px;
+    font-weight: 700;
+    margin-top: 2px;
+}
+
+.paper-sheet--govpage .gov-header .addr {
+    font-size: 14px;
+    margin-top: 2px;
+}
+
+.paper-sheet--govpage .blue-bar {
+    height: 13px;
+    margin-top: 8px;
+    margin-left: -2px;
+    margin-right: 46px;
+    background: #0d63a8;
+    border-top: 1px solid #111;
+    border-bottom: 1px solid #111;
+}
+
+.paper-sheet--govpage .title-wrap {
+    text-align: center;
+    width: 100%;
+    margin-top: 28px;
+    margin-bottom: 30px;
+}
+
+.paper-sheet--govpage .title-main {
+    font-size: 19px;
+    font-weight: 700;
+    margin-bottom: 16px;
+    letter-spacing: 0;
+}
+
+.paper-sheet--govpage .title-sub {
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.2;
+}
+
+.paper-sheet--govpage .page-no {
+    text-align: center;
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 18px;
+    margin-bottom: 12px;
+}
+
+.paper-sheet--govpage .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    gap: 18px;
+    margin-top: auto;
+    padding-top: 32px;
+    border-bottom: 13px solid #0d63a8;
+    padding-bottom: 6px;
+}
+
+.paper-sheet--govpage .footer-left {
+    font-size: 14px;
+    line-height: 1.35;
+}
+
+.paper-sheet--govpage .footer-right {
+    text-align: right;
+    font-size: 12px;
+}
+
+.paper-sheet--govpage .footer-right img {
+    width: 150px;
+    display: block;
+    margin-left: auto;
+    object-fit: contain;
 }
 
 .paper-signature-table--compact .paper-signature-row {
@@ -3090,6 +3448,13 @@
         grid-template-columns: 1fr;
     }
 
+    .paper-validation-name-row,
+    .paper-validation-meta-row,
+    .paper-validation-contact-row,
+    .paper-validation-signatures {
+        grid-template-columns: 1fr;
+    }
+
     .span-2,
     .span-3 {
         grid-column: auto;
@@ -3274,5 +3639,203 @@
 @media (max-width: 720px) {
     .form-guidance-card__grid {
         grid-template-columns: 1fr;
+    }
+}
+
+.post-form-header-stack {
+    display: grid;
+    gap: 14px;
+    margin-bottom: 18px;
+}
+
+.post-form-toolbar--back {
+    margin-bottom: 0;
+}
+
+.post-form-page-header .dash-page__lead {
+    max-width: 720px;
+}
+
+.form-status-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.form-status-strip__item {
+    display: grid;
+    gap: 4px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    background: rgba(248, 250, 252, 0.82);
+    border: 1px solid rgba(15, 23, 42, 0.05);
+}
+
+.form-section-nav {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+}
+
+.form-section-nav__link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap;
+    padding: 10px 14px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    color: var(--slate-700);
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.guided-form-start,
+.guided-review-note {
+    display: grid;
+    gap: 10px;
+    padding: 16px 18px;
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.82);
+    border: 1px solid rgba(15, 23, 42, 0.05);
+}
+
+.guided-form-start__header,
+.guided-form-start__list,
+.guided-review-note p {
+    margin: 0;
+}
+
+.guided-form-start__list {
+    padding-left: 18px;
+    display: grid;
+    gap: 6px;
+}
+
+.guided-form-section {
+    display: grid;
+    gap: 14px;
+    padding: 18px;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.guided-form-section__header,
+.guided-form-section__body {
+    display: grid;
+    gap: 12px;
+}
+
+.guided-form-section__header h3,
+.guided-form-section__header p,
+.guided-form-section__summary span,
+.guided-form-section__summary small {
+    margin: 0;
+}
+
+.guided-form-section__summary {
+    display: grid;
+    gap: 4px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.guided-form-section__summary::-webkit-details-marker {
+    display: none;
+}
+
+.guided-form-section--accordion {
+    padding-top: 12px;
+}
+
+.guided-repeatable-stack {
+    display: grid;
+    gap: 12px;
+}
+
+.guided-repeatable-card {
+    display: grid;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 18px;
+    background: rgba(248, 250, 252, 0.86);
+    border: 1px solid rgba(15, 23, 42, 0.05);
+}
+
+.guided-repeatable-card__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.guided-checkbox-stack {
+    display: grid;
+    gap: 12px;
+}
+
+.upload-card--guided {
+    gap: 12px;
+    border-style: solid;
+}
+
+.upload-card__actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.upload-trigger {
+    position: relative;
+    overflow: hidden;
+}
+
+.upload-trigger .upload-input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.post-approval-form__actions--sticky {
+    position: sticky;
+    bottom: 16px;
+    z-index: 5;
+    padding: 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 18px 32px rgba(15, 23, 42, 0.12);
+}
+
+@media (max-width: 720px) {
+    .post-main {
+        padding-top: 14px;
+    }
+
+    .post-form-panel {
+        padding: 16px;
+    }
+
+    .form-status-strip {
+        grid-template-columns: 1fr;
+    }
+
+    .guided-form-section,
+    .guided-form-start,
+    .guided-review-note {
+        padding: 16px;
+        border-radius: 16px;
+    }
+
+    .upload-card__actions,
+    .post-approval-form__actions {
+        flex-direction: column;
+        align-items: stretch;
     }
 }

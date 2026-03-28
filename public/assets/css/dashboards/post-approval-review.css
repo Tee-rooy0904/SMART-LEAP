@@ -27,7 +27,7 @@ body.review-body--embedded {
 .review-shell {
     width: min(1400px, calc(100% - 32px));
     margin: 0 auto;
-    padding: 24px 0 40px;
+    padding: 18px 0 32px;
 }
 
 .review-header,
@@ -42,8 +42,8 @@ body.review-body--embedded {
     display: flex;
     justify-content: space-between;
     gap: 24px;
-    padding: 28px;
-    margin-bottom: 20px;
+    padding: 20px 22px;
+    margin-bottom: 16px;
 }
 
 .review-header.is-embedded {
@@ -84,8 +84,9 @@ body.review-body--embedded .review-queue {
 }
 
 .subtitle {
-    max-width: 840px;
+    max-width: 720px;
     color: var(--review-muted);
+    margin: 6px 0 0;
 }
 
 .review-user {
@@ -97,18 +98,18 @@ body.review-body--embedded .review-queue {
 
 .review-layout {
     display: grid;
-    gap: 20px;
+    gap: 16px;
 }
 
 .review-panel {
-    padding: 24px;
+    padding: 18px;
 }
 
 .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 14px;
-    margin-top: 18px;
+    gap: 10px;
+    margin-top: 12px;
 }
 
 .summary-grid article,
@@ -122,7 +123,7 @@ body.review-body--embedded .review-queue {
 }
 
 .summary-grid article {
-    padding: 16px;
+    padding: 12px 14px;
 }
 
 .summary-grid span,
@@ -136,8 +137,8 @@ body.review-body--embedded .review-queue {
 
 .summary-grid strong {
     display: block;
-    margin-top: 8px;
-    font-size: 1.8rem;
+    margin-top: 6px;
+    font-size: 1.55rem;
 }
 
 .section-head {
@@ -145,26 +146,26 @@ body.review-body--embedded .review-queue {
     justify-content: space-between;
     gap: 16px;
     align-items: flex-start;
-    margin-bottom: 18px;
+    margin-bottom: 14px;
 }
 
 .task-list {
     display: grid;
-    gap: 12px;
+    gap: 10px;
 }
 
 .task-card {
     width: 100%;
     text-align: left;
-    padding: 16px;
+    padding: 13px 14px;
     cursor: pointer;
     transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .task-card:hover,
 .task-card.is-active {
-    border-color: rgba(20, 83, 197, 0.35);
-    box-shadow: 0 14px 24px rgba(20, 83, 197, 0.08);
+    border-color: rgba(20, 83, 197, 0.42);
+    box-shadow: 0 16px 28px rgba(20, 83, 197, 0.12);
     transform: translateY(-1px);
 }
 
@@ -172,7 +173,7 @@ body.review-body--embedded .review-queue {
     display: flex;
     justify-content: space-between;
     gap: 12px;
-    margin-bottom: 10px;
+    margin-bottom: 8px;
 }
 
 .task-card__type {
@@ -185,8 +186,8 @@ body.review-body--embedded .review-queue {
     align-items: center;
     justify-content: center;
     border-radius: 999px;
-    padding: 6px 12px;
-    font-size: 0.85rem;
+    padding: 5px 10px;
+    font-size: 0.8rem;
     font-weight: 700;
     background: #edf3fb;
 }
@@ -206,8 +207,8 @@ body.review-body--embedded .review-queue {
 .applicant-card {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 12px;
-    margin-bottom: 18px;
+    gap: 10px;
+    margin-bottom: 14px;
 }
 
 .applicant-card.is-hidden,
@@ -224,7 +225,7 @@ body.review-body--embedded .review-queue {
 .workspace-columns {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 20px;
+    gap: 16px;
 }
 
 .workspace-columns--document {
@@ -253,13 +254,13 @@ body.review-body--embedded .review-queue {
 
 .workspace-sections {
     display: grid;
-    gap: 16px;
+    gap: 14px;
 }
 
 .review-section {
     border: 1px solid var(--review-border);
     border-radius: 18px;
-    padding: 18px;
+    padding: 16px;
     background: #fbfdff;
 }
 

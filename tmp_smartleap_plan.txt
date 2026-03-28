@@ -1,0 +1,154 @@
+System Development Proposal
+City Social Welfare and Development Department (CSWDD) Online Portal for the
+Sustainable Market and Techology Driven Livelihood and Employment Assistance Program
+(SMART LEAP) Applications and Remittances
+1. Problem Statement
+The manual application process for the SMART LEAP program is time-c nsuniog, inc i' limited in reach. Applicants face difficulties in accessing and submitting delays and potential exclusion from the program. The manual process also resuli€in errors;tlö documents, and increased administrative burden.
+• Inefficiency and Delay: Manual processing of SMART LEAP-related information causes delays in the delivery of program services and support to qualified individuals. The lack of real-time data access hampers timely decision-making, monitoring, and coordination among implementers.
+• Data Inaccuracy and Fragmentation: Inconsistent data entry and fragmented records result in inaccurate reporting and ineffective monitoring of livelihood assistance provided. The absence of an integrated database leads to duplication of records and misallocation of resources.
+• Lack of Transparency and Accountability: Without a centralized and accessible system, it is difficult for the CSWDD, Project Development Officers, Social Workers, and Administrators to track and evaluate the implementation and effectiveness of the SMART LEAP program. Beneficiaries have no clear way to verify the status of their applications or livelihood assistance received.
+• Limited Accessibility and Communication: Beneficiaries and stakeholders face difficulty in accessing information about the SMART LEAP program. Lack of a user-friendly platform for communication and feedback limits the ability to address concerns effectively.
+• Security and Privacy Risks: Paper-based records are vulnerable to loss, damage, and unauthorized access. Data privacy is not adequately safeguarded under the current system.
+2. Solution Statement
+Digitalizing the SMART LEAP Program Application Process:
+Implementing a digital application and remittance system for the SMART LEAP program will effectively address the challenges of the current manual process. By leveraging technology, we can create a more efficient, accessible, and transparent application process that benefits both applicants and program implementers.
+Key Solution Components:
+• Online Application Portal: Develop a user-friendly portal where applicants can submit forms, upload documents, and track application status.
+
+Benefits:
+• Increased Efficiency: Reduced manual processing time and improved productivity.
+• Improved Accessibility: Applicants can access and submit applications from anywhere, at any time. 	Enhanced Transparency: Clear guidelines and status updates improve transparency and accountability.
+• Better Data Management: Improved accuracy and consistency in data collection.
+3. Objectives
+• Improve Accessibility: Increase accessibility for applicants in remote or underserved areas, enabling them to apply from anywhere.
+• Streamline Application Process: Automate data collection, reduce manual errors, and improve processing efficiency.
+• Enhance Transparency: Provide clear guidelines, real-time status updates, and improved communication with applicants.
+• Increase Efficiency: Reduce processing time, improve productivity, and enable program administrators to focus on high-value tasks.
+• Improve Data Quality: Ensure accurate and complete data collection, reducing errors and inconsistencies.
+• Reduce Administrative Burden: Minimize manual paperwork, storage, and retrieval of documents.  Improve Applicant Experience: Provide a user-friendly application process, reducing frustration and increasing satisfaction.
+• Increase Program Reach: Expand the program's reach by making it more accessible and convenient for potential beneficiaries.
+By achieving these objectives, a digitalized SMART LEAP Program applications and remittances can improve the overall effectiveness and efficiency of the program, ultimately benefiting its target beneficiaries.
+4. Expected Outcomes
+• Increased Application Submissions: More applicants can submit applications, potentially increasing the program's reach and impact.
+• Improved Application Quality: Automated data collection and validation can reduce errors and improve data quality.
+• Faster Processing Times: Digital applications can be processed more quickly, reducing wait times for applicants.
+• Enhanced Transparency and Accountability: Clear guidelines and real-time status updates can improve transparency and accountability.
+
+5. Plan / Approach System Name:
+City Social Welfare and Development Department (CSWDD) Online Portal for Sustainable Market and
+Technology Driven Livelihood and Employment Assistance Program (SMART LEAP) Applications and Remittances
+System overview:
+The CSWDD-SMART LEAP is an initiative aimed at enhancing the data handling of beneficiaries served by CSWDD in Butuan City. By streamlining processes, improving data management, and increasing accessibility through an online portal, the system will empower CSWDD and certain stakeholders to provide timely and accurate reports whenever needed at the nearest convenience. It will include the following key features:
+• Client Profile Management: Digitized storage of client demographics, service history, and case notes.
+• Reports Dashboard: Dynamic generation of statistical reports by year, location, age group, gender, and service type.
+• User Access Levels: Secure logins with role-based permissions for data entry, editing, and viewing.
+To be filled by ProponentProcessList the Process of the system from end to finish. (Provide a flowchart)System Flow Description
+City Social Welfare and Development Department (CSWDD) Online Portal for Sustainable Market and Technology Driven Livelihood and Employment Assistance Program
+(SMART LEAP) Applications and Remittances follows a streamlined and structured flow designed to ensure the efficient processing, monitoring, and reporting of all clients served by CSWDD. This system enhances data management, facilitates seamless client tracking, and provides real-time insights for effective decision-making and service delivery.
+A. User Access and Authentication
+o Authorized CSWDD personnel log in through a secure login page using their assigned username and password.
+o The system checks user credentials and assigns roles (e.g., Administrator, Social Worker, Project Development Officer, Beneficiary) to control access levels.
+o Two-factor authentication (2FA) will be used to secure access.
+
+o Successful authentication leads users to their designated dashboard based on their role.
+Be Client Registration and Application of Qualified SMART LEAP Microenterprises
+0 Inputting the served clients of the programs and services of the Department. These entail basic personal information (full name, age, address, type of service, contact details, etc.) and other required demographic data.
+C. Data Storage and Organization
+a. All records will be stored in a secure centralized database.
+b. Data will be classified and organized by service type, beneficiary profile.
+c. The System can list all the data that is inputted in with a filter mechanism to narrow down results to a specific record.
+D. Visualization and Reporting
+0 The system transforms stored data into easy-to-understand visual formats such as: bar charts, pie chart, line graphs, summary tables
+d. CSWDD and stakeholders can generate reports on:
+ i. Total beneficiaries served per program ii. Client demographics (age groups, gender, location) iii. Assistance distribution by barangay iv. Users can generate standard reports or customize them based on specific needs,
+v. Export options are available for reports in formats such as PDF and Excel for documentation or presentation purposes.
+E. Monitoring and Evaluation o Feedback and Improvement:
+e. Users can provide continuous feedback through the platform.
+f. The system will be updated regularly based on user feedback and performance reviews.
+Summary of System Flow:
+1. Google Sign-in and Authentication Access
+2. Client Registration
+3. Data Storage and Organization Search and Retrieval
+4. Visualization and Reporting
+5. Feedback Collection* Performance Reporting -5 System ImprovementUser Accounts and RolesList all users involved and their corresponding capabilities.
+Admin:
+   • Can perform all the functions of the system
+   • Can add, remove, and edit users and user-roles Project Development Officer:
+   • Can add, update, and remove client and case information into the system Social Worker:
+   • Can update inputted data
+   • Can export reports Beneficiary:
+   • Have read-only access to the system for viewing reports and client data.To be filled by CICTD
+
+Prepared by:
+MARIA 	VARGAS, RSW
+Social We fa
+Recommending Approval:
+ENGR. DENNIS P. MALLONGA
+Acting Department Head
+Workstation (for users)• Computer must have installed:
+• Web browser (Preferably: Chrome or Edge)Estimated Timelinestart 3rd Quarter 2025PhaseTimelinePhase 1: Planning and DesignMonth 1Phase 2: System DevelopmentMonth 2-4Phase 3: Testing and ImplementationMonth 5Phase 4: Training and DeploymentMonth 6Phase 5: Monitoring & EvaluationYearlyReviewed by:
+GOLDA v. p 	, CESE
+CG 
+Approved by:
+ENGR. RONNIE VICENTE C. LAGNADA
+City Mayor
+Republic of the Philippines
+CITY GOVERNMENT OF BUTUAN
+	City Hall Building. J.P. Rosales Ave., 	Butuan City
+
+Republic of the Philippines
+CITY GOVERNMENT OF BUTUAN
+City Hall Building, J.P. Rosales Ave., Doongan, Butuan City
+
+Phone:
+Email.	cicto@butuan.gov.ph
+Website: http://www.butuan.gov.ph
+Scanned with
+CamScanner
+
+Phone:
+Email.	cicto@butuan.gov.ph
+Website: http://www.butuan.gov.ph
+Scanned with
+CamScanner
+
+Republic of the Philippines
+CITY GOVERNMENT OF BUTUAN
+City Hall Building, J.P. Rosales Ave., Doongan, Butuan City
+
+Phone:
+Email.	cicto@butuan.gov.ph
+Website: http://www.butuan.gov.ph
+Scanned with
+CamScanner
+
+Republic of the Philippines
+CITY GOVERNMENT OF BUTUAN
+City Hall Building, J.P. Rosales Ave., Doongan, Butuan City
+
+Republic of the Philippines
+CITY GOVERNMENT OF BUTUAN
+City Hall Building, J.P. Rosales Ave., Doongan, 
+
+Phone:
+	Email:	cicto@butuan.gov.ph
+Website: http://www.butuan.gov.ph
+Scanned with
+CamScanner
+
+Phone:
+	Email:	cicto@butuan.gov.ph
+Website: http://www.butuan.gov.ph
+Scanned with
+CamScanner
+
+Republic of the Philippines
+CITY GOVERNMENT OF BUTUAN
+City Hall Building, J.P. Rosales Ave., Doongan, Butuan City
+
+Phone:
+	Email:	cicto@butuan.gov.ph
+Website: http://www.butuan.gov.ph
+Scanned with
+CamScanner
+

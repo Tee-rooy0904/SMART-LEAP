@@ -5,18 +5,27 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP | Beneficiary Dashboard</title>
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/beneficiary.css">
+    <script>
+        window.SMARTLEAP_AUTH_USER = <?= json_encode($authUser ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+        window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+    </script>
 </head>
 <body>
     <div class="dashboard-shell">
-        <aside class="dash-sidebar" aria-label="Beneficiary navigation">
-            <div class="sidebar-brand">
-                <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="sidebar-logo">
-                <div class="sidebar-brand__copy">
-                    <strong class="sidebar-title">SMART LEAP</strong>
+        <aside class="dash-sidebar" id="appSidebar" aria-label="Beneficiary portal navigation">
+            <div class="sidebar-drawer__top">
+                <div class="sidebar-brand">
+                    <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="sidebar-logo">
+                    <div class="sidebar-brand__copy">
+                        <strong class="sidebar-title">SMART LEAP</strong>
+                    </div>
                 </div>
+                <button type="button" class="sidebar-drawer__close" id="sidebarClose" aria-label="Close navigation">
+                    <span aria-hidden="true">&times;</span>
+                </button>
             </div>
-
             <div class="sidebar-user">
                 <div class="sidebar-avatar" id="sidebarAvatar" aria-hidden="true">M</div>
                 <div class="sidebar-user__meta">
@@ -24,8 +33,6 @@
                     <span class="sidebar-user__biz" id="sidebarUserBusiness">Your livelihood</span>
                 </div>
             </div>
-            <button type="button" class="btn-outline sidebar-toggle" id="sidebarToggle">Menu</button>
-
             <nav class="sidebar-nav">
                 <a class="sidebar-link is-active" href="#overview">
                     <span class="sidebar-icon" aria-hidden="true">
@@ -65,15 +72,6 @@
                     </span>
                     <span>Repayments</span>
                 </a>
-                <a class="sidebar-link" href="#training-progress">
-                    <span class="sidebar-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" role="presentation">
-                            <path d="M3 9l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/>
-                            <path d="M7 11v5c0 1.66 2.91 3 5 3s5-1.34 5-3v-5" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </span>
-                    <span>Training</span>
-                </a>
                 <a class="sidebar-link" href="#support-feedback">
                     <span class="sidebar-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" role="presentation">
@@ -96,104 +94,142 @@
 
             <button type="button" class="btn-outline sidebar-logout" id="logoutButton">Logout</button>
         </aside>
-
+        <button type="button" class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true" tabindex="-1"></button>
+        <div class="portal-loader" id="portalLoader" aria-live="polite">
+            <div class="portal-loader__orb" aria-hidden="true"></div>
+            <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="" class="portal-loader__logo">
+            <strong class="portal-loader__title">SMART LEAP</strong>
+            <p class="portal-loader__copy" id="portalLoaderCopy">Loading your beneficiary portal...</p>
+        </div>
         <div class="dash-content">
-            <header class="dash-banner" aria-label="Beneficiary overview snapshot">
-                <div class="banner-profile">
-                    <div class="banner-avatar" id="bannerAvatar" aria-hidden="true">M</div>
-                    <div class="banner-copy">
-                        <p class="banner-eyebrow">Welcome back</p>
-                        <h1 class="banner-greeting" id="bannerGreeting">Hello, Beneficiary!</h1>
-                        <p class="banner-email" id="userEmail">you@gmail.com</p>
-                    </div>
+            <header class="mobile-topbar" aria-label="Beneficiary portal mobile navigation">
+                <div class="mobile-topbar__brand">
+                    <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="mobile-topbar__logo">
+                    <strong class="mobile-topbar__title">SMART LEAP</strong>
                 </div>
-                <ul class="banner-stats">
-                    <li>
-                        <span class="label" id="bannerLabelOutstanding">Outstanding balance</span>
-                        <strong id="bannerOutstanding">&#8369;0.00</strong>
-                    </li>
-                    <li>
-                        <span class="label" id="bannerLabelProgress">Repayment progress</span>
-                        <strong id="bannerProgress">0/24 months</strong>
-                    </li>
-                    <li>
-                        <span class="label" id="bannerLabelNextDue">Next due date</span>
-                        <strong id="bannerNextDue">--</strong>
-                    </li>
-                    <li>
-                        <span class="label" id="bannerLabelRate">Repayment rate</span>
-                        <strong id="bannerRate">0%</strong>
-                    </li>
-                </ul>
+                <button
+                    type="button"
+                    class="mobile-topbar__menu"
+                    id="sidebarToggle"
+                    aria-label="Open navigation"
+                    aria-controls="appSidebar"
+                    aria-expanded="false"
+                >
+                    <span class="mobile-topbar__menu-box" aria-hidden="true">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </span>
+                </button>
             </header>
-
             <main class="dash-main">
-                <section id="overview" class="panel dash-section" aria-labelledby="overviewHeading">
-                    <div class="panel-header">
-                        <h2 id="overviewHeading">Overview</h2>
-                        <p class="panel-subtitle">Status snapshots for your SMART LEAP account.</p>
+                <section id="overview" class="dash-page dash-page--home dash-section" aria-labelledby="overviewHeading">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Dashboard</p>
+                            <h2 id="overviewHeading">Beneficiary dashboard</h2>
+                            <p class="dash-page__lead">Review your repayment status, profile details, and support updates in one consistent workspace.</p>
+                        </div>
                     </div>
-                    <div class="overview-layout" data-role="beneficiary">
-                        <div class="overview-profile-card">
-                            <div class="overview-profile__meta">
-                                <h3 id="overviewName">Beneficiary name</h3>
-                                <p id="overviewBusiness">Business name</p>
-                                <p id="overviewEmail">email@example.com</p>
+                    <header class="dash-banner" aria-label="Beneficiary overview snapshot">
+                        <div class="banner-profile">
+                            <div class="banner-avatar" id="bannerAvatar" aria-hidden="true">M</div>
+                            <div class="banner-copy">
+                                <p class="banner-eyebrow">Welcome back</p>
+                                <h1 class="banner-greeting" id="bannerGreeting">Hello, Beneficiary!</h1>
+                                <p class="banner-email" id="userEmail">you@gmail.com</p>
                             </div>
-                            <div class="overview-profile__chip">Beneficiary</div>
                         </div>
-                        <div class="overview-progress-grid">
-                            <article class="overview-panel">
-                                <span class="overview-panel__label">Outstanding balance</span>
-                                <strong class="overview-panel__value" id="overviewOutstanding">&#8369;0.00</strong>
-                            </article>
-                            <article class="overview-panel">
-                                <span class="overview-panel__label">Repayment progress</span>
-                                <strong class="overview-panel__value" id="overviewProgress">0/24 months</strong>
-                            </article>
-                            <article class="overview-panel">
-                                <span class="overview-panel__label">Next due date</span>
-                                <strong class="overview-panel__value" id="overviewDue">--</strong>
-                            </article>
-                            <article class="overview-panel">
-                                <span class="overview-panel__label">Repayment rate</span>
-                                <strong class="overview-panel__value" id="overviewRate">0%</strong>
-                            </article>
-                            <button type="button" class="btn-primary overview-panel__action" id="overviewRepaymentsBtn">Go to Repayments</button>
+                        <ul class="banner-stats">
+                            <li>
+                                <span class="label" id="bannerLabelOutstanding">Outstanding balance</span>
+                                <strong id="bannerOutstanding">&#8369;0.00</strong>
+                            </li>
+                            <li>
+                                <span class="label" id="bannerLabelProgress">Repayment progress</span>
+                                <strong id="bannerProgress">0/24 months</strong>
+                            </li>
+                            <li>
+                                <span class="label" id="bannerLabelNextDue">Next due date</span>
+                                <strong id="bannerNextDue">--</strong>
+                            </li>
+                            <li>
+                                <span class="label" id="bannerLabelRate">Repayment rate</span>
+                                <strong id="bannerRate">0%</strong>
+                            </li>
+                        </ul>
+                    </header>
+                    <section class="panel dash-section panel--summary" aria-labelledby="beneficiaryOverviewWorkspaceHeading">
+                        <div class="panel-header">
+                            <h3 id="beneficiaryOverviewWorkspaceHeading">Overview</h3>
+                            <p class="panel-subtitle">Status snapshots for your SMART LEAP account.</p>
                         </div>
-                        <div class="overview-quick-actions">
-                            <h3>Quick actions</h3>
-                            <ul>
-                                <li id="overviewReminder">Upload OR for --</li>
-                                <li id="overviewTrainingAlert">Training session updates will appear here.</li>
-                                <li id="overviewSupport">Need help? Contact your PDO.</li>
-                            </ul>
+                        <div class="overview-layout" data-role="beneficiary">
+                            <div class="overview-profile-card">
+                                <div class="overview-profile__meta">
+                                    <h3 id="overviewName">Beneficiary name</h3>
+                                    <p id="overviewBusiness">Business name</p>
+                                    <p id="overviewEmail">email@example.com</p>
+                                </div>
+                                <div class="overview-profile__chip">Beneficiary</div>
+                            </div>
+                            <div class="overview-progress-grid">
+                                <article class="overview-panel">
+                                    <span class="overview-panel__label">Outstanding balance</span>
+                                    <strong class="overview-panel__value" id="overviewOutstanding">&#8369;0.00</strong>
+                                </article>
+                                <article class="overview-panel">
+                                    <span class="overview-panel__label">Repayment progress</span>
+                                    <strong class="overview-panel__value" id="overviewProgress">0/24 months</strong>
+                                </article>
+                                <article class="overview-panel">
+                                    <span class="overview-panel__label">Next due date</span>
+                                    <strong class="overview-panel__value" id="overviewDue">--</strong>
+                                </article>
+                                <article class="overview-panel">
+                                    <span class="overview-panel__label">Repayment rate</span>
+                                    <strong class="overview-panel__value" id="overviewRate">0%</strong>
+                                </article>
+                                <button type="button" class="btn-primary overview-panel__action" id="overviewRepaymentsBtn">Go to Repayments</button>
+                            </div>
+                            <div class="overview-quick-actions">
+                                <h3>Quick actions</h3>
+                                <ul>
+                                    <li id="overviewReminder">Upload OR for --</li>
+                                    <li id="overviewAccountAlert">Account updates will appear here.</li>
+                                    <li id="overviewSupport">Need help? Contact your PDO.</li>
+                                </ul>
+                            </div>
                         </div>
-                    </div>
-                    <div class="overview-grid" data-role="applicant">
-                        <article class="overview-card">
-                            <span class="overview-label">Account status</span>
-                            <strong class="overview-value" id="overviewStatus">Active</strong>
-                            <p class="overview-meta" id="overviewStatusNote">Repayment monitoring is ongoing.</p>
-                        </article>
-                        <article class="overview-card">
-                            <span class="overview-label">Training completion</span>
-                            <strong class="overview-value" id="overviewTrainingPercent">0%</strong>
-                            <p class="overview-meta" id="overviewTrainingNote">Awaiting next session schedule.</p>
-                        </article>
-                        <article class="overview-card">
-                            <span class="overview-label">Next repayment</span>
-                            <strong class="overview-value" id="overviewNextDue">--</strong>
-                            <p class="overview-meta" id="overviewNextDueNote">Upload monthly OR after payment.</p>
-                        </article>
-                    </div>
+                        <div class="overview-grid" data-role="applicant">
+                            <article class="overview-card">
+                                <span class="overview-label">Account status</span>
+                                <strong class="overview-value" id="overviewStatus">Active</strong>
+                                <p class="overview-meta" id="overviewStatusNote">Repayment monitoring is ongoing.</p>
+                            </article>
+                            <article class="overview-card">
+                                <span class="overview-label">Requirement progress</span>
+                                <strong class="overview-value" id="overviewRequirementsPercent">0/8</strong>
+                                <p class="overview-meta" id="overviewRequirementsNote">Continue submitting complete requirements.</p>
+                            </article>
+                            <article class="overview-card">
+                                <span class="overview-label">Next repayment</span>
+                                <strong class="overview-value" id="overviewNextDue">--</strong>
+                                <p class="overview-meta" id="overviewNextDueNote">Upload monthly OR after payment.</p>
+                            </article>
+                        </div>
+                    </section>
                 </section>
 
-                <section id="profile" class="panel dash-section" aria-labelledby="beneficiaryProfileHeading" data-role="beneficiary">
-                    <div class="panel-header">
-                        <h2 id="beneficiaryProfileHeading">Profile</h2>
-                        <p class="panel-subtitle">Update your profile details and verify your assigned PDO.</p>
+                <section id="profile" class="dash-page dash-section" aria-labelledby="beneficiaryProfileHeading" data-role="beneficiary">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Profile</p>
+                            <h2 id="beneficiaryProfileHeading">Beneficiary profile</h2>
+                            <p class="dash-page__lead">Update your profile details and verify your assigned PDO.</p>
+                        </div>
                     </div>
+                    <section class="panel dash-section profile-editor-workspace">
                     <div class="profile-card">
                         <div class="profile-photo">
                             <div class="profile-photo__frame">
@@ -239,13 +275,18 @@
                             </div>
                         </form>
                     </div>
+                    </section>
                 </section>
 
-                <section id="profile-editor" class="panel dash-section" aria-labelledby="profileHeading" data-role="applicant">
-                    <div class="panel-header">
-                        <h2 id="profileHeading">Profile editor</h2>
-                        <p class="panel-subtitle">Keep your personal information up to date for verification.</p>
+                <section id="profile-editor" class="dash-page dash-section" aria-labelledby="profileHeading" data-role="applicant">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Profile</p>
+                            <h2 id="profileHeading">Applicant profile editor</h2>
+                            <p class="dash-page__lead">Keep your personal information up to date for verification.</p>
+                        </div>
                     </div>
+                    <section class="panel dash-section profile-editor-workspace">
                     <form id="profileForm" class="form-grid">
                         <label class="form-field">
                             <span>Full name *</span>
@@ -267,13 +308,18 @@
                             <button type="submit" class="btn-primary">Save profile</button>
                         </div>
                     </form>
+                    </section>
                 </section>
 
-                <section id="requirements-progress" class="panel dash-section" aria-labelledby="requirementsHeading" data-role="applicant-extra">
-                    <div class="panel-header">
-                        <h2 id="requirementsHeading">Requirement progress</h2>
-                        <p class="panel-subtitle">Track which documents are complete, missing, or need revision.</p>
+                <section id="requirements-progress" class="dash-page dash-section" aria-labelledby="requirementsHeading" data-role="applicant-extra">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Application</p>
+                            <h2 id="requirementsHeading">Requirement progress</h2>
+                            <p class="dash-page__lead">Track which documents are complete, missing, or need revision.</p>
+                        </div>
                     </div>
+                    <section class="panel dash-section panel--summary">
                     <div class="requirements-progress">
                         <div class="requirements-progress__meta">
                             <strong id="requirementsProgressCount">0/8 requirements</strong>
@@ -289,27 +335,38 @@
                             <li class="empty">Requirement uploads will appear once reviewed.</li>
                         </ul>
                     </div>
+                    </section>
                 </section>
 
-                <section id="notifications-panel" class="panel dash-section" aria-labelledby="notificationsHeading" data-role="applicant-extra">
-                    <div class="panel-header">
-                        <h2 id="notificationsHeading">Notifications</h2>
-                        <p class="panel-subtitle">PDO messages, training reminders, and approval updates.</p>
+                <section id="notifications-panel" class="dash-page dash-section" aria-labelledby="notificationsHeading" data-role="applicant-extra">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Application</p>
+                            <h2 id="notificationsHeading">Notifications</h2>
+                            <p class="dash-page__lead">PDO messages, repayment reminders, and approval updates.</p>
+                        </div>
                     </div>
+                    <section class="panel dash-section panel--summary">
                     <ul class="notification-list" id="notificationList">
                         <li class="empty">No notifications yet.</li>
                     </ul>
+                    </section>
                 </section>
 
-                <section id="repayments" class="panel progress dash-section" aria-labelledby="progressHeading" data-role="beneficiary">
-                    <div class="panel-header">
-                        <div class="breadcrumb">Repayments</div>
-                        <h2 id="progressHeading">Repayments</h2>
-                        <p class="panel-subtitle">Track your repayment progress, receipts, and verification updates.</p>
+                <section id="repayments" class="dash-page dash-section" aria-labelledby="progressHeading" data-role="beneficiary">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Repayments</p>
+                            <h2 id="progressHeading">Repayment workspace</h2>
+                            <p class="dash-page__lead">Track your repayment progress, receipts, and verification updates.</p>
+                        </div>
                     </div>
                     <div class="repayments-stack">
-                        <div class="repayment-block">
-                            <h3>Repayment tracker</h3>
+                        <section class="panel dash-section panel--summary repayment-block" aria-labelledby="repaymentTrackerHeading">
+                            <div class="panel-header panel-header--compact">
+                                <h3 id="repaymentTrackerHeading">Repayment tracker</h3>
+                                <p class="panel-subtitle">Monitor verified months, pending receipts, and overdue follow-ups.</p>
+                            </div>
                             <div class="progress-body">
                                 <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                                     <div class="progress-bar__fill" id="progressFill"></div>
@@ -321,10 +378,13 @@
                                     <li><span class="dot overdue"></span><strong id="progressOverdue">0 overdue</strong></li>
                                 </ul>
                             </div>
-                        </div>
+                        </section>
 
-                        <div class="repayment-block repayment-actions" data-access="released">
-                            <h3>Actions</h3>
+                        <section class="panel dash-section panel--info repayment-block repayment-actions" data-access="released" aria-labelledby="repaymentActionsHeading">
+                            <div class="panel-header panel-header--compact">
+                                <h3 id="repaymentActionsHeading">Actions</h3>
+                                <p class="panel-subtitle">Submit receipts and keep your repayment records complete.</p>
+                            </div>
                             <div class="repayment-actions__grid">
                                 <div class="repayment-action-card">
                                     <h4>Upload receipt</h4>
@@ -368,9 +428,9 @@
                                     </ul>
                                 </div>
                             </div>
-                        </div>
+                        </section>
 
-                        <div class="repayment-block history repayment-history-block" aria-labelledby="historyHeading">
+                        <section class="panel dash-section panel--review repayment-block history repayment-history-block" aria-labelledby="historyHeading">
                             <div class="panel-header">
                                 <div class="breadcrumb">Repayments &gt; History</div>
                                 <h2 id="historyHeading">Repayment history</h2>
@@ -425,128 +485,20 @@
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
+                        </section>
                     </div>
                 </section>
 
-                <section id="training-progress" class="panel training dash-section training-overview" aria-labelledby="trainingHeading">
-                    <div class="panel-header">
-                        <h2 id="trainingHeading">Training progress</h2>
-                        <p class="panel-subtitle">Monitor modules completed, upcoming sessions, and attendance requirements.</p>
-                    </div>
-                    <div class="training-completed-card is-hidden" id="trainingCompletedCard">
-                        <h3>Training completed</h3>
-                        <p id="trainingCompletedMeta">8 modules completed</p>
-                        <div class="training-completed__stats">
-                            <span id="trainingCompletedAttendance">Attendance: 100%</span>
-                            <span id="trainingCertificateIssued">Certificate issued on --</span>
-                        </div>
-                        <button type="button" class="btn-outline" id="trainingViewCertificate">View certificate</button>
-                    </div>
-                    <div class="training-tabs" id="trainingTabs" role="tablist" aria-label="Training views">
-                        <button class="training-tab is-active" type="button" data-training-tab="schedule" role="tab" aria-selected="true">Sessions</button>
-                        <button class="training-tab" type="button" data-training-tab="attendance" role="tab" aria-selected="false">Attendance</button>
-                    </div>
-                    <div class="training-dashboard">
-                        <div class="training-dashboard__primary">
-                            <div class="training-ring" id="trainingRing" style="--progress: 0deg;">
-                                <div class="training-ring__value" id="trainingPercent">0%</div>
-                                <div class="training-ring__label">complete</div>
-                            </div>
-                            <p class="training-dashboard__hint" id="trainingSummaryNote">Training assignments will appear here once scheduled.</p>
-                        </div>
-                        <div class="training-dashboard__stats">
-                            <div class="training-stat">
-                                <span class="training-stat__label">Completed</span>
-                                <span class="training-stat__value" id="trainingCompletedCount">0 modules</span>
-                            </div>
-                            <div class="training-stat">
-                                <span class="training-stat__label">Upcoming</span>
-                                <span class="training-stat__value" id="trainingPendingCount">0 modules</span>
-                            </div>
-                            <div class="training-stat">
-                                <span class="training-stat__label">Absent</span>
-                                <span class="training-stat__value" id="trainingAbsenceCount">0</span>
-                            </div>
-                            <div class="training-stat">
-                                <span class="training-stat__label">Excused</span>
-                                <span class="training-stat__value" id="trainingExcusedCount">0</span>
-                            </div>
-                        </div>
-                        <div class="training-dashboard__next is-empty" id="trainingNextCard">
-                            <h3>Next session</h3>
-                            <p class="training-next__title" id="trainingNextTitle">No upcoming session scheduled</p>
-                            <p class="training-next__meta" id="trainingNextMeta"></p>
+                <section id="support-feedback" class="dash-page dash-section" aria-label="Support and feedback">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Support</p>
+                            <h2 id="supportPageHeading">Support and feedback</h2>
+                            <p class="dash-page__lead">Reach your project officer, review reminders, and send feedback in the same consistent workspace.</p>
                         </div>
                     </div>
-                    <div class="training-progress-track">
-                        <div class="training-progress-fill" id="trainingProgressFill"></div>
-                    </div>
-                    <p class="training-progress-meta" id="trainingProgressMeta">0% attendance completion</p>
-                    <span class="training-streak" id="trainingStreakBadge">Streak: 0</span>
-                    <div class="training-checklist">
-                        <h3>Training requirement checklist</h3>
-                        <ul id="trainingChecklist">
-                            <li class="empty">Training checklist will appear once sessions are scheduled.</li>
-                        </ul>
-                    </div>
-                    <div class="training-panel is-active" data-training-panel="schedule" role="tabpanel">
-                        <div class="panel-header">
-                            <h2 id="scheduleHeading">Upcoming sessions</h2>
-                            <p class="panel-subtitle">Dates, venues, and facilitators for your SMART LEAP cohort.</p>
-                        </div>
-                        <div class="training-schedule-grid" id="trainingScheduleGrid">
-                            <article class="training-schedule-empty">No training schedule yet. Coordinate with your project officer.</article>
-                        </div>
-                    </div>
-                    <div class="training-panel" data-training-panel="attendance" role="tabpanel">
-                        <div class="panel-header">
-                            <h2 id="attendanceHeading">Attendance log</h2>
-                            <p class="panel-subtitle">Monitor attendance tags set by your project officer.</p>
-                        </div>
-                        <div class="attendance-metrics" role="list">
-                            <article class="attendance-metric" role="listitem">
-                                <span class="attendance-metric__label">Present</span>
-                                <strong class="attendance-metric__value" id="attendancePresentCount">0</strong>
-                            </article>
-                            <article class="attendance-metric" role="listitem">
-                                <span class="attendance-metric__label">Late</span>
-                                <strong class="attendance-metric__value" id="attendanceLateCount">0</strong>
-                            </article>
-                            <article class="attendance-metric" role="listitem">
-                                <span class="attendance-metric__label">Absent</span>
-                                <strong class="attendance-metric__value" id="attendanceAbsentCount">0</strong>
-                            </article>
-                            <article class="attendance-metric" role="listitem">
-                                <span class="attendance-metric__label">Upcoming</span>
-                                <strong class="attendance-metric__value" id="attendancePendingCount">0</strong>
-                            </article>
-                        </div>
-                        <div class="table-wrapper table-wrapper--soft">
-                            <table class="attendance-table">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">Session</th>
-                                        <th scope="col">Date &amp; Time</th>
-                                        <th scope="col">Status</th>
-                                        <th scope="col">Remarks</th>
-                                        <th scope="col">Proof</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="attendanceTableBody">
-                                    <tr class="empty">
-                                        <td colspan="5">Attendance updates will appear once sessions begin.</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </section>
-
-
-
-                <section id="support-feedback" class="insight-grid dash-section" aria-label="Support and feedback">
-                    <div class="panel feedback" aria-labelledby="feedbackHeading">
+                    <div class="insight-grid">
+                    <section class="panel dash-section panel--summary feedback" aria-labelledby="feedbackHeading">
                         <div class="panel-header">
                             <h2 id="feedbackHeading">Send feedback</h2>
                             <p class="panel-subtitle">Tell us how SMART LEAP can better support your livelihood.</p>
@@ -563,9 +515,9 @@
                         <ul id="feedbackList" class="feedback-list">
                             <li class="empty">No feedback submitted yet.</li>
                         </ul>
-                    </div>
+                    </section>
 
-                    <div class="panel support" aria-labelledby="supportHeading">
+                    <section class="panel dash-section panel--support support" aria-labelledby="supportHeading">
                         <div class="support-card">
                             <div class="support-card__header panel-header">
                                 <h2 id="supportHeading">Need assistance?</h2>
@@ -592,42 +544,27 @@
                                 <ul class="support-card__list support-card__list--bullets">
                                     <li>Upload OR within 3 days of payment.</li>
                                     <li>Bring the physical OR to CSWDD for verification.</li>
-                                    <li>Coordinate with your PDO for training updates.</li>
+                                    <li>Coordinate with your PDO for account and repayment updates.</li>
                                 </ul>
                             </section>
                         </div>
+                    </section>
                     </div>
                 </section>
 
-                <section id="activity-log" class="panel audit dash-section" aria-labelledby="auditHeading" data-role="beneficiary">
-                    <div class="panel-header">
-                        <h2 id="auditHeading">Activity log</h2>
-                        <p class="panel-subtitle">Recent actions recorded by project officers and administrators.</p>
-                    </div>
-                    <ul id="auditList" class="audit-list">
-                        <li class="empty">No activity yet.</li>
-                    </ul>
-                </section>
-                <section id="training-certificate" class="panel dash-section training-certificate" aria-labelledby="certificateHeading" data-role="applicant-extra">
-                    <div class="panel-header">
-                        <h2 id="certificateHeading">Certificate of completion</h2>
-                        <p class="panel-subtitle">Upload your training certificate after completing all sessions.</p>
-                    </div>
-                    <div class="certificate-grid">
-                        <div class="certificate-status">
-                            <strong id="certificateStatus">Not available</strong>
-                            <p id="certificateNote">Complete all training sessions to unlock certificate uploads.</p>
+                <section id="activity-log" class="dash-page dash-section" aria-labelledby="auditHeading" data-role="beneficiary">
+                    <div class="dash-page__header">
+                        <div>
+                            <p class="dash-page__eyebrow">Activity</p>
+                            <h2 id="auditHeading">Activity log</h2>
+                            <p class="dash-page__lead">Recent actions recorded by project officers and administrators.</p>
                         </div>
-                        <form id="certificateForm" class="form-grid certificate-form">
-                            <label class="form-field">
-                                <span>Certificate file (PDF / PNG / JPG) *</span>
-                                <input type="file" id="certificateFile" name="certificateFile" accept=".pdf,.png,.jpg,.jpeg" required>
-                            </label>
-                            <div class="form-actions full">
-                                <button type="submit" class="btn-primary" id="certificateSubmit">Upload certificate</button>
-                            </div>
-                        </form>
                     </div>
+                    <section class="panel dash-section panel--review">
+                        <ul id="auditList" class="audit-list">
+                            <li class="empty">No activity yet.</li>
+                        </ul>
+                    </section>
                 </section>
             </main>
 
@@ -638,8 +575,6 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true"></div>
 
-    <script src="<?= $baseUrl ?>/assets/js/modules/training-shared.js" defer></script>
-    <script src="<?= $baseUrl ?>/assets/js/modules/training-components.js" defer></script>
     <script src="<?= $baseUrl ?>/assets/js/dashboards/beneficiary.js" defer></script>
 </body>
 </html>

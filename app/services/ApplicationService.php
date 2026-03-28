@@ -20,6 +20,7 @@ class ApplicationService
         POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => 'Mungkahing Proyekto',
         POST_APPROVAL_TASK_BUSINESS_PLAN => 'Business Plan',
         POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => 'Buhat sa Pagpanumpa',
+        POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => 'Proof of Fund Release',
     ];
 
     private ?array $initialRequirementFileColumns = null;
@@ -229,6 +230,7 @@ class ApplicationService
         $detail['formRequirements'] = $this->fetchFormRequirementsForApplication($applicationId, $actor);
         $detail['comments'] = $this->fetchApplicationComments($applicationId);
         $detail['history'] = $this->fetchApplicationHistory($applicationId);
+        $detail['assessment'] = $this->fetchLatestAssessment($applicationId);
         $detail['trainingReadiness'] = $this->fetchTrainingReadiness($this->findApplicantProfileIdForApplication($applicationId));
         $detail['approvalReadiness'] = $this->buildApprovalReadiness(
             $detail['requirements'],
@@ -345,6 +347,12 @@ class ApplicationService
         if ($decision === 'approve' && is_array($detail) && !($detail['approvalReadiness']['canApprove'] ?? false)) {
             return ['ok' => false, 'errors' => ['decision' => 'This applicant is not yet ready for approval.']];
         }
+        if ($nextStatus === APPLICATION_STATUS_APPROVED_FOR_TRAINING) {
+            $assessment = $detail['assessment'] ?? null;
+            if (!is_array($assessment) || strtolower((string) ($assessment['recommendation'] ?? '')) !== 'approved') {
+                return ['ok' => false, 'errors' => ['decision' => 'A completed approved assessment is required before training approval.']];
+            }
+        }
 
         if (in_array($nextStatus, [APPLICATION_STATUS_REJECTED, APPLICATION_STATUS_FLAGGED, APPLICATION_STATUS_NEEDS_CORRECTION], true)
             && $remarks === '') {
@@ -369,7 +377,7 @@ class ApplicationService
                 }
             }
 
-            if ($nextStatus === APPLICATION_STATUS_APPROVED) {
+            if (in_array($nextStatus, [APPLICATION_STATUS_APPROVED, APPLICATION_STATUS_APPROVED_FOR_TRAINING], true)) {
                 (new BeneficiaryProfileService())->ensureForApplicantProfile($this->findApplicantProfileIdForApplication($applicationId));
             }
 
@@ -393,6 +401,136 @@ class ApplicationService
             ]);
 
             return ['ok' => false, 'errors' => ['general' => 'Unable to update application status right now.']];
+        }
+
+        return ['ok' => true, 'application' => $this->getApplicationDetail($applicationId, $actor)];
+    }
+
+    public function saveAssessment(int $applicationId, array $payload, array $actor): array
+    {
+        $application = $this->findApplicationRow($applicationId, $actor);
+        if ($application === null) {
+            return ['ok' => false, 'errors' => ['applicationId' => 'Application not found or not accessible.']];
+        }
+
+        $role = strtolower((string) ($actor['role'] ?? ''));
+        if (!str_contains($role, 'social') && !str_contains($role, 'admin') && !str_contains($role, 'project')) {
+            return ['ok' => false, 'errors' => ['general' => 'You are not allowed to submit eligibility assessments.']];
+        }
+
+        $recommendation = strtolower(trim((string) ($payload['recommendation'] ?? '')));
+        $allowedRecommendations = ['approved', 'needs_correction', 'rejected'];
+        if (!in_array($recommendation, $allowedRecommendations, true)) {
+            return ['ok' => false, 'errors' => ['recommendation' => 'Select a valid assessment recommendation.']];
+        }
+
+        $criteria = [
+            'identityResidency' => trim((string) ($payload['identityResidency'] ?? '')),
+            'documentValidity' => trim((string) ($payload['documentValidity'] ?? '')),
+            'livelihoodConfirmation' => trim((string) ($payload['livelihoodConfirmation'] ?? '')),
+            'programFit' => trim((string) ($payload['programFit'] ?? '')),
+            'readinessCommitment' => trim((string) ($payload['readinessCommitment'] ?? '')),
+        ];
+        foreach ($criteria as $field => $value) {
+            if (!in_array(strtolower($value), ['pass', 'needs clarification', 'fail'], true)) {
+                return ['ok' => false, 'errors' => [$field => 'Assessment criteria must be marked as Pass, Needs Clarification, or Fail.']];
+            }
+        }
+
+        $remarks = trim((string) ($payload['remarks'] ?? ''));
+        if ($remarks === '') {
+            return ['ok' => false, 'errors' => ['remarks' => 'Assessment remarks are required.']];
+        }
+
+        $this->ensureAssessmentTable();
+        $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
+        $directWorkerUserId = (int) ($payload['directWorkerUserId'] ?? ($actor['id'] ?? 0));
+        $certifyingOfficerUserId = (int) ($payload['certifyingOfficerUserId'] ?? ($actor['id'] ?? 0));
+        $directWorkerName = trim((string) ($payload['directWorkerName'] ?? $this->resolveUserName($directWorkerUserId)));
+        $certifyingOfficerName = trim((string) ($payload['certifyingOfficerName'] ?? $this->resolveUserName($certifyingOfficerUserId)));
+        $nextStatus = match ($recommendation) {
+            'approved' => APPLICATION_STATUS_APPROVED_FOR_TRAINING,
+            'needs_correction' => APPLICATION_STATUS_NEEDS_CORRECTION,
+            'rejected' => APPLICATION_STATUS_REJECTED,
+        };
+
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare(
+                'INSERT INTO application_assessments (
+                    application_id,
+                    assessor_user_id,
+                    assessor_staff_profile_id,
+                    identity_residency_status,
+                    document_validity_status,
+                    livelihood_confirmation_status,
+                    program_fit_status,
+                    readiness_commitment_status,
+                    recommendation,
+                    remarks,
+                    direct_worker_user_id,
+                    direct_worker_name,
+                    certifying_officer_user_id,
+                    certifying_officer_name
+                ) VALUES (
+                    :application_id,
+                    :assessor_user_id,
+                    :assessor_staff_profile_id,
+                    :identity_residency_status,
+                    :document_validity_status,
+                    :livelihood_confirmation_status,
+                    :program_fit_status,
+                    :readiness_commitment_status,
+                    :recommendation,
+                    :remarks,
+                    :direct_worker_user_id,
+                    :direct_worker_name,
+                    :certifying_officer_user_id,
+                    :certifying_officer_name
+                )'
+            )->execute([
+                'application_id' => $applicationId,
+                'assessor_user_id' => (int) $actor['id'],
+                'assessor_staff_profile_id' => $staffProfileId,
+                'identity_residency_status' => $criteria['identityResidency'],
+                'document_validity_status' => $criteria['documentValidity'],
+                'livelihood_confirmation_status' => $criteria['livelihoodConfirmation'],
+                'program_fit_status' => $criteria['programFit'],
+                'readiness_commitment_status' => $criteria['readinessCommitment'],
+                'recommendation' => $recommendation,
+                'remarks' => $remarks,
+                'direct_worker_user_id' => $directWorkerUserId > 0 ? $directWorkerUserId : null,
+                'direct_worker_name' => $directWorkerName !== '' ? $directWorkerName : null,
+                'certifying_officer_user_id' => $certifyingOfficerUserId > 0 ? $certifyingOfficerUserId : null,
+                'certifying_officer_name' => $certifyingOfficerName !== '' ? $certifyingOfficerName : null,
+            ]);
+
+            (new ApplicationStatusService())->transition($applicationId, $nextStatus, (int) $actor['id'], $remarks, true);
+            if ($nextStatus === APPLICATION_STATUS_APPROVED_FOR_TRAINING) {
+                (new BeneficiaryProfileService())->ensureForApplicantProfile($this->findApplicantProfileIdForApplication($applicationId));
+            }
+
+            (new AuditLogService())->record(
+                (int) $actor['id'],
+                'application.assessed',
+                'application_assessments',
+                (int) $pdo->lastInsertId(),
+                ['application_id' => $applicationId, 'recommendation' => $recommendation]
+            );
+
+            $pdo->commit();
+        } catch (\Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+
+            log_database_query_failure('application.save_assessment', $exception, [
+                'application_id' => $applicationId,
+                'assessor_user_id' => (int) ($actor['id'] ?? 0),
+            ]);
+
+            return ['ok' => false, 'errors' => ['general' => 'Unable to save the assessment right now.']];
         }
 
         return ['ok' => true, 'application' => $this->getApplicationDetail($applicationId, $actor)];
@@ -805,8 +943,8 @@ class ApplicationService
              INNER JOIN beneficiary_profiles ON beneficiary_profiles.id = post_approval_tasks.beneficiary_profile_id'
              . $scopeJoin .
             ' WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
-              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
-             ORDER BY FIELD(post_approval_task_types.code, "availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa"), post_approval_tasks.id ASC'
+              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
+             ORDER BY FIELD(post_approval_task_types.code, "availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence"), post_approval_tasks.id ASC'
         );
         $statement->execute($params);
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -820,6 +958,7 @@ class ApplicationService
                 'type' => 'form',
                 'typeLabel' => 'Fill-up Form Requirement',
                 'isRequired' => true,
+                'gatesApproval' => (string) $row['code'] !== POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
                 'status' => $status,
                 'reviewerRemarks' => $row['reviewer_remarks'] ?? null,
                 'submittedAt' => $row['applicant_submitted_at'] ?? null,
@@ -871,7 +1010,9 @@ class ApplicationService
             $insertTask->execute([
                 'beneficiary_profile_id' => $beneficiaryProfileId,
                 'task_type_id' => $typeMap[$code],
-                'status' => POST_APPROVAL_STATUS_UNLOCKED,
+                'status' => $code === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE
+                    ? POST_APPROVAL_STATUS_LOCKED
+                    : POST_APPROVAL_STATUS_UNLOCKED,
                 'assigned_by_user_id' => $actorUserId > 0 ? $actorUserId : null,
             ]);
         }
@@ -936,6 +1077,9 @@ class ApplicationService
         $verifiedForms = 0;
         $pendingForms = [];
         foreach ($formRequirements as $requirement) {
+            if (!($requirement['gatesApproval'] ?? true)) {
+                continue;
+            }
             $status = strtolower((string) ($requirement['status'] ?? POST_APPROVAL_STATUS_UNLOCKED));
             $label = (string) ($requirement['label'] ?? 'Form requirement');
             if (in_array($status, ['verified'], true)) {
@@ -1000,6 +1144,95 @@ class ApplicationService
             'canApprove' => $blockers === [],
             'overallStatus' => $overallStatus,
         ];
+    }
+
+    private function fetchLatestAssessment(int $applicationId): ?array
+    {
+        $this->ensureAssessmentTable();
+
+        try {
+            $statement = db()->prepare(
+                'SELECT
+                    application_assessments.id,
+                    application_assessments.identity_residency_status,
+                    application_assessments.document_validity_status,
+                    application_assessments.livelihood_confirmation_status,
+                    application_assessments.program_fit_status,
+                    application_assessments.readiness_commitment_status,
+                    application_assessments.recommendation,
+                    application_assessments.remarks,
+                    application_assessments.direct_worker_name,
+                    application_assessments.certifying_officer_name,
+                    application_assessments.created_at,
+                    users.full_name AS assessor_name
+                 FROM application_assessments
+                 INNER JOIN users ON users.id = application_assessments.assessor_user_id
+                 WHERE application_assessments.application_id = :application_id
+                 ORDER BY application_assessments.id DESC
+                 LIMIT 1'
+            );
+            $statement->execute(['application_id' => $applicationId]);
+            $row = $statement->fetch(PDO::FETCH_ASSOC);
+        } catch (\Throwable $exception) {
+            log_database_query_failure('application.fetch_assessment', $exception, ['application_id' => $applicationId]);
+            return null;
+        }
+
+        if (!is_array($row)) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $row['id'],
+            'identityResidency' => $row['identity_residency_status'],
+            'documentValidity' => $row['document_validity_status'],
+            'livelihoodConfirmation' => $row['livelihood_confirmation_status'],
+            'programFit' => $row['program_fit_status'],
+            'readinessCommitment' => $row['readiness_commitment_status'],
+            'recommendation' => $row['recommendation'],
+            'remarks' => $row['remarks'],
+            'assessorName' => $row['assessor_name'],
+            'directWorkerName' => $row['direct_worker_name'],
+            'certifyingOfficerName' => $row['certifying_officer_name'],
+            'createdAt' => $row['created_at'],
+        ];
+    }
+
+    private function ensureAssessmentTable(): void
+    {
+        static $ensured = false;
+        if ($ensured) {
+            return;
+        }
+
+        db()->exec(
+            'CREATE TABLE IF NOT EXISTS application_assessments (
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                application_id BIGINT UNSIGNED NOT NULL,
+                assessor_user_id BIGINT UNSIGNED NOT NULL,
+                assessor_staff_profile_id BIGINT UNSIGNED NULL,
+                identity_residency_status VARCHAR(40) NOT NULL,
+                document_validity_status VARCHAR(40) NOT NULL,
+                livelihood_confirmation_status VARCHAR(40) NOT NULL,
+                program_fit_status VARCHAR(40) NOT NULL,
+                readiness_commitment_status VARCHAR(40) NOT NULL,
+                recommendation VARCHAR(40) NOT NULL,
+                remarks TEXT NOT NULL,
+                direct_worker_user_id BIGINT UNSIGNED NULL,
+                direct_worker_name VARCHAR(160) NULL,
+                certifying_officer_user_id BIGINT UNSIGNED NULL,
+                certifying_officer_name VARCHAR(160) NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                CONSTRAINT fk_application_assessments_application FOREIGN KEY (application_id) REFERENCES applications(id),
+                CONSTRAINT fk_application_assessments_assessor_user FOREIGN KEY (assessor_user_id) REFERENCES users(id),
+                CONSTRAINT fk_application_assessments_assessor_staff FOREIGN KEY (assessor_staff_profile_id) REFERENCES staff_profiles(id),
+                CONSTRAINT fk_application_assessments_direct_worker FOREIGN KEY (direct_worker_user_id) REFERENCES users(id),
+                CONSTRAINT fk_application_assessments_certifying_officer FOREIGN KEY (certifying_officer_user_id) REFERENCES users(id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+        );
+
+        $ensured = true;
     }
 
     private function initialRequirementFileColumns(): array
@@ -1205,13 +1438,19 @@ class ApplicationService
             if ($application['status'] === APPLICATION_STATUS_CHECKED_BY_PDO) {
                 $summary['checkedByPdo']++;
             }
+            if (in_array($application['status'], [APPLICATION_STATUS_REQUIREMENTS_VERIFIED, APPLICATION_STATUS_FOR_ASSESSMENT], true)) {
+                $summary['checkedByPdo']++;
+            }
             if ($application['status'] === APPLICATION_STATUS_APPROVED) {
+                $summary['approved']++;
+            }
+            if ($application['status'] === APPLICATION_STATUS_APPROVED_FOR_TRAINING) {
                 $summary['approved']++;
             }
             if (in_array($application['status'], [APPLICATION_STATUS_FLAGGED, APPLICATION_STATUS_NEEDS_CORRECTION], true)) {
                 $summary['needsAttention']++;
             }
-            if (in_array($application['status'], [APPLICATION_STATUS_SUBMITTED, APPLICATION_STATUS_UNDER_REVIEW], true)) {
+            if (in_array($application['status'], [APPLICATION_STATUS_SUBMITTED, APPLICATION_STATUS_UNDER_REVIEW, APPLICATION_STATUS_FOR_ASSESSMENT], true)) {
                 $summary['pending']++;
             }
         }
@@ -1346,11 +1585,12 @@ class ApplicationService
     private function resolveNextStatus(string $decision, string $actorRole): ?string
     {
         return match ($decision) {
-            'approve' => str_contains($actorRole, 'project') ? APPLICATION_STATUS_CHECKED_BY_PDO : APPLICATION_STATUS_APPROVED,
+            'approve' => str_contains($actorRole, 'project') ? APPLICATION_STATUS_REQUIREMENTS_VERIFIED : APPLICATION_STATUS_APPROVED_FOR_TRAINING,
             'reject' => APPLICATION_STATUS_REJECTED,
             'flag' => APPLICATION_STATUS_FLAGGED,
             'needs_correction' => APPLICATION_STATUS_NEEDS_CORRECTION,
             'start_review' => APPLICATION_STATUS_UNDER_REVIEW,
+            'for_assessment' => APPLICATION_STATUS_FOR_ASSESSMENT,
             default => null,
         };
     }
@@ -1362,12 +1602,29 @@ class ApplicationService
             'submitted' => APPLICATION_STATUS_SUBMITTED,
             'under review', 'under_review', 'underreview' => APPLICATION_STATUS_UNDER_REVIEW,
             'checked by pdo', 'checked_by_pdo', 'checkedbypdo' => APPLICATION_STATUS_CHECKED_BY_PDO,
+            'requirements verified', 'requirements_verified', 'requirementsverified' => APPLICATION_STATUS_REQUIREMENTS_VERIFIED,
+            'for assessment', 'for_assessment', 'forassessment' => APPLICATION_STATUS_FOR_ASSESSMENT,
             'approved' => APPLICATION_STATUS_APPROVED,
+            'approved for training', 'approved_for_training', 'approvedfortraining' => APPLICATION_STATUS_APPROVED_FOR_TRAINING,
             'rejected' => APPLICATION_STATUS_REJECTED,
             'flagged' => APPLICATION_STATUS_FLAGGED,
             'needs correction', 'needs_correction', 'needscorrection' => APPLICATION_STATUS_NEEDS_CORRECTION,
+            'training ongoing', 'training_ongoing', 'trainingongoing' => APPLICATION_STATUS_TRAINING_ONGOING,
+            'completed' => APPLICATION_STATUS_COMPLETED,
             default => $status,
         };
+    }
+
+    private function resolveUserName(int $userId): string
+    {
+        if ($userId < 1) {
+            return '';
+        }
+
+        $statement = db()->prepare('SELECT full_name FROM users WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $userId]);
+        $name = $statement->fetchColumn();
+        return is_string($name) ? trim($name) : '';
     }
 
     private function publicUploadUrl(string $path): string
