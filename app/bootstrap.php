@@ -185,15 +185,21 @@ function log_database_query_failure(string $operation, \Throwable $exception, ar
 
 function db(): PDO
 {
-    static $pdo = null;
-    if ($pdo instanceof PDO) {
-        return $pdo;
+    $cached = $GLOBALS['smartleap_pdo'] ?? null;
+    if ($cached instanceof PDO) {
+        try {
+            $cached->query('SELECT 1');
+            return $cached;
+        } catch (\PDOException $exception) {
+            $GLOBALS['smartleap_pdo'] = null;
+        }
     }
 
     $config = config('database');
     $dsn = sprintf('mysql:host=%s;port=%s;dbname=%s;charset=%s', $config['host'], $config['port'], $config['database'], $config['charset']);
     try {
         $pdo = new PDO($dsn, $config['username'], $config['password'], $config['options']);
+        $GLOBALS['smartleap_pdo'] = $pdo;
         return $pdo;
     } catch (\PDOException $exception) {
         $classification = classify_pdo_exception($exception);

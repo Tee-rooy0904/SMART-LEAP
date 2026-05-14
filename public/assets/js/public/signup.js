@@ -2,18 +2,57 @@
     const form = document.getElementById('signupForm');
     if (!form) return;
 
+    const PROFILE_PHOTO_MAX_SIZE = 5 * 1024 * 1024;
+    const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const AUTH_LOADER_MIN_MS = 2400;
+    const signupMode = String(window.SMARTLEAP_SIGNUP_MODE || 'applicant').toLowerCase();
+    const isCoMakerMode = signupMode === 'co-maker';
+
     const fields = {
-        fullName: document.getElementById('signupFullName'),
+        registrationMode: document.getElementById('signupRegistrationMode'),
+        beneficiaryProfileId: document.getElementById('signupBeneficiaryProfileId'),
+        firstName: document.getElementById('signupFirstName'),
+        middleName: document.getElementById('signupMiddleName'),
+        lastName: document.getElementById('signupLastName'),
         email: document.getElementById('signupEmail'),
         password: document.getElementById('signupPassword'),
-        confirmPassword: document.getElementById('signupPasswordConfirm')
+        confirmPassword: document.getElementById('signupPasswordConfirm'),
+        birthdate: document.getElementById('signupBirthdate'),
+        age: document.getElementById('signupAge'),
+        gender: document.getElementById('signupGender'),
+        contactNumber: document.getElementById('signupContactNumber'),
+        relationshipToPrimaryBeneficiary: document.getElementById('signupRelationshipToPrimaryBeneficiary'),
+        validIdInput: document.getElementById('signupValidIdInput'),
+        relationshipDocumentInput: document.getElementById('signupRelationshipDocumentInput'),
+        address: document.getElementById('signupAddress'),
+        barangay: document.getElementById('signupBarangay'),
+        is4ps: document.getElementById('signup4ps'),
+        educationalAttainment: document.getElementById('signupEducationalAttainment'),
+        sector: document.getElementById('signupSector'),
+        sectorOtherSpecify: document.getElementById('signupSectorOtherSpecify'),
+        livelihood: document.getElementById('signupLivelihood'),
+        businessName: document.getElementById('signupBusinessName'),
+        photoInput: document.getElementById('signupPhotoInput'),
     };
 
     const feedback = document.getElementById('signupFeedback');
     const passwordHints = document.getElementById('passwordHints');
     const submitBtn = document.getElementById('signupSubmit');
     const toggleButtons = document.querySelectorAll('.toggle-visibility');
-    const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const photoPreview = document.getElementById('signupPhotoPreview');
+    const photoPlaceholder = document.getElementById('signupPhotoPlaceholder');
+    const sectorOtherWrap = document.getElementById('signupSectorOtherWrap');
+    const confirmModal = document.getElementById('signupConfirmModal');
+    const confirmGrid = document.getElementById('signupConfirmGrid');
+    const confirmName = document.getElementById('signupConfirmName');
+    const confirmEmail = document.getElementById('signupConfirmEmail');
+    const confirmPhoto = document.getElementById('signupConfirmPhoto');
+    const confirmPhotoPlaceholder = document.getElementById('signupConfirmPhotoPlaceholder');
+    const confirmSubmitBtn = document.getElementById('signupConfirmSubmit');
+    const closeConfirmButtons = document.querySelectorAll('[data-close-signup-confirm]');
+
+    let authLoaderStartedAt = 0;
+    let photoDataUrl = '';
 
     function publicBase() {
         const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
@@ -32,35 +71,20 @@
         if (copy && message) {
             copy.textContent = message;
         }
+        if (active) {
+            authLoaderStartedAt = Date.now();
+        }
         overlay.hidden = !active;
         document.body.classList.toggle('auth-loading', active);
     }
 
-    toggleButtons.forEach((button) => {
-        button.addEventListener('click', () => {
-            const targetId = button.dataset.toggle;
-            const input = document.getElementById(targetId);
-            if (!input) return;
-            const isPassword = input.getAttribute('type') === 'password';
-            input.setAttribute('type', isPassword ? 'text' : 'password');
-            button.setAttribute('aria-label', `${isPassword ? 'Hide' : 'Show'} password`);
-            button.textContent = isPassword ? 'Hide' : 'Show';
-            button.classList.toggle('is-visible', !isPassword);
-        });
-    });
-
-    fields.password.addEventListener('focus', () => {
-        togglePasswordHints(true);
-    });
-
-    fields.password.addEventListener('blur', () => {
-        togglePasswordHints(Boolean(fields.password.value));
-    });
-
-    fields.password.addEventListener('input', () => {
-        updatePasswordHints(fields.password.value);
-        togglePasswordHints(Boolean(fields.password.value));
-    });
+    function redirectAfterLoader(path) {
+        const elapsed = Date.now() - authLoaderStartedAt;
+        const remaining = Math.max(0, AUTH_LOADER_MIN_MS - elapsed);
+        window.setTimeout(() => {
+            window.location.href = routeUrl(path);
+        }, remaining);
+    }
 
     function togglePasswordHints(visible) {
         if (!passwordHints) return;
@@ -83,127 +107,477 @@
         });
     }
 
-    function resetErrors() {
-        feedback.hidden = true;
-        feedback.textContent = '';
-
-        Object.values(fields).forEach((field) => {
-            const error = form.querySelector(`[data-error-for="${field.id}"]`);
-            if (error) {
-                error.textContent = '';
-                error.removeAttribute('data-visible');
-            }
-        });
-    }
-
-    function showFieldError(field, message) {
-        const error = form.querySelector(`[data-error-for="${field.id}"]`);
-        if (error) {
-            error.textContent = message;
-            error.setAttribute('data-visible', 'true');
-        }
-    }
-
     function setFeedback(type, message) {
         feedback.hidden = false;
         feedback.dataset.tone = type;
         feedback.textContent = message;
     }
 
+    function clearFeedback() {
+        feedback.hidden = true;
+        feedback.textContent = '';
+        delete feedback.dataset.tone;
+    }
+
+    function setFieldError(fieldId, message) {
+        const error = form.querySelector(`[data-error-for="${fieldId}"]`);
+        if (!error) return;
+        error.textContent = message;
+        error.setAttribute('data-visible', 'true');
+    }
+
+    function clearFieldError(fieldId) {
+        const error = form.querySelector(`[data-error-for="${fieldId}"]`);
+        if (!error) return;
+        error.textContent = '';
+        error.removeAttribute('data-visible');
+    }
+
+    function resetErrors() {
+        clearFeedback();
+        form.querySelectorAll('[data-error-for]').forEach((error) => {
+            error.textContent = '';
+            error.removeAttribute('data-visible');
+        });
+    }
+
+    function disableForm(state) {
+        submitBtn.disabled = state;
+        submitBtn.textContent = state
+            ? (isCoMakerMode ? 'Saving co-maker account...' : 'Saving account...')
+            : (isCoMakerMode ? 'Create co-maker account' : 'Create account');
+        confirmSubmitBtn.disabled = state;
+        confirmSubmitBtn.textContent = state ? 'Saving...' : 'Yes, save and continue';
+    }
+
+    function sanitizeText(value) {
+        return String(value || '').replace(/[&<>"']/g, function (character) {
+            return {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#39;'
+            }[character];
+        });
+    }
+
+    function calculateAge(birthdate) {
+        if (!birthdate) return '';
+        const current = new Date();
+        const birth = new Date(`${birthdate}T00:00:00`);
+        if (Number.isNaN(birth.getTime())) return '';
+
+        let age = current.getFullYear() - birth.getFullYear();
+        const monthDelta = current.getMonth() - birth.getMonth();
+        if (monthDelta < 0 || (monthDelta === 0 && current.getDate() < birth.getDate())) {
+            age -= 1;
+        }
+
+        return age >= 0 ? String(age) : '';
+    }
+
+    function syncAgeFromBirthdate() {
+        if (!fields.birthdate || !fields.age) return;
+        fields.age.value = calculateAge(fields.birthdate.value);
+    }
+
+    function toggleSectorOther() {
+        if (!fields.sector || !sectorOtherWrap || !fields.sectorOtherSpecify) return;
+        const isOther = fields.sector.value === 'Other';
+        sectorOtherWrap.hidden = !isOther;
+        fields.sectorOtherSpecify.disabled = !isOther;
+        if (!isOther) {
+            fields.sectorOtherSpecify.value = '';
+            clearFieldError('signupSectorOtherSpecify');
+        }
+    }
+
+    function setPhotoPreview(dataUrl) {
+        if (!photoPreview || !photoPlaceholder) return;
+        photoDataUrl = dataUrl || '';
+        if (photoDataUrl) {
+            photoPreview.src = photoDataUrl;
+            photoPreview.hidden = false;
+            photoPlaceholder.hidden = true;
+        } else {
+            photoPreview.src = '';
+            photoPreview.hidden = true;
+            photoPlaceholder.hidden = false;
+        }
+    }
+
+    function formatFieldLabel(label) {
+        return `<span class="signup-confirm__label">${sanitizeText(label)}</span>`;
+    }
+
+    function fieldValueOrFallback(value) {
+        const normalized = String(value || '').trim();
+        return normalized !== '' ? sanitizeText(normalized) : '<em>--</em>';
+    }
+
+    function buildSummaryMarkup() {
+        const values = collectPayload();
+        const summaryItems = isCoMakerMode
+            ? [
+                ['Full name', [values.firstName, values.middleName, values.lastName].filter(Boolean).join(' ')],
+                ['Email address', values.email],
+                ['Contact number', values.contactNumber],
+                ['Age', values.age],
+                ['Gender', values.gender],
+                ['Relationship to primary beneficiary', values.relationshipToPrimaryBeneficiary],
+                ['Primary beneficiary', window.SMARTLEAP_CO_MAKER_CONTEXT?.primaryBeneficiaryName || ''],
+                ['Business name', window.SMARTLEAP_CO_MAKER_CONTEXT?.primaryBusinessName || ''],
+                ['Assigned PDO', window.SMARTLEAP_CO_MAKER_CONTEXT?.assignedPdo?.name || ''],
+                ['Valid ID', fields.validIdInput?.files?.[0]?.name || ''],
+                ['Relationship document', fields.relationshipDocumentInput?.files?.[0]?.name || '']
+            ]
+            : [
+                ['Full name', [values.firstName, values.middleName, values.lastName].filter(Boolean).join(' ')],
+                ['Email address', values.email],
+                ['Birthdate', values.birthdate],
+                ['Age', values.age],
+                ['Gender', values.gender],
+                ['Contact number', values.contactNumber],
+                ['Complete address', values.address],
+                ['Barangay', values.barangay],
+                ['4Ps membership', values.is4ps],
+                ['Educational attainment', values.educationalAttainment],
+                ['Sector', values.sector === 'Other' && values.sectorOtherSpecify ? `Other - ${values.sectorOtherSpecify}` : values.sector],
+                ['Specific business type', values.livelihood],
+                ['Microbusiness name', values.businessName]
+            ];
+
+        confirmName.textContent = summaryItems[0][1] || '--';
+        confirmEmail.textContent = values.email || '--';
+
+        if (!isCoMakerMode && photoDataUrl) {
+            confirmPhoto.src = photoDataUrl;
+            confirmPhoto.hidden = false;
+            confirmPhotoPlaceholder.hidden = true;
+        } else {
+            confirmPhoto.src = '';
+            confirmPhoto.hidden = true;
+            confirmPhotoPlaceholder.hidden = false;
+        }
+
+        confirmGrid.innerHTML = summaryItems.map(([label, value]) => (
+            `<div class="signup-confirm__item">${formatFieldLabel(label)}<strong>${fieldValueOrFallback(value)}</strong></div>`
+        )).join('');
+    }
+
+    function openConfirmModal() {
+        if (!validate()) {
+            return;
+        }
+        buildSummaryMarkup();
+        confirmModal.hidden = false;
+        confirmModal.removeAttribute('hidden');
+        document.body.classList.add('signup-confirm-open');
+    }
+
+    function closeConfirmModal() {
+        confirmModal.hidden = true;
+        confirmModal.setAttribute('hidden', 'hidden');
+        document.body.classList.remove('signup-confirm-open');
+    }
+
+    function collectPayload() {
+        const payload = {
+            registrationMode: fields.registrationMode?.value || (isCoMakerMode ? 'co-maker' : 'applicant'),
+            beneficiaryProfileId: fields.beneficiaryProfileId?.value || '',
+            firstName: fields.firstName.value.trim(),
+            middleName: fields.middleName.value.trim(),
+            lastName: fields.lastName.value.trim(),
+            email: fields.email.value.trim(),
+            password: fields.password.value,
+            contactNumber: fields.contactNumber?.value.trim() || '',
+            relationshipToPrimaryBeneficiary: fields.relationshipToPrimaryBeneficiary?.value.trim() || '',
+            birthdate: fields.birthdate?.value || '',
+            age: fields.age?.value || '',
+            gender: fields.gender?.value || '',
+            address: fields.address?.value.trim() || '',
+            barangay: fields.barangay?.value || '',
+            is4ps: fields.is4ps?.value || '',
+            educationalAttainment: fields.educationalAttainment?.value || '',
+            sector: fields.sector?.value || '',
+            sectorOtherSpecify: fields.sectorOtherSpecify?.value.trim() || '',
+            livelihood: fields.livelihood?.value.trim() || '',
+            businessName: fields.businessName?.value.trim() || '',
+            photoDataUrl: photoDataUrl
+        };
+
+        return payload;
+    }
+
     function validate() {
-        let valid = true;
         resetErrors();
+        let valid = true;
+        const payload = collectPayload();
+        const requiredTextFields = isCoMakerMode
+            ? [
+                ['signupFirstName', payload.firstName, 'Enter your first name.'],
+                ['signupLastName', payload.lastName, 'Enter your last name.'],
+                ['signupEmail', payload.email, 'Enter your email address.'],
+                ['signupPassword', payload.password, 'Enter your password.'],
+                ['signupPasswordConfirm', fields.confirmPassword.value, 'Confirm your password.'],
+                ['signupContactNumber', payload.contactNumber, 'Enter your contact number.'],
+                ['signupAge', payload.age, 'Enter your age.'],
+                ['signupGender', payload.gender, 'Select your gender.'],
+                ['signupRelationshipToPrimaryBeneficiary', payload.relationshipToPrimaryBeneficiary, 'Enter your relationship to the primary beneficiary.'],
+            ]
+            : [
+                ['signupFirstName', payload.firstName, 'Enter your first name.'],
+                ['signupLastName', payload.lastName, 'Enter your last name.'],
+                ['signupEmail', payload.email, 'Enter your email address.'],
+                ['signupPassword', payload.password, 'Enter your password.'],
+                ['signupPasswordConfirm', fields.confirmPassword.value, 'Confirm your password.'],
+                ['signupBirthdate', payload.birthdate, 'Enter your birthdate.'],
+                ['signupGender', payload.gender, 'Select your gender.'],
+                ['signupContactNumber', payload.contactNumber, 'Enter your contact number.'],
+                ['signupAddress', payload.address, 'Enter your complete address.'],
+                ['signupBarangay', payload.barangay, 'Select your barangay.'],
+                ['signup4ps', payload.is4ps, 'Select your 4Ps membership.'],
+                ['signupEducationalAttainment', payload.educationalAttainment, 'Select your educational attainment.'],
+                ['signupSector', payload.sector, 'Select your sector.'],
+                ['signupLivelihood', payload.livelihood, 'Enter your specific business type.'],
+                ['signupBusinessName', payload.businessName, 'Enter your microbusiness name.'],
+            ];
 
-        if (!fields.fullName.value.trim() || fields.fullName.value.trim().length < 3) {
+        requiredTextFields.forEach(([fieldId, value, message]) => {
+            if (!String(value || '').trim()) {
+                valid = false;
+                setFieldError(fieldId, message);
+            }
+        });
+
+        if (!payload.firstName || payload.firstName.length < 2) {
             valid = false;
-            showFieldError(fields.fullName, 'Enter your complete name (at least 3 characters).');
+            setFieldError('signupFirstName', 'Enter your first name.');
         }
 
-        if (!EMAIL_PATTERN.test(fields.email.value.trim())) {
+        if (!payload.lastName || payload.lastName.length < 2) {
             valid = false;
-            showFieldError(fields.email, 'Enter a valid email address (e.g., juan@example.com).');
+            setFieldError('signupLastName', 'Enter your last name.');
         }
 
-        if (!fields.password.value || fields.password.value.length < 8) {
+        if (!EMAIL_PATTERN.test(payload.email)) {
             valid = false;
-            showFieldError(fields.password, 'Password must be at least 8 characters long.');
+            setFieldError('signupEmail', 'Enter a valid email address (e.g., juan@example.com).');
         }
 
-        if (!/\d/.test(fields.password.value) || !/[A-Z]/.test(fields.password.value) || !/[a-z]/.test(fields.password.value)) {
+        if (!payload.password || payload.password.length < 8) {
             valid = false;
-            showFieldError(fields.password, 'Include uppercase, lowercase, and numeric characters.');
+            setFieldError('signupPassword', 'Password must be at least 8 characters.');
+        } else if (!/\d/.test(payload.password) || !/[A-Z]/.test(payload.password) || !/[a-z]/.test(payload.password)) {
+            valid = false;
+            setFieldError('signupPassword', 'Include uppercase, lowercase, and numeric characters.');
         }
 
-        if (fields.password.value !== fields.confirmPassword.value) {
+        if (payload.password !== fields.confirmPassword.value) {
             valid = false;
-            showFieldError(fields.confirmPassword, 'Passwords do not match.');
+            setFieldError('signupPasswordConfirm', 'Passwords do not match.');
+        }
+
+        if (!isCoMakerMode) {
+            const age = calculateAge(payload.birthdate);
+            if (!age) {
+                valid = false;
+                setFieldError('signupBirthdate', 'Birthdate is invalid.');
+            } else if (fields.age) {
+                fields.age.value = age;
+            }
+        } else {
+            const age = Number(payload.age || 0);
+            if (!Number.isFinite(age) || age < 1 || age > 120) {
+                valid = false;
+                setFieldError('signupAge', 'Enter a valid age.');
+            }
+        }
+
+        const contactDigits = payload.contactNumber.replace(/\D+/g, '');
+        if (contactDigits.length < 10 || contactDigits.length > 13) {
+            valid = false;
+            setFieldError('signupContactNumber', 'Enter a valid contact number.');
+        }
+
+        if (isCoMakerMode) {
+            if (!fields.validIdInput?.files?.[0]) {
+                valid = false;
+                setFieldError('signupValidIdInput', 'Upload your valid ID.');
+            }
+            if (!fields.relationshipDocumentInput?.files?.[0]) {
+                valid = false;
+                setFieldError('signupRelationshipDocumentInput', 'Upload your relationship document.');
+            }
+        } else {
+            if (payload.sector === 'Other' && !payload.sectorOtherSpecify) {
+                valid = false;
+                setFieldError('signupSectorOtherSpecify', 'Please specify the other sector.');
+            }
+
+            if (!photoDataUrl) {
+                valid = false;
+                setFieldError('signupPhotoInput', 'Profile photo is required.');
+            }
         }
 
         return valid;
     }
 
-    function disableForm(state) {
-        submitBtn.disabled = state;
-        submitBtn.textContent = state ? 'Creating account...' : 'Create account';
-    }
-
-    form.addEventListener('submit', async (event) => {
-        event.preventDefault();
-        if (submitBtn.disabled) return;
-
-        if (!validate()) {
-            setFeedback('danger', 'Please fix the highlighted fields before continuing.');
-            return;
-        }
-
+    async function submitSignup() {
         disableForm(true);
         setAuthLoading(true, 'Creating your SMART LEAP account...');
+        let isRedirecting = false;
 
         try {
+            const payload = collectPayload();
+            const formData = new FormData();
+            Object.entries(payload).forEach(([key, value]) => formData.append(key, value ?? ''));
+            if (isCoMakerMode) {
+                if (fields.validIdInput?.files?.[0]) formData.append('validId', fields.validIdInput.files[0]);
+                if (fields.relationshipDocumentInput?.files?.[0]) formData.append('relationshipDocument', fields.relationshipDocumentInput.files[0]);
+            }
             const response = await fetch(routeUrl('signup'), {
                 method: 'POST',
                 headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                     Accept: 'application/json',
                 },
                 credentials: 'same-origin',
-                body: new URLSearchParams({
-                    fullName: fields.fullName.value.trim(),
-                    email: fields.email.value.trim(),
-                    password: fields.password.value,
-                }).toString(),
+                body: formData,
             });
 
-            const payload = await response.json();
-            if (!response.ok || !payload.ok) {
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
                 const fieldMap = {
-                    fullName: fields.fullName,
-                    email: fields.email,
-                    password: fields.password,
+                    firstName: 'signupFirstName',
+                    middleName: 'signupMiddleName',
+                    lastName: 'signupLastName',
+                    email: 'signupEmail',
+                    password: 'signupPassword',
+                    beneficiaryProfileId: 'signupBeneficiaryProfileId',
+                    relationshipToPrimaryBeneficiary: 'signupRelationshipToPrimaryBeneficiary',
+                    birthdate: 'signupBirthdate',
+                    age: 'signupAge',
+                    gender: 'signupGender',
+                    contactNumber: 'signupContactNumber',
+                    address: 'signupAddress',
+                    barangay: 'signupBarangay',
+                    is4ps: 'signup4ps',
+                    educationalAttainment: 'signupEducationalAttainment',
+                    sector: 'signupSector',
+                    sectorOtherSpecify: 'signupSectorOtherSpecify',
+                    livelihood: 'signupLivelihood',
+                    businessName: 'signupBusinessName',
+                    photoDataUrl: 'signupPhotoInput',
+                    validId: 'signupValidIdInput',
+                    relationshipDocument: 'signupRelationshipDocumentInput'
                 };
 
-                Object.entries(payload.errors || {}).forEach(([key, message]) => {
+                Object.entries(result.errors || {}).forEach(([key, message]) => {
                     if (fieldMap[key]) {
-                        showFieldError(fieldMap[key], message);
+                        setFieldError(fieldMap[key], message);
                     }
                 });
 
-                setFeedback('danger', payload.errors?.general || payload.message || 'We could not create your account right now.');
+                setFeedback('danger', result.errors?.general || result.message || 'We could not create your account right now.');
+                closeConfirmModal();
                 return;
             }
 
-            setFeedback('success', payload.message || 'Account created successfully. Redirecting to verification...');
-            window.setTimeout(() => {
-                window.location.href = routeUrl(payload.redirect || 'verify-account');
-            }, 1200);
+            setFeedback('success', result.message || 'Your account is ready. Redirecting...');
+            isRedirecting = true;
+            redirectAfterLoader(result.redirect || 'applicant-dashboard');
         } catch (error) {
             console.error('Signup failed', error);
             setFeedback('danger', 'We could not create your account right now. Please try again.');
+            closeConfirmModal();
         } finally {
-            if (document.visibilityState !== 'hidden') {
+            if (!isRedirecting && document.visibilityState !== 'hidden') {
                 setAuthLoading(false);
+                disableForm(false);
+            } else if (!isRedirecting) {
+                disableForm(false);
             }
-            disableForm(false);
         }
+    }
+
+    toggleButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            const targetId = button.dataset.toggle;
+            const input = document.getElementById(targetId);
+            if (!input) return;
+            const isPassword = input.getAttribute('type') === 'password';
+            input.setAttribute('type', isPassword ? 'text' : 'password');
+            button.setAttribute('aria-label', `${isPassword ? 'Hide' : 'Show'} password`);
+            button.textContent = isPassword ? 'Hide' : 'Show';
+            button.classList.toggle('is-visible', !isPassword);
+        });
     });
+
+    fields.password?.addEventListener('focus', () => togglePasswordHints(true));
+    fields.password?.addEventListener('blur', () => togglePasswordHints(Boolean(fields.password.value)));
+    fields.password?.addEventListener('input', () => {
+        updatePasswordHints(fields.password.value);
+        togglePasswordHints(Boolean(fields.password.value));
+    });
+
+    fields.birthdate?.addEventListener('change', syncAgeFromBirthdate);
+    fields.sector?.addEventListener('change', toggleSectorOther);
+    fields.photoInput?.addEventListener('change', (event) => {
+        const file = event.target.files?.[0];
+        clearFieldError('signupPhotoInput');
+        if (!file) {
+            setPhotoPreview('');
+            return;
+        }
+
+        if (!['image/jpeg', 'image/png'].includes(file.type)) {
+            setFieldError('signupPhotoInput', 'Upload a JPG or PNG file only.');
+            event.target.value = '';
+            setPhotoPreview('');
+            return;
+        }
+
+        if (file.size > PROFILE_PHOTO_MAX_SIZE) {
+            setFieldError('signupPhotoInput', 'Profile photo must be 5 MB or less.');
+            event.target.value = '';
+            setPhotoPreview('');
+            return;
+        }
+
+        const reader = new FileReader();
+        reader.onload = () => {
+            setPhotoPreview(typeof reader.result === 'string' ? reader.result : '');
+        };
+        reader.readAsDataURL(file);
+    });
+
+    closeConfirmButtons.forEach((button) => {
+        button.addEventListener('click', closeConfirmModal);
+    });
+
+    confirmSubmitBtn.addEventListener('click', () => {
+        if (confirmSubmitBtn.disabled) return;
+        submitSignup();
+    });
+
+    form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (submitBtn.disabled) return;
+
+        const isValid = validate();
+        if (!isValid) {
+            closeConfirmModal();
+            setFeedback('danger', 'Please complete the required fields before continuing.');
+            return;
+        }
+
+        openConfirmModal();
+    });
+
+    updatePasswordHints(fields.password?.value || '');
+    toggleSectorOther();
+    syncAgeFromBirthdate();
+    closeConfirmModal();
 })();

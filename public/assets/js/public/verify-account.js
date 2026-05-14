@@ -4,11 +4,12 @@
 
     const emailInput = document.getElementById('verifyEmail');
     const codeInput = document.getElementById('verifyCode');
-    const modeInput = document.getElementById('verifyMode');
     const entryPointInput = document.getElementById('verifyEntryPoint');
     const submitButton = document.getElementById('verifySubmit');
     const resendButton = document.getElementById('resendCodeButton');
     const feedback = document.getElementById('verifyFeedback');
+    const AUTH_LOADER_MIN_MS = 2400;
+    let authLoaderStartedAt = 0;
 
     function publicBase() {
         const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
@@ -38,6 +39,7 @@
         const copy = document.getElementById('authLoadingCopy');
         if (!overlay) return;
         if (copy && message) copy.textContent = message;
+        authLoaderStartedAt = Date.now();
         overlay.hidden = false;
         document.body.classList.add('auth-loading');
     }
@@ -49,6 +51,14 @@
         document.body.classList.remove('auth-loading');
     }
 
+    function redirectAfterLoader(path) {
+        const elapsed = Date.now() - authLoaderStartedAt;
+        const remaining = Math.max(0, AUTH_LOADER_MIN_MS - elapsed);
+        window.setTimeout(() => {
+            window.location.href = routeUrl(path);
+        }, remaining);
+    }
+
     codeInput?.addEventListener('input', () => {
         codeInput.value = codeInput.value.replace(/\D+/g, '').slice(0, 6);
     });
@@ -57,7 +67,6 @@
         event.preventDefault();
         const email = emailInput?.value.trim() ?? '';
         const code = codeInput?.value.trim() ?? '';
-        const mode = modeInput?.value || 'activation';
         const entryPoint = entryPointInput?.value || 'portal';
 
         if (!email || !code) {
@@ -66,17 +75,18 @@
         }
 
         setSubmitting(true, 'Verifying...');
-        showLoader(mode === 'login' ? 'Completing your secure sign-in...' : 'Verifying your SMART LEAP account...');
+        showLoader('Verifying your SMART LEAP account...');
+        let isRedirecting = false;
 
         try {
             const response = await fetch(routeUrl('auth/verify-account'), {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    Accept: 'application/json',
+                Accept: 'application/json',
                 },
                 credentials: 'same-origin',
-                body: new URLSearchParams({ email, code, mode, entryPoint }).toString(),
+                body: new URLSearchParams({ email, code, entryPoint }).toString(),
             });
             const payload = await response.json();
             if (!response.ok || !payload.ok) {
@@ -85,19 +95,21 @@
                 return;
             }
 
-            setFeedback('success', payload.message || 'Account verified. Redirecting...');
-            window.location.href = routeUrl(payload.redirect || 'applicant-dashboard?welcome=1#profile-page');
+            setFeedback('success', payload.message || 'Account verified. Nag-redirect...');
+            isRedirecting = true;
+            redirectAfterLoader(payload.redirect || 'applicant-dashboard#profile-page');
         } catch (error) {
             hideLoader();
-            setFeedback('danger', 'Unable to verify your account right now.');
+            setFeedback('danger', 'Dili ma-verify ang imong account karon.');
         } finally {
-            setSubmitting(false, 'Verifying...');
+            if (!isRedirecting) {
+                setSubmitting(false, 'Verifying...');
+            }
         }
     });
 
     resendButton?.addEventListener('click', async () => {
         const email = emailInput?.value.trim() ?? '';
-        const mode = modeInput?.value || 'activation';
         if (!email) {
             setFeedback('danger', 'Enter your email address first.');
             return;
@@ -111,15 +123,15 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    Accept: 'application/json',
+                Accept: 'application/json',
                 },
                 credentials: 'same-origin',
-                body: new URLSearchParams({ email, mode }).toString(),
+                body: new URLSearchParams({ email }).toString(),
             });
             const payload = await response.json();
-            setFeedback(response.ok && payload.ok ? 'success' : 'danger', payload.message || 'Unable to resend the verification code.');
+            setFeedback(response.ok && payload.ok ? 'success' : 'danger', payload.message || 'Dili mapadala pag-usab ang verification code.');
         } catch (error) {
-            setFeedback('danger', 'Unable to resend the verification code right now.');
+            setFeedback('danger', 'Dili mapadala pag-usab ang verification code karon.');
         } finally {
             hideLoader();
             resendButton.disabled = false;

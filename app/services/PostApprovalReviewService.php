@@ -11,6 +11,7 @@ class PostApprovalReviewService
 {
     public function stateForReviewer(int $userId): array
     {
+        $this->ensureStaffProfileSignatureColumns();
         $reviewer = $this->resolveReviewer($userId);
         if ($reviewer === null) {
             return ['ok' => false, 'message' => 'Reviewer access is not allowed.'];
@@ -26,6 +27,7 @@ class PostApprovalReviewService
 
     public function taskForReviewer(int $userId, int $taskId): ?array
     {
+        $this->ensureStaffProfileSignatureColumns();
         $reviewer = $this->resolveReviewer($userId);
         if ($reviewer === null) {
             return null;
@@ -41,6 +43,7 @@ class PostApprovalReviewService
 
     public function reviewTask(int $userId, int $taskId, string $decision, string $remarks, string $applicantVisibleRemark, array $staffForm): array
     {
+        $this->ensureStaffProfileSignatureColumns();
         $reviewer = $this->resolveReviewer($userId);
         if ($reviewer === null) {
             return ['ok' => false, 'errors' => ['general' => 'Reviewer access is not allowed.']];
@@ -64,6 +67,13 @@ class PostApprovalReviewService
         if ($staffValidation['errors'] !== []) {
             return ['ok' => false, 'errors' => $staffValidation['errors']];
         }
+        $assignedPdo = $this->resolveAssignedPdoForTask($task);
+        $staffValidation['payload'] = $this->applyAssignedPdoToStaffPayload(
+            (string) $task['code'],
+            $staffValidation['payload'],
+            $assignedPdo,
+            date('Y-m-d')
+        );
 
         $remarks = trim($remarks);
         $applicantVisibleRemark = trim($applicantVisibleRemark);
@@ -111,12 +121,6 @@ class PostApprovalReviewService
                 'post_approval_task_id' => $taskId,
             ]);
 
-            if ((string) $task['code'] === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE && $status === POST_APPROVAL_STATUS_VERIFIED) {
-                (new BeneficiaryProfileService())->activateForApplicantProfile((int) ($task['applicant_profile_id'] ?? 0));
-            }
-
-            (new PostApprovalComplianceService())->syncFundReleaseRequirement((int) ($task['beneficiary_profile_id'] ?? 0));
-
             $pdo->commit();
         } catch (Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -127,6 +131,7 @@ class PostApprovalReviewService
         }
 
         $this->notifyApplicant($task, $status, $applicantVisibleRemark);
+        $this->notifyAssignedPdo($task, $status, $remarks, $userId);
         (new AuditLogService())->record(
             $userId,
             'post_approval.reviewed',
@@ -140,6 +145,7 @@ class PostApprovalReviewService
 
     public function uploadTaskAsset(int $userId, int $taskId, string $fieldKey, array $file): array
     {
+        $this->ensureStaffProfileSignatureColumns();
         $reviewer = $this->resolveReviewer($userId);
         if ($reviewer === null) {
             return ['ok' => false, 'errors' => ['general' => 'Reviewer access is not allowed.']];
@@ -160,6 +166,10 @@ class PostApprovalReviewService
         } catch (Throwable $exception) {
             log_database_query_failure('post_approval.review_upload', $exception, ['task_id' => $taskId, 'field_key' => $fieldKey]);
             return ['ok' => false, 'errors' => ['general' => $exception->getMessage() ?: 'Unable to upload file.']];
+        }
+
+        if ((string) $allowed[$fieldKey] === 'staff-signature') {
+            $this->persistAssignedPdoSignature($task, $metadata);
         }
 
         $mergedPayload = $this->mergeStaffPayload($task, $this->payloadWithFieldValue($fieldKey, $metadata));
@@ -211,6 +221,192 @@ class PostApprovalReviewService
         ];
     }
 
+    private function ensureStaffProfileSignatureColumns(): void
+    {
+        static $ensured = false;
+        if ($ensured) {
+            return;
+        }
+
+        $columns = [
+            'signature_file_path' => 'ALTER TABLE staff_profiles ADD COLUMN signature_file_path VARCHAR(255) NULL AFTER position_title',
+            'signature_original_name' => 'ALTER TABLE staff_profiles ADD COLUMN signature_original_name VARCHAR(255) NULL AFTER signature_file_path',
+            'signature_mime_type' => 'ALTER TABLE staff_profiles ADD COLUMN signature_mime_type VARCHAR(120) NULL AFTER signature_original_name',
+            'signature_file_size' => 'ALTER TABLE staff_profiles ADD COLUMN signature_file_size BIGINT UNSIGNED NULL AFTER signature_mime_type',
+            'signature_uploaded_at' => 'ALTER TABLE staff_profiles ADD COLUMN signature_uploaded_at DATETIME NULL AFTER signature_file_size',
+        ];
+
+        foreach ($columns as $column => $sql) {
+            $statement = db()->prepare(
+                'SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = :table_name
+                   AND column_name = :column_name'
+            );
+            $statement->execute([
+                'table_name' => 'staff_profiles',
+                'column_name' => $column,
+            ]);
+            if ((int) $statement->fetchColumn() > 0) {
+                continue;
+            }
+
+            db()->exec($sql);
+        }
+
+        $ensured = true;
+    }
+
+    private function staffSignatureMetadataFromRow(array $row): ?array
+    {
+        $filePath = trim((string) ($row['assigned_pdo_signature_file_path'] ?? ''));
+        if ($filePath === '') {
+            return null;
+        }
+
+        return [
+            'file_path' => $filePath,
+            'original_name' => trim((string) ($row['assigned_pdo_signature_original_name'] ?? basename($filePath))),
+            'mime_type' => trim((string) ($row['assigned_pdo_signature_mime_type'] ?? '')),
+            'file_size' => (int) ($row['assigned_pdo_signature_file_size'] ?? 0),
+            'uploaded_at' => trim((string) ($row['assigned_pdo_signature_uploaded_at'] ?? '')),
+        ];
+    }
+
+    private function resolveAssignedPdoForTask(array $task): ?array
+    {
+        $statement = db()->prepare(
+            'SELECT
+                staff_profiles.id AS staff_profile_id,
+                users.full_name,
+                staff_profiles.position_title,
+                staff_profiles.signature_file_path,
+                staff_profiles.signature_original_name,
+                staff_profiles.signature_mime_type,
+                staff_profiles.signature_file_size,
+                staff_profiles.signature_uploaded_at
+             FROM beneficiary_profiles
+             LEFT JOIN staff_profiles ON staff_profiles.id = beneficiary_profiles.assigned_staff_profile_id
+             LEFT JOIN users ON users.id = staff_profiles.user_id
+             WHERE beneficiary_profiles.id = :beneficiary_profile_id
+             LIMIT 1'
+        );
+        $statement->execute(['beneficiary_profile_id' => (int) ($task['beneficiary_profile_id'] ?? 0)]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row) || trim((string) ($row['full_name'] ?? '')) === '') {
+            return null;
+        }
+
+        return [
+            'staffProfileId' => (int) ($row['staff_profile_id'] ?? 0),
+            'name' => trim((string) ($row['full_name'] ?? '')),
+            'title' => trim((string) ($row['position_title'] ?? '')) ?: 'Project Officer',
+            'signatureUpload' => $this->staffSignatureMetadataFromRow([
+                'assigned_pdo_signature_file_path' => $row['signature_file_path'] ?? '',
+                'assigned_pdo_signature_original_name' => $row['signature_original_name'] ?? '',
+                'assigned_pdo_signature_mime_type' => $row['signature_mime_type'] ?? '',
+                'assigned_pdo_signature_file_size' => $row['signature_file_size'] ?? 0,
+                'assigned_pdo_signature_uploaded_at' => $row['signature_uploaded_at'] ?? '',
+            ]),
+        ];
+    }
+
+    private function persistAssignedPdoSignature(array $task, array $metadata): void
+    {
+        $assignedPdo = $this->resolveAssignedPdoForTask($task);
+        $staffProfileId = (int) ($assignedPdo['staffProfileId'] ?? 0);
+        if ($staffProfileId < 1) {
+            return;
+        }
+
+        db()->prepare(
+            'UPDATE staff_profiles
+             SET signature_file_path = :file_path,
+                 signature_original_name = :original_name,
+                 signature_mime_type = :mime_type,
+                 signature_file_size = :file_size,
+                 signature_uploaded_at = :uploaded_at,
+                 updated_at = NOW()
+             WHERE id = :id'
+        )->execute([
+            'file_path' => trim((string) ($metadata['file_path'] ?? '')),
+            'original_name' => trim((string) ($metadata['original_name'] ?? '')),
+            'mime_type' => trim((string) ($metadata['mime_type'] ?? '')),
+            'file_size' => (int) ($metadata['file_size'] ?? 0),
+            'uploaded_at' => trim((string) ($metadata['uploaded_at'] ?? date('Y-m-d H:i:s'))),
+            'id' => $staffProfileId,
+        ]);
+    }
+
+    private function applyAssignedPdoToStaffPayload(string $code, array $payload, ?array $assignedPdo, string $actionDate): array
+    {
+        if (!is_array($assignedPdo) || trim((string) ($assignedPdo['name'] ?? '')) === '') {
+            return $payload;
+        }
+
+        $name = trim((string) $assignedPdo['name']);
+        $title = trim((string) ($assignedPdo['title'] ?? '')) ?: 'Project Officer';
+        $signature = is_array($assignedPdo['signatureUpload'] ?? null) ? $assignedPdo['signatureUpload'] : null;
+
+        if ($code === POST_APPROVAL_TASK_AVAILMENT_FORM) {
+            $payload['pageOneCertification']['directWorkerName'] = $name;
+            $payload['pageOneCertification']['directWorkerTitle'] = $title;
+            $payload['pageOneCertification']['signedDate'] = $actionDate;
+            $payload['pageOneCertification']['signatureUpload'] = $signature;
+
+            $payload['physicalRequirements']['foodRelatedCertification']['certifyingOfficerName'] = $name;
+            $payload['physicalRequirements']['foodRelatedCertification']['certifyingOfficerTitle'] = $title;
+            $payload['physicalRequirements']['foodRelatedCertification']['signedDate'] = $actionDate;
+            $payload['physicalRequirements']['foodRelatedCertification']['signatureUpload'] = $signature;
+
+            $payload['psychoSocialRequirements']['residencyAndCharacter']['certifyingOfficerName'] = $name;
+            $payload['psychoSocialRequirements']['residencyAndCharacter']['certifyingOfficerTitle'] = $title;
+            $payload['psychoSocialRequirements']['residencyAndCharacter']['signedDate'] = $actionDate;
+            $payload['psychoSocialRequirements']['residencyAndCharacter']['signatureUpload'] = $signature;
+
+            $payload['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['directWorkerName'] = $name;
+            $payload['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['directWorkerTitle'] = $title;
+            $payload['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['signedDate'] = $actionDate;
+            $payload['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['signatureUpload'] = $signature;
+
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_VALIDATION_FORM) {
+            $payload['validatorIdentity']['validatorName'] = $name;
+            $payload['validatorIdentity']['validatorTitle'] = $title;
+            $payload['validatorIdentity']['signedDate'] = $actionDate;
+            $payload['validatorIdentity']['signatureUpload'] = $signature;
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO) {
+            $payload['recommendation']['approverName'] = $name;
+            $payload['recommendation']['approverTitle'] = $title;
+            $payload['recommendation']['approvedDate'] = $actionDate;
+            $payload['recommendation']['signatureUpload'] = $signature;
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_BUSINESS_PLAN) {
+            $payload['approval']['approverName'] = $name;
+            $payload['approval']['approverTitle'] = $title;
+            $payload['approval']['approvedDate'] = $actionDate;
+            $payload['approval']['signatureUpload'] = $signature;
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA) {
+            $payload['verification']['reviewerName'] = $name;
+            $payload['verification']['reviewerTitle'] = $title;
+            $payload['verification']['reviewerDate'] = $actionDate;
+            $payload['verification']['signatureUpload'] = $signature;
+            return $payload;
+        }
+
+        return $payload;
+    }
+
     private function listTasks(array $reviewer): array
     {
         $statement = $this->buildScopedTaskStatement($reviewer, false);
@@ -260,7 +456,7 @@ class PostApprovalReviewService
                  INNER JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
                  INNER JOIN users AS applicant_users ON applicant_users.id = applicant_profiles.user_id'
                  . $scopeJoin .
-                ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
+                ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
                   AND post_approval_tasks.status IN ("Submitted", "Needs Correction", "Rejected", "Verified")'
             );
         }
@@ -282,18 +478,28 @@ class PostApprovalReviewService
                 applicant_profiles.contact_number,
                 applicant_profiles.business_name,
                 barangays.name AS barangay_name,
+                assigned_staff.id AS assigned_staff_profile_id,
+                assigned_staff.position_title AS assigned_pdo_title,
+                assigned_staff.signature_file_path AS assigned_pdo_signature_file_path,
+                assigned_staff.signature_original_name AS assigned_pdo_signature_original_name,
+                assigned_staff.signature_mime_type AS assigned_pdo_signature_mime_type,
+                assigned_staff.signature_file_size AS assigned_pdo_signature_file_size,
+                assigned_staff.signature_uploaded_at AS assigned_pdo_signature_uploaded_at,
+                assigned_pdo_users.full_name AS assigned_pdo_name,
                 reviewer_users.full_name AS reviewer_name
              FROM post_approval_tasks
              INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
              INNER JOIN beneficiary_profiles ON beneficiary_profiles.id = post_approval_tasks.beneficiary_profile_id
              INNER JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
              INNER JOIN users AS applicant_users ON applicant_users.id = applicant_profiles.user_id
+             LEFT JOIN staff_profiles AS assigned_staff ON assigned_staff.id = beneficiary_profiles.assigned_staff_profile_id
+             LEFT JOIN users AS assigned_pdo_users ON assigned_pdo_users.id = assigned_staff.user_id
              LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
              LEFT JOIN users AS reviewer_users ON reviewer_users.id = post_approval_tasks.reviewed_by_user_id'
              . $scopeJoin .
-            ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
+            ' WHERE post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
               AND post_approval_tasks.status IN ("Submitted", "Needs Correction", "Rejected", "Verified")
-             ORDER BY FIELD(post_approval_tasks.status, "Submitted", "Needs Correction", "Rejected", "Verified", "In Progress", "Unlocked"), FIELD(post_approval_task_types.code, "availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence"), post_approval_tasks.updated_at DESC, post_approval_tasks.id DESC'
+             ORDER BY FIELD(post_approval_tasks.status, "Submitted", "Needs Correction", "Rejected", "Verified", "In Progress", "Unlocked"), FIELD(post_approval_task_types.code, "availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa"), post_approval_tasks.updated_at DESC, post_approval_tasks.id DESC'
         );
     }
 
@@ -329,12 +535,22 @@ class PostApprovalReviewService
                     applicant_profiles.age,
                     applicant_profiles.business_name,
                     barangays.name AS barangay_name,
+                    assigned_staff.id AS assigned_staff_profile_id,
+                    assigned_staff.position_title AS assigned_pdo_title,
+                    assigned_staff.signature_file_path AS assigned_pdo_signature_file_path,
+                    assigned_staff.signature_original_name AS assigned_pdo_signature_original_name,
+                    assigned_staff.signature_mime_type AS assigned_pdo_signature_mime_type,
+                    assigned_staff.signature_file_size AS assigned_pdo_signature_file_size,
+                    assigned_staff.signature_uploaded_at AS assigned_pdo_signature_uploaded_at,
+                    assigned_pdo_users.full_name AS assigned_pdo_name,
                     reviewer_users.full_name AS reviewer_name
                 FROM post_approval_tasks
                 INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
                 INNER JOIN beneficiary_profiles ON beneficiary_profiles.id = post_approval_tasks.beneficiary_profile_id
                 INNER JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
                 INNER JOIN users AS applicant_users ON applicant_users.id = applicant_profiles.user_id
+                LEFT JOIN staff_profiles AS assigned_staff ON assigned_staff.id = beneficiary_profiles.assigned_staff_profile_id
+                LEFT JOIN users AS assigned_pdo_users ON assigned_pdo_users.id = assigned_staff.user_id
                 LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
                 LEFT JOIN users AS reviewer_users ON reviewer_users.id = post_approval_tasks.reviewed_by_user_id';
 
@@ -349,7 +565,7 @@ class PostApprovalReviewService
 
         $sql .= '
             WHERE post_approval_tasks.id = :task_id
-              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa", "fund_release_evidence")
+              AND post_approval_task_types.code IN ("availment_form", "validation_form", "mungkahing_proyekto", "business_plan", "buhat_sa_pagpanumpa")
               AND post_approval_tasks.status IN ("Submitted", "Needs Correction", "Rejected", "Verified")
             LIMIT 1';
 
@@ -366,6 +582,26 @@ class PostApprovalReviewService
         if (!is_array($payload)) {
             $payload = [];
         }
+
+        $assignedPdo = [
+            'staffProfileId' => isset($row['assigned_staff_profile_id']) ? (int) $row['assigned_staff_profile_id'] : null,
+            'name' => $row['assigned_pdo_name'] ?? '',
+            'title' => $row['assigned_pdo_title'] ?? '',
+            'signatureUpload' => $this->staffSignatureMetadataFromRow($row),
+        ];
+        $reviewDate = date('Y-m-d');
+        if (is_string($row['reviewed_at'] ?? null) && trim((string) $row['reviewed_at']) !== '') {
+            $reviewTimestamp = strtotime((string) $row['reviewed_at']);
+            if ($reviewTimestamp !== false) {
+                $reviewDate = date('Y-m-d', $reviewTimestamp);
+            }
+        }
+        $payload['staffReview'] = $this->applyAssignedPdoToStaffPayload(
+            (string) $row['code'],
+            is_array($payload['staffReview'] ?? null) ? $payload['staffReview'] : [],
+            $assignedPdo,
+            $reviewDate
+        );
 
         $task = [
             'id' => (int) $row['id'],
@@ -387,6 +623,7 @@ class PostApprovalReviewService
                 'address' => $row['address_line'] ?? '',
                 'age' => $row['age'] ?? null,
             ],
+            'assignedPdo' => $assignedPdo,
             'payload' => $payload,
         ];
 
@@ -642,21 +879,26 @@ class PostApprovalReviewService
     {
         return [
             POST_APPROVAL_TASK_AVAILMENT_FORM => [
+                'reviewAttachment' => 'supporting-upload',
                 'pageOneCertification.signatureUpload' => 'staff-signature',
                 'physicalRequirements.foodRelatedCertification.signatureUpload' => 'staff-signature',
                 'psychoSocialRequirements.residencyAndCharacter.signatureUpload' => 'staff-signature',
                 'psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload' => 'staff-signature',
             ],
             POST_APPROVAL_TASK_VALIDATION_FORM => [
+                'reviewAttachment' => 'supporting-upload',
                 'validatorIdentity.signatureUpload' => 'staff-signature',
             ],
             POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => [
+                'reviewAttachment' => 'supporting-upload',
                 'recommendation.signatureUpload' => 'staff-signature',
             ],
             POST_APPROVAL_TASK_BUSINESS_PLAN => [
+                'reviewAttachment' => 'supporting-upload',
                 'approval.signatureUpload' => 'staff-signature',
             ],
             POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => [
+                'reviewAttachment' => 'supporting-upload',
                 'verification.signatureUpload' => 'staff-signature',
             ],
         ];
@@ -686,14 +928,42 @@ class PostApprovalReviewService
             default => 'Your submitted form was reviewed by CSWDD staff.',
         };
 
-        if ((string) ($task['code'] ?? '') === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE && $status === POST_APPROVAL_STATUS_VERIFIED) {
-            $message = 'Your proof of fund release was verified. Your account can now continue as a beneficiary.';
-        }
-
         if ($remarks !== '') {
             $message .= ' Remarks: ' . $remarks;
         }
 
         (new NotificationService())->createInApp((int) $task['applicant_user_id'], $title, $message, 'post_approval_review');
+    }
+
+    private function notifyAssignedPdo(array $task, string $status, string $remarks, int $reviewerUserId): void
+    {
+        $assignedStaffProfileId = (int) ($task['assigned_staff_profile_id'] ?? 0);
+        $assignedUserId = (new NotificationService())->userIdForStaffProfileId($assignedStaffProfileId);
+        if ($assignedUserId === null || $assignedUserId === $reviewerUserId) {
+            return;
+        }
+
+        $statusLabel = match ($status) {
+            POST_APPROVAL_STATUS_VERIFIED => 'verified',
+            POST_APPROVAL_STATUS_REJECTED => 'rejected',
+            POST_APPROVAL_STATUS_NEEDS_CORRECTION => 'marked for correction',
+            default => 'reviewed',
+        };
+        $applicantName = trim((string) ($task['applicant_name'] ?? ''));
+        $businessName = trim((string) ($task['business_name'] ?? ''));
+        $barangayName = trim((string) ($task['barangay_name'] ?? ''));
+        $subjectParts = array_filter([$applicantName, $businessName, $barangayName], static fn (string $value): bool => $value !== '');
+        $subject = $subjectParts !== [] ? implode(' | ', $subjectParts) : (string) ($task['label'] ?? 'Post-approval form');
+        $message = sprintf('%s was %s.', $subject, $statusLabel);
+        if ($remarks !== '') {
+            $message .= ' Remarks: ' . $remarks;
+        }
+
+        (new NotificationService())->createInApp(
+            $assignedUserId,
+            'Post-approval review update',
+            $message,
+            'post_approval_review'
+        );
     }
 }

@@ -58,14 +58,25 @@ class ApplicantDashboardService
             'businessName' => $profile['businessName'],
             'livelihood' => $profile['livelihood'],
             'sector' => $profile['sector'],
-            'householdSize' => $profile['householdSize'],
+            'educationalAttainment' => $profile['educationalAttainment'],
             'birthdate' => $profile['birthdate'],
             'gender' => $profile['gender'],
             'is4ps' => $profile['is4ps'],
+            'batchNo' => $this->formatBatchNo($profile['batchNo'] ?? ''),
             'status' => $profile['status'],
             'completionPercent' => $complete ? 100 : 70,
             'completionLabel' => $complete ? 'Complete' : 'Needs updates',
         ];
+    }
+
+    private function formatBatchNo(?string $batchNo): string
+    {
+        $value = trim((string) $batchNo);
+        if ($value === '') {
+            return 'Batch 1';
+        }
+
+        return preg_match('/^\d+$/', $value) === 1 ? 'Batch ' . $value : $value;
     }
 
     private function mapApplicationState(?array $application, ?array $detail, array $requirements): ?array
@@ -211,6 +222,11 @@ class ApplicantDashboardService
 
     private function fetchTrainingState(int $applicantProfileId, int $userId): array
     {
+        $isEligible = (new TrainingEligibilityService())->isApplicantEligible($applicantProfileId);
+        if (!$isEligible) {
+            return $this->emptyTrainingState();
+        }
+
         $statement = db()->prepare(
             'SELECT
                 training_invitees.id,
@@ -228,6 +244,8 @@ class ApplicantDashboardService
                 training_programs.ends_at,
                 training_programs.what_to_bring,
                 training_programs.instructions,
+                training_programs.seminar_form_codes,
+                training_programs.updated_at AS program_updated_at,
                 training_programs.status AS program_status,
                 attendance_records.attendance_status,
                 attendance_records.remarks AS attendance_remarks,
@@ -242,7 +260,7 @@ class ApplicantDashboardService
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
         if ($rows === []) {
-            return $this->emptyTrainingState();
+            return $this->emptyTrainingState(true);
         }
 
         $invitees = array_map(function (array $row): array {
@@ -267,6 +285,8 @@ class ApplicantDashboardService
                     'endsAt' => $row['ends_at'],
                     'whatToBring' => $row['what_to_bring'],
                     'instructions' => $row['instructions'],
+                    'seminarFormCodes' => $this->decodeSeminarFormCodes($row['seminar_form_codes'] ?? null),
+                    'seminarFormsOpenedAt' => $row['program_updated_at'] ?? null,
                     'status' => $this->normalizeTrainingStatus((string) $row['program_status']),
                 ],
             ];
@@ -319,9 +339,13 @@ class ApplicantDashboardService
         }
 
         $latestUnlock = null;
+        $openedFormCodes = [];
         foreach ($invitees as $invitee) {
-            if (($invitee['postApprovalUnlockedAt'] ?? null) !== null) {
-                $latestUnlock = $invitee['postApprovalUnlockedAt'];
+            foreach (($invitee['program']['seminarFormCodes'] ?? []) as $code) {
+                $openedFormCodes[$code] = true;
+            }
+            if (($invitee['program']['seminarFormsOpenedAt'] ?? null) !== null) {
+                $latestUnlock = $invitee['program']['seminarFormsOpenedAt'];
             }
         }
 
@@ -331,6 +355,7 @@ class ApplicantDashboardService
             'currentStatus' => $nextSession['status'] ?? TRAINING_STATUS_NOT_SCHEDULED,
             'nextSession' => $nextSession,
             'invitees' => $invitees,
+            'openedFormCodes' => array_keys($openedFormCodes),
             'latestUnlockedAt' => $latestUnlock,
         ];
     }
@@ -410,6 +435,24 @@ class ApplicantDashboardService
             ];
         }
 
+        if (($training['eligible'] ?? false) && (($training['summary']['totalPrograms'] ?? 0) === 0)) {
+            return [
+                'title' => 'Wait for your yearly training schedule',
+                'description' => 'Your required uploads were fully verified by your assigned PDO. CSWDD can now include you in the current SMART LEAP batch and schedule your 3 yearly training sessions.',
+                'actionLabel' => 'View training status',
+                'actionPath' => 'applicant-dashboard#training-progress',
+            ];
+        }
+
+        if (($training['eligible'] ?? false) && in_array($training['currentStatus'] ?? TRAINING_STATUS_NOT_SCHEDULED, [TRAINING_STATUS_SCHEDULED, TRAINING_STATUS_NOTIFIED, TRAINING_STATUS_NOT_SCHEDULED], true)) {
+            return [
+                'title' => 'Prepare for your seminar schedule',
+                'description' => 'You already have a SMART LEAP training record. Review the seminar schedule, reminders, and notice updates on your dashboard.',
+                'actionLabel' => 'View training progress',
+                'actionPath' => 'applicant-dashboard#training-progress',
+            ];
+        }
+
         if (in_array($status, [APPLICATION_STATUS_SUBMITTED, APPLICATION_STATUS_UNDER_REVIEW, APPLICATION_STATUS_CHECKED_BY_PDO, APPLICATION_STATUS_REQUIREMENTS_VERIFIED, APPLICATION_STATUS_FOR_ASSESSMENT], true)) {
             return [
                 'title' => 'Wait for review and assessment updates',
@@ -419,12 +462,14 @@ class ApplicantDashboardService
             ];
         }
 
-        if (in_array($status, [APPLICATION_STATUS_FLAGGED, APPLICATION_STATUS_NEEDS_CORRECTION], true)) {
+        if (in_array($status, [APPLICATION_STATUS_FLAGGED, APPLICATION_STATUS_NEEDS_DOCUMENTS, APPLICATION_STATUS_NEEDS_CORRECTION], true)) {
             return [
-                'title' => 'Review remarks and update your submission',
-                'description' => 'CSWDD needs corrections or additional clarification before your application can proceed.',
-                'actionLabel' => 'Edit Profile',
-                'actionPath' => 'applicant-dashboard#profile-page',
+                'title' => $status === APPLICATION_STATUS_NEEDS_DOCUMENTS ? 'Upload the missing application document' : 'Review remarks and update your submission',
+                'description' => $status === APPLICATION_STATUS_NEEDS_DOCUMENTS
+                    ? 'Your assigned PDO is waiting for one or more required uploaded documents before your application can proceed.'
+                    : 'CSWDD needs corrections or additional clarification before your application can proceed.',
+                'actionLabel' => 'Open Application',
+                'actionPath' => 'applicant-dashboard#application-page',
             ];
         }
 
@@ -437,46 +482,13 @@ class ApplicantDashboardService
             ];
         }
 
-        if (in_array($status, [APPLICATION_STATUS_APPROVED, APPLICATION_STATUS_APPROVED_FOR_TRAINING], true)) {
-            if (($training['summary']['totalPrograms'] ?? 0) === 0) {
-                return [
-                    'title' => 'Wait for your training schedule',
-                    'description' => 'Your application is approved for training. CSWDD will schedule you for the next SMART LEAP training session.',
-                    'actionLabel' => 'View training progress',
-                    'actionPath' => 'applicant-dashboard#training-progress',
-                ];
-            }
-
-            $currentTrainingStatus = $training['currentStatus'] ?? TRAINING_STATUS_NOT_SCHEDULED;
-            if (in_array($currentTrainingStatus, [TRAINING_STATUS_SCHEDULED, TRAINING_STATUS_NOTIFIED, TRAINING_STATUS_NOT_SCHEDULED], true)) {
-                return [
-                    'title' => 'Prepare for your training schedule',
-                    'description' => 'You already have a training record. Review the schedule, notice updates, and attendance guidance below.',
-                    'actionLabel' => 'View training progress',
-                    'actionPath' => 'applicant-dashboard#training-progress',
-                ];
-            }
-
-            if (in_array($currentTrainingStatus, [TRAINING_STATUS_EXCUSED, TRAINING_STATUS_MISSED], true)) {
-                return [
-                    'title' => 'Review your training attendance record',
-                    'description' => 'A training attendance record was marked as missed or excused. Coordinate with CSWDD if you need follow-up guidance on the next session.',
-                    'actionLabel' => 'View training progress',
-                    'actionPath' => 'applicant-dashboard#training-progress',
-                ];
-            }
-
-            $postApprovalUnlockedAt = $postApproval['unlockedAt'] ?? ($training['latestUnlockedAt'] ?? null);
-            if (in_array($currentTrainingStatus, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_COMPLETED], true)
-                && is_string($postApprovalUnlockedAt)
-                && trim($postApprovalUnlockedAt) !== '') {
-                return [
-                    'title' => 'Proceed to your application forms',
-                    'description' => 'Your training attendance has unlocked the next set of fillable application forms. Open the Application page to continue.',
-                    'actionLabel' => 'Open application forms',
-                    'actionPath' => 'applicant-dashboard#application-forms',
-                ];
-            }
+        if (($training['eligible'] ?? false) && in_array($training['currentStatus'] ?? TRAINING_STATUS_NOT_SCHEDULED, [TRAINING_STATUS_EXCUSED, TRAINING_STATUS_MISSED], true)) {
+            return [
+                'title' => 'Review your training attendance record',
+                'description' => 'Your latest training attendance record was marked as missed or excused. Coordinate with CSWDD if you need follow-up guidance on the next seminar.',
+                'actionLabel' => 'View training progress',
+                'actionPath' => 'applicant-dashboard#training-progress',
+            ];
         }
 
         return [
@@ -487,10 +499,10 @@ class ApplicantDashboardService
         ];
     }
 
-    private function emptyTrainingState(): array
+    private function emptyTrainingState(bool $eligible = false): array
     {
         return [
-            'eligible' => false,
+            'eligible' => $eligible,
             'summary' => [
                 'totalPrograms' => 0,
                 'scheduled' => 0,
@@ -503,8 +515,32 @@ class ApplicantDashboardService
             'currentStatus' => TRAINING_STATUS_NOT_SCHEDULED,
             'nextSession' => null,
             'invitees' => [],
+            'openedFormCodes' => [],
             'latestUnlockedAt' => null,
         ];
+    }
+
+    private function decodeSeminarFormCodes(mixed $raw): array
+    {
+        if (!is_string($raw) || trim($raw) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($raw, true);
+        if (!is_array($decoded)) {
+            return [];
+        }
+
+        $codes = [];
+        foreach ($decoded as $value) {
+            $code = trim((string) $value);
+            if ($code === '' || !in_array($code, TRAINING_SEMINAR_FORM_CODES, true)) {
+                continue;
+            }
+            $codes[] = $code;
+        }
+
+        return array_values(array_unique($codes));
     }
 
     private function emptyPostApprovalSummary(): array
@@ -531,6 +567,7 @@ class ApplicantDashboardService
             'approved for training', 'approved_for_training', 'approvedfortraining' => APPLICATION_STATUS_APPROVED_FOR_TRAINING,
             'rejected' => APPLICATION_STATUS_REJECTED,
             'flagged' => APPLICATION_STATUS_FLAGGED,
+            'needs documents', 'needs_documents', 'needsdocuments' => APPLICATION_STATUS_NEEDS_DOCUMENTS,
             'needs correction', 'needs_correction', 'needscorrection' => APPLICATION_STATUS_NEEDS_CORRECTION,
             'training ongoing', 'training_ongoing', 'trainingongoing' => APPLICATION_STATUS_TRAINING_ONGOING,
             'completed' => APPLICATION_STATUS_COMPLETED,

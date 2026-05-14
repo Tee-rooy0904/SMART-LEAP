@@ -3,15 +3,22 @@
   const { formatDate } = window.App.format;
 
   const state = {
-    filters: { status: '', barangayId: '', assignedPdoId: '', search: '' },
+    filters: { status: '', barangayId: '', assignedPdoId: '', livelihoodCategory: '', search: '' },
     data: { applications: [], summary: {}, barangays: [], assignedPdos: [] },
     activeApplication: null,
     activePreviewToken: '',
   };
+  const livelihoodCategories = ['Establishment', 'Livestock', 'Buy & Sell', 'Agriculture', 'Services', 'Food Processing', 'Production', 'Other'];
 
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
 
   const routeUrl = (path) => `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
+
+  const formatBatchNo = (value) => {
+    const text = String(value || '').trim();
+    if (!text) return 'Batch 1';
+    return /^\d+$/.test(text) ? `Batch ${text}` : text;
+  };
 
   const parseJson = async (response) => {
     const contentType = response.headers.get('content-type') || '';
@@ -74,17 +81,26 @@
     }
   };
 
+  const apiFormPost = async (path, formData) => {
+    try {
+      const response = await fetch(routeUrl(path), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: formData,
+      });
+      return await parseJson(response);
+    } catch (error) {
+      return { ok: false, message: 'Unable to reach the server right now.' };
+    }
+  };
+
   const section = () => qs('#applications-section');
 
   const renderShell = () => {
     const target = section();
     if (!target) return;
     setHTML(target, `
-      <div class="applications-header">
-        <div>
-          <h3>Applications</h3>
-        </div>
-      </div>
       <div id="applications-kpis"></div>
       <div class="applications-filters" id="applications-filters"></div>
       <div id="applications-table"></div>
@@ -97,15 +113,32 @@
     const root = qs('#applications-kpis');
     if (!root) return;
     setHTML(root, `
-      <div class="applications-kpis">
-        <div class="summary-chip">Submitted <strong>${summary.submitted || 0}</strong></div>
-        <div class="summary-chip">Under Review <strong>${summary.underReview || 0}</strong></div>
-        <div class="summary-chip">Checked by PDO <strong>${summary.checkedByPdo || 0}</strong></div>
-        <div class="summary-chip">Approved <strong>${summary.approved || 0}</strong></div>
-        <div class="summary-chip">Rejected <strong>${summary.rejected || 0}</strong></div>
-        <div class="summary-chip">Flagged <strong>${summary.flagged || 0}</strong></div>
-        <div class="summary-chip">Needs Correction <strong>${summary.needsCorrection || 0}</strong></div>
-      </div>
+      <section class="applications-kpis metric-grid">
+        <article class="metric-card metric-card--soft">
+          <span class="metric-card__label">In Progress</span>
+          <div class="metric-card__body">
+            <strong class="metric-card__value">${summary.inProgress || 0}</strong>
+          </div>
+        </article>
+        <article class="metric-card metric-card--soft">
+          <span class="metric-card__label">Ready for Review</span>
+          <div class="metric-card__body">
+            <strong class="metric-card__value">${summary.readyForReview || 0}</strong>
+          </div>
+        </article>
+        <article class="metric-card metric-card--soft">
+          <span class="metric-card__label">Approved</span>
+          <div class="metric-card__body">
+            <strong class="metric-card__value">${summary.approved || 0}</strong>
+          </div>
+        </article>
+        <article class="metric-card metric-card--soft">
+          <span class="metric-card__label">Needs Correction</span>
+          <div class="metric-card__body">
+            <strong class="metric-card__value">${summary.needsCorrection || 0}</strong>
+          </div>
+        </article>
+      </section>
     `);
   };
 
@@ -113,8 +146,15 @@
     const root = qs('#applications-filters');
     if (!root) return;
 
-    const statuses = ['', 'Submitted', 'Under Review', 'Requirements Verified', 'For Assessment', 'Approved for Training', 'Rejected', 'Flagged', 'Needs Correction'];
+    const statuses = ['', 'Submitted', 'Under Review', 'Requirements Verified', 'For Assessment', 'Approved for Training', 'Rejected', 'Needs Documents', 'Needs Correction'];
     setHTML(root, `
+      <div class="filter-group filter-group--search">
+        <span class="filter-label">Search</span>
+        <div class="filter-search applications-search">
+          <i class="fas fa-search"></i>
+          <input type="search" id="applications-search" placeholder="Search applicant by name or email" value="${escapeHtml(state.filters.search)}">
+        </div>
+      </div>
       <div class="filter-group">
         <span class="filter-label">Status</span>
         <select id="applications-status" class="filter-select">
@@ -135,11 +175,14 @@
           ${(state.data.assignedPdos || []).map((pdo) => `<option value="${pdo.id}" ${String(state.filters.assignedPdoId) === String(pdo.id) ? 'selected' : ''}>${pdo.name}</option>`).join('')}
         </select>
       </div>
-      <div class="filter-search applications-search">
-        <i class="fas fa-search"></i>
-        <input type="search" id="applications-search" placeholder="Search applicant by name or email" value="${escapeHtml(state.filters.search)}">
+      <div class="filter-group">
+        <span class="filter-label">Livelihood Category</span>
+        <select id="applications-livelihood-category" class="filter-select">
+          <option value="">All categories</option>
+          ${livelihoodCategories.map((category) => `<option value="${category}" ${state.filters.livelihoodCategory === category ? 'selected' : ''}>${category}</option>`).join('')}
+        </select>
       </div>
-      <div class="filter-actions">
+      <div class="filter-actions filter-actions--inline">
         <button class="app-btn-ghost" id="applications-reset">Reset</button>
       </div>
     `);
@@ -157,12 +200,13 @@
           </div>
         </td>
         <td>${escapeHtml(application.barangay || '--')}</td>
+        <td><span class="batch-badge">${escapeHtml(formatBatchNo(application.batchNo))}</span></td>
         <td>${escapeHtml(application.assignedPdoName || '--')}</td>
         <td>${application.uploadedRequirementCount}/${application.requiredRequirementCount} uploaded</td>
         <td><span class="status-badge ${statusClass(application.status)}">${escapeHtml(application.status)}</span></td>
         <td>${formatDate(application.submittedAt)}</td>
         <td class="actions">
-          <button class="action-button" data-open-application="${application.id}">
+          <button class="action-button action-button--review" data-open-application="${application.id}">
             <i class="fas fa-folder-open"></i>
             <span>Open Review</span>
           </button>
@@ -171,13 +215,24 @@
     `).join('');
 
     setHTML(root, `
-      <div class="table-card">
+      <div class="table-card applications-table-shell">
         <div class="table-wrapper">
           <table class="data-table">
+            <colgroup>
+              <col class="applications-table__col--applicant">
+              <col class="applications-table__col--barangay">
+              <col class="applications-table__col--batch">
+              <col class="applications-table__col--pdo">
+              <col class="applications-table__col--requirements">
+              <col class="applications-table__col--status">
+              <col class="applications-table__col--submitted">
+              <col class="applications-table__col--actions">
+            </colgroup>
             <thead>
               <tr>
                 <th>Applicant</th>
                 <th>Barangay</th>
+                <th>Batch</th>
                 <th>Assigned PDO</th>
                 <th>Requirements</th>
                 <th>Status</th>
@@ -185,7 +240,7 @@
                 <th class="actions">Actions</th>
               </tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="7">No applications found.</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="8">No applications found.</td></tr>'}</tbody>
           </table>
         </div>
       </div>
@@ -213,7 +268,7 @@
 
     return `
       <div class="modal-overlay application-review-modal" data-app-modal>
-        <div class="modal-card application-review-modal__card" role="dialog" aria-modal="true">
+        <div class="modal-card application-review-modal__card po-review-modal" role="dialog" aria-modal="true">
           <div class="modal-header">
             <div class="po-modal-title-block">
               <span class="po-panel-label po-modal-eyebrow">Application Case</span>
@@ -232,6 +287,7 @@
                 <strong>${escapeHtml(application.applicantName || '--')}</strong>
                 <div class="po-case-identity__row"><span>Business</span><strong>${escapeHtml(application.businessName || '--')}</strong></div>
                 <div class="po-case-identity__row"><span>Barangay</span><strong>${escapeHtml(application.barangay || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Batch</span><strong>${escapeHtml(formatBatchNo(application.batchNo))}</strong></div>
                 <div class="po-case-identity__row"><span>Assigned PDO</span><strong>${escapeHtml(application.assignedPdoName || '--')}</strong></div>
               </article>
               <article class="po-case-identity__block">
@@ -284,7 +340,7 @@
               <article class="po-review-inspector">
                 <div class="po-review-section__header">
                   <div>
-                    <span class="po-panel-label">Requirement Decision</span>
+                    <span class="po-panel-label">Requirement Details</span>
                     <h6 id="admin-inspector-title">Select a requirement</h6>
                   </div>
                   <span class="po-status-chip is-muted" id="admin-inspector-chip">No selection</span>
@@ -314,10 +370,6 @@
                 ${(application.comments || []).map((entry) => `<li><div><strong>${escapeHtml(entry.actorName)}</strong><div>${formatDate(entry.createdAt)}</div></div><span>${escapeHtml(entry.comment || '--')}</span></li>`).join('') || '<li>No comments yet.</li>'}
               </ul>
             </section>
-            <section class="po-decision-panel">
-              <label for="application-review-remarks" class="po-panel-label">Application-level Remarks</label>
-              <textarea id="application-review-remarks" rows="4" placeholder="Record application-level remarks for the next status action."></textarea>
-            </section>
           </div>
           <div class="modal-footer">
             <div class="po-decision-rail">
@@ -328,10 +380,8 @@
               </div>
               <div class="po-decision-rail__actions">
                 <button type="button" class="btn btn-outline-secondary" data-close-modal>Close</button>
-                <button type="button" class="btn btn-outline-warning" data-review-action="flag">Needs Documents</button>
-                <button type="button" class="btn btn-outline-primary" data-review-action="needs_correction">Needs Correction</button>
                 <button type="button" class="btn btn-danger" data-review-action="reject">Reject</button>
-                <button type="button" class="btn btn-success" data-review-action="approve" ${readiness.canApprove ? '' : 'disabled'}>Approve</button>
+                <button type="button" class="btn btn-success" data-review-action="approve" ${readiness.canApprove ? '' : 'disabled title="Resolve the blocking reasons before approval."'}>Approve</button>
               </div>
             </div>
           </div>
@@ -411,7 +461,12 @@
     }
     setHTML(root, items.map(({ token, kind, item }) => {
       const selected = state.activePreviewToken === token;
-      return `<button type="button" class="po-requirement-card ${selected ? 'is-active' : ''}" data-select-requirement="${escapeHtml(token)}"><div class="po-requirement-card__top"><strong>${escapeHtml(item.label || '--')}</strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(requirementStatusLabel(item.status))}</span></div><div class="po-requirement-card__meta"><span>${escapeHtml(item.typeLabel || '--')}</span><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></div></button>`;
+      const itemKey = String(kind === 'upload' ? item.key : item.id);
+      const uploadedFormFile = kind === 'form' ? formRequirementFile(item) : null;
+      const uploadControl = kind === 'form'
+        ? `<div class="po-requirement-card__actions"><input class="po-review-upload-input" id="admin-form-upload-${escapeAttribute(itemKey)}" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" data-form-upload-input="${escapeAttribute(itemKey)}" hidden><button type="button" class="action-button action-button--quiet po-requirement-card__upload" data-trigger-form-upload="${escapeAttribute(itemKey)}">${uploadedFormFile?.url ? 'Replace uploaded file' : 'Upload file'}</button></div>`
+        : '';
+      return `<article class="po-requirement-card ${selected ? 'is-active' : ''}"><button type="button" class="po-requirement-card__select" data-select-requirement="${escapeAttribute(token)}"><div class="po-requirement-card__top"><strong>${escapeHtml(item.label || '--')}</strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(requirementStatusLabel(item.status))}</span></div><div class="po-requirement-card__meta"><span>${escapeHtml(item.typeLabel || '--')}</span><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></div></button>${uploadControl}</article>`;
     }).join(''));
   };
 
@@ -448,6 +503,12 @@
         return;
       }
       setHTML(root, `<div class="po-preview-file-card"><strong>${escapeHtml(item.file?.name || item.label || 'Requirement file')}</strong><span>${escapeHtml(item.file?.type || 'File preview is not available in-panel.')}</span><a class="action-button" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open file</a></div>`);
+      return;
+    }
+
+    const uploadedFormFile = formRequirementFile(item);
+    if (uploadedFormFile?.url) {
+      renderPreviewFile(root, uploadedFormFile, item.label || 'Form file');
       return;
     }
 
@@ -502,9 +563,10 @@
     const { kind, item } = preview;
     const itemKey = String(kind === 'upload' ? item.key : item.id);
     const statusLabel = requirementStatusLabel(item.status);
+    const uploadedFormFile = kind === 'form' ? formRequirementFile(item) : null;
     if (title) title.textContent = item.label || 'Requirement';
     if (chip) chip.textContent = item.typeLabel || '--';
-    setHTML(root, `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Submission State</span><strong><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></strong></div><div class="po-inspector-summary__row"><span>Requirement Status</span><strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(statusLabel)}</span></strong></div></div><label class="po-inspector-field"><span>Staff Remarks</span><textarea class="po-inline-remarks" data-${kind}-staff-remarks="${escapeHtml(itemKey)}" rows="4" placeholder="Internal note for staff only.">${escapeHtml(item.reviewerRemarks || '')}</textarea></label><label class="po-inspector-field"><span>Applicant-visible Remark</span><textarea class="po-inline-remarks" data-${kind}-applicant-remarks="${escapeHtml(itemKey)}" rows="4" placeholder="Shown to the applicant when needed."></textarea></label><div class="po-inspector-links">${(kind === 'upload' ? item.file?.url : item.reviewUrl) ? `${kind === 'upload' ? `<a class="action-link" href="${escapeHtml(item.file.url)}" target="_blank" rel="noopener">Open file in new tab</a>` : `<a class="action-link" href="${escapeHtml(item.reviewUrl)}" target="_blank" rel="noopener">Open form in new tab</a>`}` : '<span class="muted-cell">No external preview available.</span>'}</div><div class="po-inspector-actions"><button type="button" class="action-button" data-review-${kind}="${escapeHtml(itemKey)}" data-decision="approve">Approve Requirement</button><button type="button" class="action-button action-button--danger" data-review-${kind}="${escapeHtml(itemKey)}" data-decision="reject">Reject Requirement</button></div>`);
+    setHTML(root, `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Submission State</span><strong><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></strong></div><div class="po-inspector-summary__row"><span>Requirement Status</span><strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(statusLabel)}</span></strong></div></div>${kind === 'form' ? `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Uploaded form file</span><strong>${escapeHtml(uploadedFormFile?.name || 'No file uploaded yet')}</strong></div><div class="po-inspector-summary__row"><span>Staff upload</span><strong>${uploadedFormFile?.uploadedAt ? escapeHtml(formatDate(uploadedFormFile.uploadedAt)) : '--'}</strong></div></div>` : ''}`);
   };
 
   const load = async () => {
@@ -550,66 +612,23 @@
     }
   };
 
-  const refreshAfterReview = async (response, fallbackMessage) => {
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
+  const uploadFormFile = async (taskId, file) => {
+    const formData = new FormData();
+    formData.append('taskId', String(taskId));
+    formData.append('fieldKey', 'reviewAttachment');
+    formData.append('file', file);
+    const response = await apiFormPost('api/post-approval-review/upload', formData);
     if (!response.ok) {
-      showNotice(firstError(response.errors) || response.message || fallbackMessage, 'danger');
-      return;
-    }
-    if (response.application) {
-      state.activeApplication = response.application;
-      renderModal(state.activeApplication);
-    } else {
-      await refreshActiveApplication();
-    }
-    await load();
-  };
-
-  const reviewUpload = async (requirementKey, decision) => {
-    const staffRemarks = String(document.querySelector(`[data-upload-staff-remarks="${cssEscape(requirementKey)}"]`)?.value || '').trim();
-    const applicantRemark = String(document.querySelector(`[data-upload-applicant-remarks="${cssEscape(requirementKey)}"]`)?.value || '').trim();
-    if (decision === 'reject' && !applicantRemark) {
-      showNotice('Applicant-visible remark is required when rejecting a requirement.', 'danger');
-      return;
-    }
-    const response = await apiPost('api/applications/review-requirement', {
-      applicationId: state.activeApplication.id,
-      requirementKey,
-      decision,
-      staffRemarks,
-      applicantRemark,
-    });
-    await refreshAfterReview(response, 'Unable to save the requirement review.');
-  };
-
-  const reviewForm = async (taskId, decision) => {
-    const staffRemarks = String(document.querySelector(`[data-form-staff-remarks="${taskId}"]`)?.value || '').trim();
-    const applicantVisibleRemark = String(document.querySelector(`[data-form-applicant-remarks="${taskId}"]`)?.value || '').trim();
-    if (decision === 'reject' && !applicantVisibleRemark) {
-      showNotice('Applicant-visible remark is required when rejecting a requirement.', 'danger');
-      return;
-    }
-    const response = await apiJsonPost('api/post-approval-review/review', {
-      taskId: Number(taskId),
-      status: decision === 'approve' ? 'Verified' : 'Rejected',
-      remarks: staffRemarks,
-      applicantVisibleRemark,
-      staffForm: {},
-    });
-    if (!response.ok) {
-      showNotice(firstError(response.errors) || response.message || 'Unable to save the form review.', 'danger');
+      showNotice(firstError(response.errors) || response.message || 'Unable to upload the form file.', 'danger');
       return;
     }
     await refreshActiveApplication();
-    await load();
+    showNotice('Form file uploaded.', 'success');
   };
 
   const submitReview = async (decision) => {
     if (!state.activeApplication) return;
-    const remarks = qs('#application-review-remarks')?.value || '';
+    const remarks = decision === 'reject' ? 'Application rejected by reviewer.' : '';
     const response = await apiPost('api/applications/review', {
       applicationId: state.activeApplication.id,
       decision,
@@ -660,6 +679,10 @@
         state.filters.assignedPdoId = event.target.value;
         load();
       }
+      if (event.target.id === 'applications-livelihood-category') {
+        state.filters.livelihoodCategory = event.target.value;
+        load();
+      }
     });
 
     on(target, 'input', (event) => {
@@ -672,7 +695,7 @@
     on(target, 'click', async (event) => {
       const reset = event.target.closest('#applications-reset');
       if (reset) {
-        state.filters = { status: '', barangayId: '', assignedPdoId: '', search: '' };
+        state.filters = { status: '', barangayId: '', assignedPdoId: '', livelihoodCategory: '', search: '' };
         await load();
         return;
       }
@@ -698,15 +721,9 @@
         return;
       }
 
-      const upload = event.target.closest('[data-review-upload]');
-      if (upload) {
-        reviewUpload(upload.dataset.reviewUpload, upload.dataset.decision);
-        return;
-      }
-
-      const form = event.target.closest('[data-review-form]');
-      if (form) {
-        reviewForm(Number(form.dataset.reviewForm), form.dataset.decision);
+      const uploadTrigger = event.target.closest('[data-trigger-form-upload]');
+      if (uploadTrigger) {
+        document.getElementById(`admin-form-upload-${uploadTrigger.dataset.triggerFormUpload}`)?.click();
         return;
       }
 
@@ -715,13 +732,23 @@
         submitReview(action.dataset.reviewAction);
       }
     });
+
+    on(document, 'change', async (event) => {
+      const input = event.target.closest('[data-form-upload-input]');
+      if (!(input instanceof HTMLInputElement) || !input.files?.[0]) return;
+      const taskId = Number(input.dataset.formUploadInput || 0);
+      if (taskId <= 0) return;
+      const file = input.files[0];
+      input.value = '';
+      await uploadFormFile(taskId, file);
+    });
   };
 
   const statusClass = (status) => {
     const value = String(status || '').toLowerCase();
     if (['approved', 'approved for training', 'verified', 'completed', 'attended'].includes(value)) return 'is-success';
     if (['rejected', 'flagged', 'missing', 'missed'].includes(value)) return 'is-danger';
-    if (['needs correction', 'submitted', 'under review', 'pending', 'for assessment', 'requirements verified', 'notified', 'scheduled'].includes(value)) return 'is-warning';
+    if (['needs documents', 'needs correction', 'submitted', 'under review', 'pending', 'for assessment', 'requirements verified', 'notified', 'scheduled'].includes(value)) return 'is-warning';
     if (value === 'info') return 'is-info';
     return 'is-muted';
   };
@@ -744,11 +771,33 @@
     return String(value).replace(/"/g, '\\"');
   };
 
+  const formRequirementFile = (item) => (item && typeof item === 'object' && item.file ? item.file : null);
+
+  const renderPreviewFile = (root, file, label) => {
+    const url = file?.url || '';
+    const mime = String(file?.type || '').toLowerCase();
+    if (!url) {
+      setHTML(root, '<div class="po-preview-empty">No file was uploaded for this form.</div>');
+      return;
+    }
+    if (mime.startsWith('image/')) {
+      setHTML(root, `<div class="po-preview-frame po-preview-frame--image"><img src="${escapeHtml(url)}" alt="${escapeHtml(label || 'Uploaded form preview')}"></div>`);
+      return;
+    }
+    if (mime.includes('pdf') || mime.startsWith('text/')) {
+      setHTML(root, `<div class="po-preview-frame"><iframe src="${escapeHtml(url)}" title="${escapeHtml(label || 'Uploaded form preview')}"></iframe></div>`);
+      return;
+    }
+    setHTML(root, `<div class="po-preview-file-card"><strong>${escapeHtml(file?.name || label || 'Uploaded form file')}</strong><span>${escapeHtml(file?.type || 'File preview is not available in-panel.')}</span><a class="action-button" href="${escapeHtml(url)}" target="_blank" rel="noopener">Open file</a></div>`);
+  };
+
   const init = () => {
     renderShell();
     bind();
     load();
   };
+
+  const escapeAttribute = (value) => escapeHtml(value);
 
   window.App.modules = window.App.modules || {};
   window.App.modules.applications = { init };

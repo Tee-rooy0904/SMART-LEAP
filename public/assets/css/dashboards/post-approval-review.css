@@ -68,6 +68,11 @@ body.review-body--embedded .review-queue {
     display: none;
 }
 
+body.review-body--focused-task .review-summary,
+body.review-body--focused-task .review-queue {
+    display: none;
+}
+
 .eyebrow {
     margin: 0 0 8px;
     letter-spacing: 0.18em;
@@ -213,6 +218,10 @@ body.review-body--embedded .review-queue {
 
 .applicant-card.is-hidden,
 .review-form.is-hidden {
+    display: none;
+}
+
+.workspace-column.is-hidden {
     display: none;
 }
 

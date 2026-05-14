@@ -6,11 +6,6 @@ namespace App\Services;
 
 class AttendanceService
 {
-    private const UNLOCK_STATUSES = [
-        TRAINING_STATUS_ATTENDED,
-        TRAINING_STATUS_COMPLETED,
-    ];
-
     public function updateInviteeAttendance(
         int $trainingInviteeId,
         string $status,
@@ -107,12 +102,6 @@ class AttendanceService
                 'id' => $trainingInviteeId,
             ]);
 
-            if (in_array($status, self::UNLOCK_STATUSES, true)) {
-                $this->unlockPostApproval($invitee, $actorUserId);
-            } else {
-                $this->revokePostApproval($invitee, $actorUserId);
-            }
-
             $pdo->commit();
         } catch (\Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -132,7 +121,7 @@ class AttendanceService
     {
         $beneficiaryProfileId = $invitee['beneficiary_profile_id'] !== null
             ? (int) $invitee['beneficiary_profile_id']
-            : (new BeneficiaryProfileService())->ensureForApplicantProfile((int) $invitee['applicant_profile_id']);
+            : (new BeneficiaryProfileService())->ensureWorkspaceProfileForApplicantProfile((int) $invitee['applicant_profile_id']);
 
         if ($beneficiaryProfileId !== null && $beneficiaryProfileId > 0 && (int) $invitee['beneficiary_profile_id'] !== $beneficiaryProfileId) {
             db()->prepare(
@@ -276,7 +265,7 @@ class AttendanceService
                 attendance_records.proof_file_size
              FROM training_invitees
              LEFT JOIN attendance_records ON attendance_records.training_invitee_id = training_invitees.id
-             WHERE id = :id
+             WHERE training_invitees.id = :id
              LIMIT 1'
         );
         $statement->execute(['id' => $trainingInviteeId]);

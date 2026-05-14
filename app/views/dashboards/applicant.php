@@ -1,21 +1,37 @@
 <?php /** @var string $baseUrl */ ?>
 <?php /** @var array|null $authUser */ ?>
+<?php
+$applicantCssVersion = @filemtime(base_path('public/assets/css/dashboards/applicant.css')) ?: time();
+$postApprovalCssVersion = @filemtime(base_path('public/assets/css/dashboards/post-approval.css')) ?: time();
+$notificationsCssVersion = @filemtime(base_path('public/assets/css/components/notifications.css')) ?: time();
+$applicantJsVersion = @filemtime(base_path('public/assets/js/dashboards/applicant.js')) ?: time();
+$applicantProfileJsVersion = @filemtime(base_path('public/assets/js/dashboards/applicant-profile.js')) ?: time();
+$languageToggleJsVersion = @filemtime(base_path('public/assets/js/dashboards/language-toggle.js')) ?: time();
+$supportHelpdeskJsVersion = @filemtime(base_path('public/assets/js/dashboards/support-helpdesk.js')) ?: time();
+$notificationsJsVersion = @filemtime(base_path('public/assets/js/shared/notifications.js')) ?: time();
+$butuanBarangays = array_map(
+    static fn (array $row): string => (string) ($row['name'] ?? ''),
+    (new \App\Services\BarangayCatalogService())->all()
+);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SMART LEAP | Beneficiary Portal</title>
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css">
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval.css">
+    <title>SMART LEAP | Applicant Portal</title>
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css?v=<?= urlencode((string) $applicantCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval.css?v=<?= urlencode((string) $postApprovalCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= urlencode((string) $notificationsCssVersion) ?>">
 </head>
-<body>
+<body class="applicant-dashboard-page">
     <script>
         window.SMARTLEAP_AUTH_USER = <?= json_encode($authUser ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
         window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+        window.SMARTLEAP_BARANGAYS = <?= json_encode($butuanBarangays, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     </script>
     <div class="dashboard-shell">
-        <aside class="dash-sidebar" id="appSidebar" aria-label="Beneficiary portal navigation">
+        <aside class="dash-sidebar" id="appSidebar" aria-label="Applicant portal navigation">
             <div class="sidebar-drawer__top">
                 <div class="sidebar-brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="sidebar-logo">
@@ -25,21 +41,12 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <div class="sidebar-user">
-                <div class="sidebar-avatar" id="sidebarAvatar" aria-hidden="true">A</div>
-                <div class="sidebar-user__meta">
-                    <span class="sidebar-user__name" id="sidebarUserName">Beneficiary</span>
-                    <span class="sidebar-user__biz" id="sidebarUserBusiness">Your livelihood</span>
-                </div>
-            </div>
             <nav class="sidebar-nav">
-                <a class="sidebar-link is-active" href="#dashboard-home"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 11.5L12 4l9 7.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10.5V20h13V10.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Dashboard</span></a>
-                <a class="sidebar-link" href="#profile-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><circle cx="12" cy="8" r="4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 20a8 8 0 0116 0" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Profile</span></a>
-                <a class="sidebar-link" href="#application-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M8 7h8" stroke-linecap="round"/><path d="M8 12h8" stroke-linecap="round"/><path d="M8 17h5" stroke-linecap="round"/><rect x="5" y="3" width="14" height="18" rx="2" stroke-linejoin="round"/></svg></span><span>Application</span></a>
-                <a class="sidebar-link" href="#training-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 9l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M7 11v5c0 1.66 2.91 3 5 3s5-1.34 5-3v-5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span>Training</span></a>
-                <a class="sidebar-link" href="#support-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M7 7h10a3 3 0 013 3v4a3 3 0 01-3 3h-3l-3 4-3-4H7a3 3 0 01-3-3v-4a3 3 0 013-3z" stroke-linejoin="round"/></svg></span><span>Support</span></a>
+                <a class="sidebar-link is-active" href="#dashboard-home"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 11.5L12 4l9 7.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10.5V20h13V10.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n-key="overview">Overview</span></a>
+                <a class="sidebar-link" href="#application-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M8 7h8" stroke-linecap="round"/><path d="M8 12h8" stroke-linecap="round"/><path d="M8 17h5" stroke-linecap="round"/><rect x="5" y="3" width="14" height="18" rx="2" stroke-linejoin="round"/></svg></span><span data-i18n-key="application">Application</span></a>
+                <a class="sidebar-link" href="#training-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 9l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M7 11v5c0 1.66 2.91 3 5 3s5-1.34 5-3v-5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n-key="training">Training</span></a>
+                <a class="sidebar-link" href="#support-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M7 7h10a3 3 0 013 3v4a3 3 0 01-3 3h-3l-3 4-3-4H7a3 3 0 01-3-3v-4a3 3 0 013-3z" stroke-linejoin="round"/></svg></span><span data-i18n-key="support">Support</span></a>
             </nav>
-            <button type="button" class="btn-outline sidebar-logout" id="applicantLogoutButton">Logout</button>
         </aside>
         <button type="button" class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true" tabindex="-1"></button>
         <div class="portal-loader" id="portalLoader" aria-live="polite">
@@ -49,44 +56,47 @@
             <p class="portal-loader__copy" id="portalLoaderCopy">Loading your applicant portal...</p>
         </div>
         <div class="dash-content">
-            <header class="mobile-topbar" aria-label="Beneficiary portal mobile navigation">
-                <div class="mobile-topbar__brand">
-                    <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="mobile-topbar__logo">
-                    <strong class="mobile-topbar__title">SMART LEAP</strong>
+            <header class="mobile-topbar applicant-contextbar" aria-label="Applicant portal navigation">
+                <div class="applicant-contextbar__brand">
+                    <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP logo" class="applicant-contextbar__logo">
+                    <strong class="mobile-topbar__title" id="mobileTopbarTitle" data-i18n-key="overview">Overview</strong>
                 </div>
-                <button
-                    type="button"
-                    class="mobile-topbar__menu"
-                    id="sidebarToggle"
-                    aria-label="Open navigation"
-                    aria-controls="appSidebar"
-                    aria-expanded="false"
-                >
-                    <span class="mobile-topbar__menu-box" aria-hidden="true">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </span>
-                </button>
-            </header>
-            <main class="dash-main">
-                <section id="dashboard-home" class="dash-page dash-page--home" aria-labelledby="dashboardHomeHeading">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Dashboard</p>
-                            <h2 id="dashboardHomeHeading">Your guided beneficiary journey</h2>
-                            <p class="dash-page__lead">Start with the current step, then review what needs attention and what comes next.</p>
+                <div class="applicant-contextbar__actions">
+                    <div class="applicant-contextbar__notifications" id="applicantNotificationMount"></div>
+                    <div class="portal-language-toggle" role="group" aria-label="Select language">
+                        <button type="button" class="portal-language-toggle__button is-active" data-language-option="en">English</button>
+                        <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Bisaya</button>
+                    </div>
+                    <div class="mobile-topbar__account">
+                        <button
+                            type="button"
+                            class="mobile-topbar__avatar"
+                            id="mobileAccountToggle"
+                            aria-label="Open account menu"
+                            aria-haspopup="menu"
+                            aria-expanded="false"
+                        >
+                            <span class="mobile-topbar__avatar-initial" id="mobileAccountAvatar" aria-hidden="true">A</span>
+                        </button>
+                        <div class="mobile-account-menu" id="mobileAccountMenu" role="menu" aria-hidden="true">
+                            <button type="button" class="mobile-account-menu__item" id="mobileAccountProfile" role="menuitem" data-i18n-key="profile">Profile</button>
+                            <button type="button" class="mobile-account-menu__item" id="mobileAccountPassword" role="menuitem" data-i18n-key="changePassword">Change Password</button>
+                            <button type="button" class="mobile-account-menu__item" id="mobileAccountLogout" role="menuitem" data-i18n-key="signOut">Sign Out</button>
                         </div>
                     </div>
+                </div>
+            </header>
+            <main class="dash-main">
+                <section id="dashboard-home" class="dash-page dash-page--home">
                     <section class="panel dash-section panel--hero applicant-current-step" aria-labelledby="nextStepHeading">
                         <div class="applicant-current-step__main">
                             <div class="panel-header panel-header--compact">
                                 <h3 id="nextStepHeading">Current step</h3>
-                                <p class="panel-subtitle">This is the one action that matters most right now.</p>
+                                <p class="panel-subtitle">This is the most important action to complete right now.</p>
                             </div>
                             <span class="journey-pill" id="nextStepStatus">Loading current status</span>
                             <strong class="applicant-current-step__title" id="nextStepTitle">Loading your next step</strong>
-                            <p class="applicant-current-step__copy" id="nextStepDescription">Please wait while your beneficiary workspace checks your current workflow stage.</p>
+                            <p class="applicant-current-step__copy" id="nextStepDescription">Please wait while the workspace checks your current workflow stage.</p>
                             <div class="applicant-current-step__actions">
                                 <button type="button" class="btn-primary" id="nextStepAction" disabled>Loading</button>
                             </div>
@@ -106,24 +116,24 @@
                     </section>
                     <section id="overview" class="panel dash-section dash-section--summary panel--summary applicant-journey-panel" aria-labelledby="overviewHeading">
                         <div class="panel-header">
-                            <h3 id="overviewHeading">Journey progress</h3>
-                            <p class="panel-subtitle">Four milestones from profile completion to certificate release.</p>
+                            <h3 id="overviewHeading">Progress overview</h3>
+                            <p class="panel-subtitle">Three milestones from profile completion to training progress.</p>
                         </div>
-                        <div class="applicant-journey-strip" role="list" aria-label="Applicant journey milestones">
+                        <div class="applicant-journey-strip" role="list" aria-label="Milestones sa proseso sa aplikante">
                             <article class="journey-step" id="journeyStepProfile" role="listitem">
                                 <span class="journey-step__index">1</span>
                                 <div class="journey-step__body">
                                     <span class="journey-step__label">Profile</span>
                                     <strong class="journey-step__value" id="dashboardProfileCompletion">0%</strong>
-                                    <p class="journey-step__meta" id="dashboardProfileCompletionNote">Keep your profile updated.</p>
+                                    <p class="journey-step__meta" id="dashboardProfileCompletionNote">Make sure your profile stays updated.</p>
                                 </div>
                             </article>
-                            <article class="journey-step" id="journeyStepApplication" role="listitem">
+                            <article class="journey-step" id="journeyStepAplikasyon" role="listitem">
                                 <span class="journey-step__index">2</span>
                                 <div class="journey-step__body">
                                     <span class="journey-step__label">Application review</span>
                                     <strong class="journey-step__value" id="dashboardRequirementsSummary">0/3 uploaded</strong>
-                                    <p class="journey-step__meta" id="dashboardRequirementsSummaryNote">Upload progress and verification.</p>
+                                    <p class="journey-step__meta" id="dashboardRequirementsSummaryNote">Upload and verification progress.</p>
                                 </div>
                             </article>
                             <article class="journey-step" id="journeyStepTraining" role="listitem">
@@ -131,15 +141,7 @@
                                 <div class="journey-step__body">
                                     <span class="journey-step__label">Training</span>
                                     <strong class="journey-step__value" id="dashboardTrainingCompletion">0% complete</strong>
-                                    <p class="journey-step__meta" id="dashboardTrainingCompletionNote">Sessions and attendance are grouped in Training.</p>
-                                </div>
-                            </article>
-                            <article class="journey-step" id="journeyStepCertificate" role="listitem">
-                                <span class="journey-step__index">4</span>
-                                <div class="journey-step__body">
-                                    <span class="journey-step__label">Certificate</span>
-                                    <strong class="journey-step__value" id="dashboardCertificateStatus">Locked</strong>
-                                    <p class="journey-step__meta" id="dashboardCertificateStatusNote">Available after your training and application requirements are complete.</p>
+                                    <p class="journey-step__meta" id="dashboardTrainingCompletionNote">Sessions and attendance appear in Training.</p>
                                 </div>
                             </article>
                         </div>
@@ -147,39 +149,45 @@
                     <section class="dashboard-attention-grid">
                         <section class="panel dash-section panel--review applicant-alerts-panel" aria-labelledby="importantUpdatesHeading">
                             <div class="panel-header">
-                                <h3 id="importantUpdatesHeading">Important updates</h3>
+                                <h3 id="importantUpdatesHeading">Importante nga updates</h3>
                                 <p class="panel-subtitle">Only items that need attention or explain the next movement in your application.</p>
                             </div>
                             <ul class="attention-list" id="applicantAlertList">
-                                <li class="attention-list__empty">High-value updates will appear here as your application moves.</li>
+                                <li class="attention-list__empty">Important updates will appear here while your application moves through review.</li>
                             </ul>
                         </section>
                     </section>
                 </section>
-                <section id="profile-page" class="dash-page" aria-labelledby="profilePageHeading">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Profile</p>
-                            <h2 id="profilePageHeading">Edit your personal details</h2>
-                            <p class="dash-page__lead">Update and save the information used in your application.</p>
-                        </div>
-                    </div>
+                <section id="profile-page" class="dash-page">
                     <section class="dash-section profile-editor-workspace" aria-labelledby="profileWorkspaceHeading">
                         <div class="status-bar" aria-live="polite">
                             <div>
                                 <span class="status-label">Application status</span>
                                 <strong id="statusValue">Draft</strong>
                                 <span class="status-dot" aria-hidden="true"></span>
-                                <span class="status-updated">Last update: <span id="statusUpdated">--</span></span>
+                                <span class="status-updated">Katapusang update: <span id="statusUpdated">--</span></span>
                             </div>
                             <div class="status-remark" id="statusRemark" hidden></div>
                         </div>
 
+                        <div class="profile-editor-layout">
+                        <aside class="profile-photo profile-editor-photo">
+                            <div class="profile-photo__frame">
+                                <img id="profilePhotoPreview" src="" alt="Profile photo preview" class="is-hidden">
+                                <div class="profile-photo__placeholder" id="profilePhotoPlaceholder">No photo</div>
+                            </div>
+                            <label class="btn-outline profile-photo__upload">
+                                Upload photo
+                                <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" hidden>
+                            </label>
+                            <p class="profile-photo__note">JPG or PNG, up to 5MB.</p>
+                        </aside>
+
                         <form id="profileCompletionForm" class="profile-form" novalidate>
                             <section class="panel profile-editor-panel profile-editor-panel--personal">
                                 <div class="panel-header">
+                                    <button type="button" class="btn-outline small applicant-profile-back" data-open-dashboard-home>Back</button>
                                     <h2 id="profileWorkspaceHeading">Personal Information</h2>
-                                    <p class="panel-subtitle">Update the details used across your applicant record. Fields marked with * are required.</p>
                                 </div>
                                 <div class="form-grid">
                                     <label class="form-field">
@@ -189,9 +197,9 @@
                                     </label>
                                     <label class="form-field">
                                         <span>Age <em>Auto-filled</em></span>
-                                        <input type="number" id="profileAge" name="age" readonly>
-                                        <small class="field-helper">Auto-calculated from birthdate.</small>
-                                        <small data-error-for="profileAge"></small>
+                                        <input type="number" id="profileEdad" name="age" readonly>
+                                        <small class="field-helper">Automatically computed from the birthdate.</small>
+                                        <small data-error-for="profileEdad"></small>
                                     </label>
                                     <label class="form-field">
                                         <span>Gender <em>*</em></span>
@@ -206,8 +214,8 @@
                                     </label>
                                     <label class="form-field">
                                         <span>Contact number <em>*</em></span>
-                                        <input type="tel" id="profileContactNumber" name="contactNumber" placeholder="09xxxxxxxxx" required>
-                                        <small data-error-for="profileContactNumber"></small>
+                                        <input type="tel" id="profileKontakNumber" name="contactNumber" placeholder="09xxxxxxxxx" required>
+                                        <small data-error-for="profileKontakNumber"></small>
                                     </label>
                                     <label class="form-field">
                                         <span>Complete address <em>*</em></span>
@@ -218,50 +226,6 @@
                                         <span>Barangay <em>*</em></span>
                                         <select id="profileBarangay" name="barangay" required>
                                             <option value="">Select barangay</option>
-                                            <option>Ag-ao</option>
-                                            <option>Agusan Pequeño</option>
-                                            <option>Ambago</option>
-                                            <option>Ampayon</option>
-                                            <option>Anticala</option>
-                                            <option>Babag</option>
-                                            <option>Bad-as</option>
-                                            <option>Banza</option>
-                                            <option>Bayawan</option>
-                                            <option>Bitan-agan</option>
-                                            <option>Buhangin</option>
-                                            <option>Cabcabon</option>
-                                            <option>Doongan</option>
-                                            <option>Dulag</option>
-                                            <option>Florida</option>
-                                            <option>Fort Poyohon</option>
-                                            <option>Golden Ribbon</option>
-                                            <option>Holy Redeemer</option>
-                                            <option>Imadejas</option>
-                                            <option>J.P. Rizal</option>
-                                            <option>Kinamlutan</option>
-                                            <option>Lapu-Lapu</option>
-                                            <option>Libertad</option>
-                                            <option>Limaha</option>
-                                            <option>Los Angeles</option>
-                                            <option>Lumbocan</option>
-                                            <option>Masao</option>
-                                            <option>Maon</option>
-                                            <option>Maug</option>
-                                            <option>Nonong</option>
-                                            <option>Obrero</option>
-                                            <option>Ong Yiu</option>
-                                            <option>Pagatpatan</option>
-                                            <option>Pianing</option>
-                                            <option>San Mateo</option>
-                                            <option>San Vicente</option>
-                                            <option>Sto. Niño</option>
-                                            <option>Sumilihon</option>
-                                            <option>Tagabaca</option>
-                                            <option>Taguibo</option>
-                                            <option>Taligaman</option>
-                                            <option>Tiniwisan</option>
-                                            <option>Tungao</option>
-                                            <option>Villa Kananga</option>
                                         </select>
                                         <small data-error-for="profileBarangay"></small>
                                     </label>
@@ -275,9 +239,16 @@
                                         <small data-error-for="profile4ps"></small>
                                     </label>
                                     <label class="form-field">
-                                        <span>Household size <em>*</em></span>
-                                        <input type="number" id="profileHouseholdSize" name="householdSize" min="1" required>
-                                        <small data-error-for="profileHouseholdSize"></small>
+                                        <span>Highest educational attainment <em>*</em></span>
+                                        <select id="profileEducationalAttainment" name="educationalAttainment" required>
+                                            <option value="">Select attainment</option>
+                                            <option value="Kindergarten">Kindergarten</option>
+                                            <option value="Elementary">Elementary</option>
+                                            <option value="JHS">JHS</option>
+                                            <option value="SHS Grad">SHS grad</option>
+                                            <option value="Tertiary">Tertiary</option>
+                                        </select>
+                                        <small data-error-for="profileEducationalAttainment"></small>
                                     </label>
                                     <label class="form-field">
                                         <span>Sector <em>*</em></span>
@@ -288,11 +259,17 @@
                                             <option value="Solo Parent">Solo Parent</option>
                                             <option value="PWD">PWD</option>
                                             <option value="None">None</option>
+                                            <option value="Other">Other (please specify)</option>
                                         </select>
                                         <small data-error-for="profileSector"></small>
                                     </label>
+                                    <label class="form-field" id="profileSectorOtherWrap" hidden>
+                                        <span>Other sector <em>*</em></span>
+                                        <input type="text" id="profileSectorOtherSpecify" name="sectorOtherSpecify" placeholder="Please specify" disabled>
+                                        <small data-error-for="profileSectorOtherSpecify"></small>
+                                    </label>
                                     <label class="form-field">
-                                        <span>Livelihood / Business type <em>*</em></span>
+                                        <span>Specific business type / Klase sa negosyo <em>*</em></span>
                                         <input type="text" id="profileLivelihood" name="livelihood" placeholder="e.g., Sari-sari store" required>
                                         <small data-error-for="profileLivelihood"></small>
                                     </label>
@@ -301,29 +278,27 @@
                                         <input type="text" id="profileBusinessName" name="businessName" placeholder="e.g., Maria's Sari-sari Store" required>
                                         <small data-error-for="profileBusinessName"></small>
                                     </label>
+                                    <label class="form-field">
+                                        <span>Batch No</span>
+                                        <input type="text" id="profileBatchNo" name="batchNo" value="Batch 1" readonly>
+                                        <small class="field-helper">Assigned by CSWDD for the current SMART LEAP intake.</small>
+                                    </label>
                                 </div>
                                 <div class="notice" id="profileFormNotice" hidden></div>
                                 <div class="panel-actions panel-actions--profile">
-                                    <button type="button" class="btn-outline" data-open-application-workspace>Go to Application</button>
                                     <button type="button" class="btn-primary" id="saveProfileChangesButton">Save Changes</button>
                                 </div>
                             </section>
                         </form>
+                        </div>
                     </section>
                 </section>
-                <section id="application-page" class="dash-page" aria-labelledby="applicationPageHeading">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Application</p>
-                            <h2 id="applicationPageHeading">Application requirements</h2>
-                            <p class="dash-page__lead">Upload files, complete forms, and track review updates here.</p>
-                        </div>
-                    </div>
+                <section id="application-page" class="dash-page">
                     <section class="panel dash-section panel--summary application-status-hero" aria-labelledby="applicationSummaryHeading">
                         <div class="application-status-hero__main">
                             <div class="panel-header panel-header--compact">
                                 <h3 id="applicationSummaryHeading">Application status</h3>
-                                <p class="panel-subtitle">This shows your current review stage and the next step for your requirements.</p>
+                                <p class="panel-subtitle">This shows your current review stage and the next required step.</p>
                             </div>
                             <div class="application-status-hero__content">
                                 <span class="journey-pill" id="applicationStatusPill">Draft</span>
@@ -344,150 +319,89 @@
                             </article>
                         </div>
                     </section>
-                    <section class="panel dash-section panel--summary application-profile-reminder" aria-labelledby="profileHeading">
-                        <div class="application-profile-reminder__copy">
-                            <h3 id="profileHeading">Need to update your personal details?</h3>
-                            <p class="panel-subtitle">Use Profile to edit the information used in this application.</p>
-                        </div>
-                        <div class="application-profile-reminder__actions">
-                            <button type="button" class="btn-primary" data-open-profile-editor>Edit Profile</button>
-                        </div>
-                    </section>
                     <section class="panel dash-section panel--summary application-upload-panel" aria-labelledby="applicationUploadsHeading">
                         <div class="panel-header">
                             <h3 id="applicationUploadsHeading">Upload requirements</h3>
-                            <p class="panel-subtitle">Upload the files needed for your application here. PDF, PNG, or JPG only. Max 5 MB per file.</p>
+                            <p class="panel-subtitle">Upload the files required for your application here. PDF, PNG, or JPG only. Up to 5 MB per file.</p>
                             <p class="panel-meta">
-                                <span>Required: <span class="docs-total-count">3</span> documents (Valid ID, Health Certificate, Cedula)</span>
+                                <span>Required: <span class="docs-total-count">4</span> documents (Valid ID, Health Certificate, Community Tax Certificate, Barangay Clearance)</span>
                                 <span class="meta-sep">&bull;</span>
-                                <span class="meta-badge">Uploaded: <span id="docsUploadedCount">0</span>/<span class="docs-total-count">3</span></span>
+                                <span class="meta-badge">Na-upload: <span id="docsUploadedCount">0</span>/<span class="docs-total-count">4</span></span>
                             </p>
                         </div>
                         <div class="doc-grid" id="docGrid"></div>
+                        <section id="application-form-files" class="application-form-files-panel" aria-labelledby="applicationFormFilesHeading">
+                            <div class="panel-header application-form-files-panel__header">
+                                <h3 id="applicationFormFilesHeading">Form requirements uploaded by PDO/Admin</h3>
+                                <p class="panel-subtitle">These five form copies are uploaded by your assigned PDO or Admin in the application checker. Applicants cannot upload or replace them here.</p>
+                            </div>
+                            <div class="doc-grid applicant-form-card-grid" id="applicationFormCards"></div>
+                        </section>
                         <div class="review-block application-upload-panel__review">
-                            <h3>Document checklist</h3>
+                            <h3>Checklist sa dokumento</h3>
                             <div class="review-list" id="reviewDocs"></div>
                         </div>
-                        <div class="notice" id="formNotice" hidden></div>
                         <div class="action-bar application-action-bar">
-                            <button type="button" class="btn-outline" id="saveDraftButton">Save Draft</button>
-                            <button type="button" class="btn-primary" id="submitProfileButton">Submit for verification</button>
+                            <button type="button" class="btn-outline" id="saveDraftButton">I-save ang Draft</button>
+                            <button type="button" class="btn-primary" id="submitProfileButton">Isumite para sa verification</button>
                         </div>
                     </section>
                     <div class="application-focus-grid application-focus-grid--workspace">
                         <section id="requirements-progress" class="panel dash-section panel--summary application-workspace-panel application-requirements-panel" aria-labelledby="requirementsHeading">
                             <div class="panel-header"><h3 id="requirementsHeading">Requirements checklist</h3><p class="panel-subtitle">See what is uploaded, what is being checked, and what still needs action.</p></div>
                             <div class="requirements-progress">
-                                <div class="requirements-progress__meta"><strong id="requirementsProgressCount">0/3 requirements</strong><span id="requirementsProgressStatus">No uploaded requirements yet.</span></div>
+                                <div class="requirements-progress__meta"><strong id="requirementsProgressCount">0/4 requirements</strong><span id="requirementsProgressStatus">No uploaded requirements yet.</span></div>
                                 <div class="requirements-progress__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="requirements-progress__fill" id="requirementsProgressFill"></div></div>
-                                <ul class="requirements-list" id="requirementsList"><li class="empty">No requirement records available yet.</li></ul>
+                                <ul class="requirements-list" id="requirementsList"><li class="empty">No requirement records yet.</li></ul>
                             </div>
                         </section>
                     </div>
-                    <section id="application-forms" class="panel dash-section panel--summary application-forms-panel post-tracker-shell" aria-labelledby="applicationFormsHeading">
-                        <div class="post-tracker-shell__hero">
-                            <div class="post-tracker-shell__copy">
-                                <div class="panel-header panel-header--compact">
-                                    <h3 id="applicationFormsHeading">Fill-up form requirements</h3>
-                                    <p class="panel-subtitle" id="applicationFormsSubtitle">These forms are part of your application stage.</p>
-                                </div>
-                                <strong class="post-tracker-shell__priority" id="applicationFormsPriority">Waiting for fill-up form requirements</strong>
-                                <p class="post-tracker-shell__next" id="applicationFormsNextAction">The next required form will be shown here.</p>
-                            </div>
-                            <div class="post-tracker-shell__summary post-approval-summary">
-                                <article class="post-approval-metric">
-                                    <span class="overview-label">Requirement release</span>
-                                    <strong class="overview-value" id="applicationFormsUnlockedAt">Not available yet</strong>
-                                    <p class="overview-meta" id="applicationFormsUnlockMeta">Fill-up form requirements will appear here when your application record reaches that step.</p>
-                                </article>
-                                <article class="post-approval-metric">
-                                    <span class="overview-label">Form requirements</span>
-                                    <strong class="overview-value" id="applicationFormsTaskCount">0 forms</strong>
-                                    <p class="overview-meta" id="applicationFormsProgressMeta">No fill-up form requirements are currently available.</p>
-                                </article>
-                                <article class="post-approval-metric">
-                                    <span class="overview-label">Need to fix</span>
-                                    <strong class="overview-value" id="applicationFormsFeedbackSummary">No remarks</strong>
-                                    <p class="overview-meta" id="applicationFormsFeedbackMeta">Reviewer instructions and correction notes will be summarized here.</p>
-                                </article>
-                            </div>
-                        </div>
-                        <div class="tracker-list-head">
-                            <div>
-                                <h3>Form requirements in order</h3>
-                                <p class="panel-subtitle">Open each form below when it becomes available.</p>
-                            </div>
-                            <span class="chip" id="applicationFormsTaskChip">0 forms</span>
-                        </div>
-                        <div class="post-approval-taskcards tracker-taskcards" id="applicationFormsTaskCards">
-                            <article class="post-approval-taskcard is-empty">Fill-up form requirements will appear here when available.</article>
-                        </div>
-                    </section>
                     <section id="application-status" class="panel dash-section panel--review application-workspace-panel application-status-panel" aria-labelledby="applicationReviewHeading">
-                        <div class="panel-header"><h3 id="applicationReviewHeading">Review updates</h3><p class="panel-subtitle">See the latest review result first, then open your full history only when needed.</p></div>
+                        <div class="panel-header"><h3 id="applicationReviewHeading">Review updates</h3><p class="panel-subtitle">Check the latest review result first, then open the full history when needed.</p></div>
                         <div class="overview-grid status-summary-grid">
                             <article class="overview-card"><span class="overview-label">Current status</span><strong class="overview-value" id="applicationReviewStatusValue">Draft</strong><p class="overview-meta" id="applicationReviewStatusNote">No review activity yet.</p></article>
-                            <article class="overview-card"><span class="overview-label">Checked so far</span><strong class="overview-value" id="requirementReviewValue">0 verified</strong><p class="overview-meta" id="requirementReviewNote">No requirement review activity yet.</p></article>
-                            <article class="overview-card overview-card--soft"><span class="overview-label">Need to fix</span><strong class="overview-value" id="applicationRemarkCount">0 remarks</strong><p class="overview-meta" id="applicationRemarkNote">Applicant-visible review notes will be summarized here.</p></article>
+                            <article class="overview-card"><span class="overview-label">Reviewed</span><strong class="overview-value" id="requirementReviewValue">0 verified</strong><p class="overview-meta" id="requirementReviewNote">No requirement review activity yet.</p></article>
+                            <article class="overview-card overview-card--soft"><span class="overview-label">Needs correction</span><strong class="overview-value" id="applicationRemarkCount">0 remarks</strong><p class="overview-meta" id="applicationRemarkNote">Reviewer notes visible to the applicant are summarized here.</p></article>
                         </div>
                         <div class="application-review-latest">
                             <article class="application-review-latest__card">
                                 <span class="overview-label">Latest reviewer message</span>
                                 <strong class="overview-value" id="applicationLatestRemarkTitle">No message yet</strong>
-                                <p class="overview-meta" id="applicationLatestRemarkCopy">Applicant-visible review notes will appear here first.</p>
+                                <p class="overview-meta" id="applicationLatestRemarkCopy">Reviewer notes visible to the applicant appear here first.</p>
                             </article>
                         </div>
                         <div class="status-panel">
                             <h3>Messages for you</h3>
-                            <ul class="timeline-list" id="remarksList"><li class="empty">No applicant-visible remarks yet.</li></ul>
+                            <ul class="timeline-list" id="remarksList"><li class="empty">No reviewer remarks visible to the applicant yet.</li></ul>
                         </div>
                         <details class="application-history-disclosure">
                             <summary>View full history</summary>
                             <ul class="timeline-list" id="historyList"><li class="empty">No status history yet.</li></ul>
                         </details>
                     </section>
-                    <section id="notifications-panel" class="panel dash-section panel--summary application-notifications-panel" aria-labelledby="notificationsHeading">
-                        <div class="application-feed-header">
-                            <div class="application-feed-header__copy">
-                                <h3 id="notificationsHeading">Updates for you</h3>
-                                <p class="panel-subtitle">Quick reminders, schedule notices, review updates, and completed steps.</p>
-                            </div>
-                        </div>
-                        <ul class="notification-list" id="notificationList"><li class="empty">No notifications yet.</li></ul>
-                        <div class="application-feed-footer">
-                            <button type="button" class="btn-outline small is-hidden" id="notificationsToggle">Show more</button>
-                        </div>
-                    </section>
                 </section>
-                <section id="training-page" class="dash-page" aria-labelledby="trainingPageHeading">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Training</p>
-                            <h2 id="trainingPageHeading">Training schedule and attendance</h2>
-                            <p class="dash-page__lead">Check your next session, attendance, and certificate status.</p>
-                        </div>
-                    </div>
+                <section id="training-page" class="dash-page">
                     <section id="training-progress" class="panel dash-section panel--hero training-hero-panel" aria-labelledby="trainingHeading">
                         <div class="training-hero-panel__main">
-                            <div class="panel-header panel-header--compact"><h3 id="trainingHeading">Upcoming or current session</h3><p class="panel-subtitle">Your next live training schedule appears here first.</p></div>
+                            <div class="panel-header panel-header--compact"><h3 id="trainingHeading">Upcoming or current session</h3><p class="panel-subtitle">The next live training schedule appears here first.</p></div>
                             <div class="training-dashboard__next training-dashboard__next--hero is-empty" id="trainingNextCard"><h3>Next session</h3><p class="training-next__title" id="trainingNextTitle">No upcoming session scheduled</p><p class="training-next__meta" id="trainingNextMeta"></p></div>
-                            <p class="training-dashboard__hint" id="trainingSummaryNote">No training assignment has been recorded yet.</p>
+                            <p class="training-dashboard__hint" id="trainingSummaryNote">No training assignment recorded yet.</p>
                         </div>
                     </section>
                     <section class="panel dash-section panel--summary training-metrics-panel" aria-labelledby="trainingMetricsHeading">
                         <div class="panel-header panel-header--compact"><h3 id="trainingMetricsHeading">Attendance summary</h3><p class="panel-subtitle">A quick read on your assigned sessions and attendance record.</p></div>
                         <div class="training-dashboard__stats training-dashboard__stats--workspace">
-                            <div class="training-stat"><span class="training-stat__label">Completed</span><span class="training-stat__value" id="trainingCompletedCount">0</span></div>
+                            <div class="training-stat"><span class="training-stat__label">Completed</span><span class="training-stat__value" id="trainingNahumanCount">0</span></div>
                             <div class="training-stat"><span class="training-stat__label">Missed</span><span class="training-stat__value" id="trainingMissedCount">0</span></div>
-                            <div class="training-stat"><span class="training-stat__label">Notified</span><span class="training-stat__value" id="trainingNotifiedCount">0</span></div>
+                            <div class="training-stat"><span class="training-stat__label">Notified</span><span class="training-stat__value" id="trainingNapahibaloanCount">0</span></div>
                         </div>
                     </section>
                     <section class="panel dash-section training-subsection training-subsection--schedule panel--info" aria-labelledby="trainingScheduleHeading">
                         <div class="panel-header"><h3 id="trainingScheduleHeading">Schedule list</h3><p class="panel-subtitle">Dates, venues, and preparation notes for each assigned session.</p></div>
-                        <div class="training-schedule-grid" id="trainingScheduleGrid"><article class="training-schedule-empty">No training schedule yet. Wait for CSWDD notice updates.</article></div>
+                        <div class="training-schedule-grid" id="trainingScheduleGrid"><article class="training-schedule-empty">No training schedule yet. Wait for notice updates from CSWDD.</article></div>
                     </section>
                     <section class="panel dash-section panel--records training-attendance-panel" aria-labelledby="trainingAttendanceHeading">
-                        <div class="panel-header panel-header--spaced"><h3 id="trainingAttendanceHeading">Attendance</h3><p class="panel-subtitle">Attendance remains readable on mobile and reflects the latest recorded status.</p></div>
+                        <div class="panel-header panel-header--spaced"><h3 id="trainingAttendanceHeading">Attendance</h3><p class="panel-subtitle">Attendance is easier to read on mobile and shows the latest status first.</p></div>
                         <div class="attendance-card-list" id="attendanceCardList"><article class="attendance-card attendance-card--empty">Attendance updates will appear once sessions are assigned.</article></div>
                         <div class="table-wrapper table-wrapper--soft training-attendance-table-wrap">
                             <table class="attendance-table">
@@ -496,48 +410,114 @@
                             </table>
                         </div>
                     </section>
-                    <section class="panel dash-section panel--milestone training-certificate-panel" aria-labelledby="trainingCertificateHeading">
-                        <div class="training-certificate-card">
-                            <div class="training-certificate-card__copy"><h3 id="trainingCertificateHeading">Certificate milestone</h3><p class="panel-subtitle" id="certificateNote">Complete your training and application requirements to receive your certificate.</p></div>
-                            <div class="training-certificate-card__status"><strong id="certificateStatus">Locked</strong><p id="certificateMeta">0/0 trainings completed · 0/0 verified forms</p></div>
-                            <div class="training-certificate-card__actions"><button type="button" class="btn-primary" id="downloadCertificateButton" disabled>Download certificate (PDF)</button></div>
-                        </div>
-                    </section>
                 </section>
-                <section id="support-page" class="dash-page" aria-labelledby="supportPageHeading">
-                    <div class="dash-page__header">
+                <section id="support-page" class="dash-page helpdesk-page" data-helpdesk-root>
+                    <header class="helpdesk-header panel">
                         <div>
-                            <p class="dash-page__eyebrow">Support</p>
-                            <h2 id="supportPageHeading">Support path</h2>
-                            <p class="dash-page__lead">Support stays available, but it should not compete with your main workflow.</p>
+                            <span class="support-card__eyebrow">SMART LEAP Help Desk</span>
+                            <h2>Support Center</h2>
+                            <p>Submit a concern, track staff replies, and get help from SMART LEAP staff.</p>
+                        </div>
+                        <a class="btn-outline" href="#helpdeskNewConcern">New concern</a>
+                    </header>
+                    <div class="helpdesk-layout">
+                        <div class="helpdesk-main">
+                            <section class="panel helpdesk-card" id="helpdeskNewConcern" aria-labelledby="helpdeskFormHeading">
+                                <div class="panel-header">
+                                    <h3 id="helpdeskFormHeading">Submit New Concern</h3>
+                                    <p class="panel-subtitle">Tell us what you need help with. Your concern will be routed to the appropriate SMART LEAP staff.</p>
+                                </div>
+                                <form class="helpdesk-form" data-helpdesk-form novalidate>
+                                    <label class="form-field">
+                                        <span>Concern category *</span>
+                                        <select name="category" required>
+                                            <option value="">Choose category</option>
+                                            <option>Account/Login</option>
+                                            <option>Application</option>
+                                            <option>Upload/Requirement</option>
+                                            <option>Training</option>
+                                            <option>Repayment</option>
+                                            <option>Receipt/OR Concern</option>
+                                            <option>Business/Livelihood</option>
+                                            <option>Correction Clarification</option>
+                                            <option>Other</option>
+                                        </select>
+                                        <small data-helpdesk-error="category"></small>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Subject *</span>
+                                        <input type="text" name="subject" maxlength="180" placeholder="Briefly describe your concern" required>
+                                        <small data-helpdesk-error="subject"></small>
+                                    </label>
+                                    <label class="form-field full">
+                                        <span>Message *</span>
+                                        <textarea name="message" rows="5" maxlength="5000" placeholder="Explain your concern clearly. Include the month, OR number, document name, or screenshot details if applicable." required></textarea>
+                                        <small data-helpdesk-error="message"></small>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Related record</span>
+                                        <select name="related_record_id">
+                                            <option value="">No related record selected</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Attachment</span>
+                                        <input type="file" name="attachment" accept=".jpg,.jpeg,.png,.webp,.pdf">
+                                        <small class="field-helper">Screenshots, receipts, proof, or supporting documents. Max 5MB.</small>
+                                    </label>
+                                    <p class="helpdesk-form__status full" data-helpdesk-form-status role="status" aria-live="polite"></p>
+                                    <div class="form-actions full">
+                                        <button type="submit" class="btn-primary">Submit concern</button>
+                                    </div>
+                                </form>
+                            </section>
+                            <section class="panel helpdesk-card" aria-labelledby="helpdeskTicketsHeading">
+                                <div class="panel-header panel-header--compact">
+                                    <div>
+                                        <span class="support-card__eyebrow">My Concerns</span>
+                                        <h3 id="helpdeskTicketsHeading">My Concerns</h3>
+                                    </div>
+                                </div>
+                                <div class="helpdesk-ticket-list" data-helpdesk-ticket-list>
+                                    <p class="helpdesk-empty">No concerns submitted yet. Use the form to submit a concern when you need help from SMART LEAP staff.</p>
+                                </div>
+                            </section>
                         </div>
                     </div>
-                    <section id="support-panel" class="panel dash-section panel--support support-page-panel" aria-labelledby="supportHeading">
-                        <div class="support-card support-card--quiet">
-                            <div class="support-card__header panel-header"><h3 id="supportHeading">Guidance and contacts</h3><p class="panel-subtitle">Use this page when you need your assigned contact, current guidance, or general help details.</p></div>
-                            <div class="support-card__grid support-card__grid--triple">
-                                <section class="support-card__section support-card__section--primary"><span class="support-card__eyebrow">Assigned project officer</span><strong class="support-card__primary" id="supportPdoName">Not assigned yet</strong><p class="support-card__meta" id="supportPdoEmail">Assigned PDO details will appear once scoped.</p></section>
-                                <section class="support-card__section support-card__section--guidance"><span class="support-card__eyebrow">Current guidance</span><strong class="support-card__primary" id="supportGuidanceTitle">Applicant guidance</strong><p class="support-card__meta" id="supportGuidanceText">We will point you to the right applicant area based on your live status.</p><ul class="support-card__list support-card__list--bullets"><li>Check Application for upload requirements, fill-up form requirements, reviewer remarks, and notifications.</li><li>Use Training for schedules, attendance, and certificate progress.</li><li>Use Profile only for personal information updates.</li></ul></section>
-                                <section class="support-card__section support-card__section--secondary"><span class="support-card__eyebrow">General support</span><ul class="support-card__list"><li>Email: <a href="mailto:smartleap@butuan.gov.ph">smartleap@butuan.gov.ph</a></li><li>Office hours: Mon-Fri, 8 AM - 5 PM</li><li>Barangay and review notices will be posted in your notifications.</li></ul></section>
-                            </div>
-                        </div>
-                    </section>
                 </section>
             </main>
+            <nav class="applicant-mobile-tabbar" aria-label="Applicant mobile navigation">
+                <a class="applicant-tabbar__link is-active" href="#dashboard-home">
+                    <span class="applicant-tabbar__icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 11.5L12 4l9 7.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10.5V20h13V10.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                    <span class="applicant-tabbar__label" data-i18n-key="overview">Overview</span>
+                </a>
+                <a class="applicant-tabbar__link" href="#application-page">
+                    <span class="applicant-tabbar__icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M8 7h8" stroke-linecap="round"/><path d="M8 12h8" stroke-linecap="round"/><path d="M8 17h5" stroke-linecap="round"/><rect x="5" y="3" width="14" height="18" rx="2" stroke-linejoin="round"/></svg></span>
+                    <span class="applicant-tabbar__label" data-i18n-key="application">Application</span>
+                </a>
+                <a class="applicant-tabbar__link" href="#training-page">
+                    <span class="applicant-tabbar__icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 9l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M7 11v5c0 1.66 2.91 3 5 3s5-1.34 5-3v-5" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                    <span class="applicant-tabbar__label" data-i18n-key="training">Training</span>
+                </a>
+                <a class="applicant-tabbar__link" href="#support-page">
+                    <span class="applicant-tabbar__icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M7 7h10a3 3 0 013 3v4a3 3 0 01-3 3h-3l-3 4-3-4H7a3 3 0 01-3-3v-4a3 3 0 013-3z" stroke-linejoin="round"/></svg></span>
+                    <span class="applicant-tabbar__label" data-i18n-key="support">Support</span>
+                </a>
+            </nav>
             <div class="modal" id="previewModal" hidden>
                 <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="previewTitle">
                     <div class="modal-header">
                         <div>
                             <h3 id="previewTitle">Document preview</h3>
                             <div class="modal-status">
-                                <span class="doc-status">Not uploaded</span>
+                                <span class="doc-status">Not uploaded yet</span>
                             </div>
                         </div>
                     </div>
                     <div class="modal-body" id="previewBody"></div>
                     <div class="modal-footer">
-                        <button type="button" class="btn-outline" id="replacePreview">Replace</button>
-                        <button type="button" class="btn-primary" id="closePreviewFooter">Close</button>
+                        <button type="button" class="btn-outline" id="replacePreview">Ilisi</button>
+                        <button type="button" class="btn-primary" id="closePreviewFooter">Sirado</button>
                     </div>
                 </div>
             </div>
@@ -545,7 +525,10 @@
         </div>
     </div>
     <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true"></div>
-    <script src="<?= $baseUrl ?>/assets/js/dashboards/applicant.js" defer></script>
-    <script src="<?= $baseUrl ?>/assets/js/public/profile-completion.js" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/shared/notifications.js?v=<?= urlencode((string) $notificationsJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/language-toggle.js?v=<?= urlencode((string) $languageToggleJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/applicant.js?v=<?= urlencode((string) $applicantJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/applicant-profile.js?v=<?= urlencode((string) $applicantProfileJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/support-helpdesk.js?v=<?= urlencode((string) $supportHelpdeskJsVersion) ?>" defer></script>
 </body>
 </html>

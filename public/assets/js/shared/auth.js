@@ -8,7 +8,10 @@
     const passwordInput = document.getElementById('password');
     const entryPointInput = loginForm.querySelector('input[name="entryPoint"]');
     const submitButton = loginForm.querySelector('button[type="submit"], .login-btn');
-    const showPasswordCheckbox = document.getElementById('showPassword');
+    const submitDefaultText = submitButton?.textContent || 'Login';
+    const showPasswordControl = document.getElementById('showPassword');
+    const AUTH_LOADER_MIN_MS = 2400;
+    let authLoaderStartedAt = 0;
 
     function publicBase() {
         const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
@@ -31,8 +34,20 @@
             copy.textContent = message;
         }
 
+        if (active) {
+            authLoaderStartedAt = Date.now();
+        }
+
         overlay.hidden = !active;
         document.body.classList.toggle('auth-loading', active);
+    }
+
+    function redirectAfterLoader(path) {
+        const elapsed = Date.now() - authLoaderStartedAt;
+        const remaining = Math.max(0, AUTH_LOADER_MIN_MS - elapsed);
+        window.setTimeout(() => {
+            window.location.href = routeUrl(path);
+        }, remaining);
     }
 
     function removeAlert() {
@@ -53,7 +68,7 @@
         }
 
         submitButton.disabled = isSubmitting;
-        submitButton.textContent = isSubmitting ? 'Logging in...' : 'Login';
+        submitButton.textContent = isSubmitting ? 'Logging in...' : submitDefaultText;
     }
 
     async function performLogin() {
@@ -69,6 +84,7 @@
 
         setSubmitting(true);
         setAuthLoading(true, 'Authorizing your SMART LEAP access...');
+        let isRedirecting = false;
 
         try {
             const response = await fetch(routeUrl('auth/login'), {
@@ -88,7 +104,8 @@
             const payload = await response.json();
             if (!response.ok || !payload.ok) {
                 if (payload.requiresVerification && payload.redirect) {
-                    window.location.href = routeUrl(payload.redirect);
+                    isRedirecting = true;
+                    redirectAfterLoader(payload.redirect);
                     return;
                 }
                 showAlert(payload.message || 'Invalid credentials.', 'danger');
@@ -97,18 +114,19 @@
             }
 
             showAlert('Login successful. Redirecting...', 'success');
-            window.setTimeout(() => {
-                window.location.href = routeUrl(payload.redirect || 'applicant-dashboard#profile-page');
-            }, 350);
+            isRedirecting = true;
+            redirectAfterLoader(payload.redirect || 'applicant-dashboard#profile-page');
         } catch (error) {
             console.error('Login request failed', error);
             showAlert('Unable to process login right now. Please try again.', 'danger');
             setAuthLoading(false);
         } finally {
-            if (document.visibilityState !== 'hidden') {
+            if (!isRedirecting && document.visibilityState !== 'hidden') {
                 setAuthLoading(false);
+                setSubmitting(false);
+            } else if (!isRedirecting) {
+                setSubmitting(false);
             }
-            setSubmitting(false);
         }
     }
 
@@ -119,11 +137,26 @@
         performLogin();
     });
 
-    showPasswordCheckbox?.addEventListener('change', () => {
-        if (!passwordInput) {
-            return;
-        }
+    if (showPasswordControl) {
+        if (showPasswordControl.tagName === 'INPUT' && showPasswordControl.type === 'checkbox') {
+            showPasswordControl.addEventListener('change', () => {
+                if (!passwordInput) {
+                    return;
+                }
 
-        passwordInput.type = showPasswordCheckbox.checked ? 'text' : 'password';
-    });
+                passwordInput.type = showPasswordControl.checked ? 'text' : 'password';
+            });
+        } else {
+            showPasswordControl.addEventListener('click', (event) => {
+                event.preventDefault();
+                if (!passwordInput) {
+                    return;
+                }
+
+                const revealing = passwordInput.type === 'password';
+                passwordInput.type = revealing ? 'text' : 'password';
+                showPasswordControl.textContent = revealing ? 'Hide' : 'Show';
+            });
+        }
+    }
 })();

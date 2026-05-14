@@ -2,4 +2,8 @@
 
 declare(strict_types=1);
 
-return [];
+use App\Controllers\ReportController;
+
+return [
+    'GET /api/reports' => ['handler' => [ReportController::class, 'data'], 'middleware' => ['auth', 'admin_or_social_worker']],
+];

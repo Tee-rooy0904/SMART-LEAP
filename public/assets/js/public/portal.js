@@ -1,4 +1,9 @@
 (function () {
+    const AUTH_LOADER_MIN_MS = 2400;
+    const MAX_PUBLIC_FILE_BYTES = 2 * 1024 * 1024;
+    const ALLOWED_PUBLIC_FILE_TYPES = ['application/pdf', 'image/jpeg', 'image/png'];
+    let authLoaderStartedAt = 0;
+
     function publicBase() {
         const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
         return match ? match[1] : '';
@@ -16,17 +21,121 @@
         if (copy && message) {
             copy.textContent = message;
         }
+        if (active) {
+            authLoaderStartedAt = Date.now();
+        }
         overlay.hidden = !active;
         document.body.classList.toggle('auth-loading', active);
+    }
+
+    function redirectAfterLoader(path) {
+        const elapsed = Date.now() - authLoaderStartedAt;
+        const remaining = Math.max(0, AUTH_LOADER_MIN_MS - elapsed);
+        window.setTimeout(() => {
+            window.location.href = routeUrl(path);
+        }, remaining);
+    }
+
+    function ensureToastStack() {
+        let stack = document.getElementById('portalToastStack');
+        if (!stack) {
+            stack = document.createElement('div');
+            stack.id = 'portalToastStack';
+            stack.className = 'portal-toast-stack';
+            stack.setAttribute('aria-live', 'polite');
+            stack.setAttribute('aria-atomic', 'true');
+            document.body.appendChild(stack);
+        }
+
+        return stack;
+    }
+
+    function showPortalToast(message, tone = 'danger') {
+        const stack = ensureToastStack();
+        const toast = document.createElement('div');
+        toast.className = `portal-toast portal-toast--${tone}`;
+        toast.textContent = message;
+        stack.appendChild(toast);
+
+        window.requestAnimationFrame(() => {
+            toast.classList.add('is-visible');
+        });
+
+        window.setTimeout(() => {
+            toast.classList.remove('is-visible');
+            window.setTimeout(() => toast.remove(), 220);
+        }, 2600);
+    }
+
+    function ensureFileNameHint(input) {
+        const field = input.closest('.field') || input.parentElement;
+        if (!field) return null;
+
+        let hint = field.querySelector('.field-file-name');
+        if (!hint) {
+            hint = document.createElement('small');
+            hint.className = 'field-file-name';
+            field.appendChild(hint);
+        }
+
+        return hint;
+    }
+
+    function flashInvalidField(field) {
+        if (!field) return;
+        field.classList.remove('is-file-invalid');
+        void field.offsetWidth;
+        field.classList.add('is-file-invalid');
+        window.setTimeout(() => field.classList.remove('is-file-invalid'), 520);
+    }
+
+    function checkFileIntegrity(input) {
+        if (!input || !input.files || !input.files.length) {
+            return true;
+        }
+
+        const file = input.files[0];
+        const field = input.closest('.field') || input.parentElement;
+        const nameHint = ensureFileNameHint(input);
+        const extension = (file.name.split('.').pop() || '').toLowerCase();
+        const extensionAllowed = ['pdf', 'jpg', 'jpeg', 'png'].includes(extension);
+        const mimeAllowed = ALLOWED_PUBLIC_FILE_TYPES.includes(file.type);
+
+        field?.classList.remove('is-file-valid', 'is-file-invalid');
+
+        if (file.size > MAX_PUBLIC_FILE_BYTES) {
+            input.value = '';
+            if (nameHint) nameHint.textContent = '';
+            flashInvalidField(field);
+            showPortalToast('File rejected. Upload a PDF, JPG, or PNG that is 2MB or less.', 'danger');
+            return false;
+        }
+
+        if (!mimeAllowed && !extensionAllowed) {
+            input.value = '';
+            if (nameHint) nameHint.textContent = '';
+            flashInvalidField(field);
+            showPortalToast('Invalid file type. Only PDF, JPG, and PNG files are allowed.', 'danger');
+            return false;
+        }
+
+        field?.classList.add('is-file-valid');
+        if (nameHint) {
+            nameHint.textContent = file.name;
+        }
+
+        return true;
     }
 
     function closeMobileNav() {
         const mobileNav = document.getElementById('mobileNav');
         const menuBtn = document.getElementById('menuBtn');
         if (!mobileNav) return;
-        mobileNav.hidden = true;
+        mobileNav.classList.remove('is-open');
         menuBtn?.setAttribute('aria-expanded', 'false');
-        document.body.classList.remove('menu-open');
+        window.setTimeout(() => {
+            mobileNav.hidden = true;
+        }, 180);
     }
 
     function setupMobileNav() {
@@ -36,9 +145,16 @@
 
         menuBtn.addEventListener('click', () => {
             const isOpen = menuBtn.getAttribute('aria-expanded') === 'true';
-            mobileNav.hidden = isOpen;
-            menuBtn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
-            document.body.classList.toggle('menu-open', !isOpen);
+            if (isOpen) {
+                closeMobileNav();
+                return;
+            }
+
+            mobileNav.hidden = false;
+            window.requestAnimationFrame(() => {
+                mobileNav.classList.add('is-open');
+            });
+            menuBtn.setAttribute('aria-expanded', 'true');
         });
 
         document.querySelectorAll('.mobile-link').forEach((link) => {
@@ -111,6 +227,7 @@
                 signInBtn.textContent = 'Signing in...';
             }
             setAuthLoading(true, 'Securing your SMART LEAP session...');
+            let isRedirecting = false;
 
             try {
                 const response = await fetch(routeUrl('auth/login'), {
@@ -130,7 +247,8 @@
                 const payload = await response.json();
                 if (!response.ok || !payload.ok) {
                     if (payload.requiresVerification && payload.redirect) {
-                        window.location.href = routeUrl(payload.redirect);
+                        isRedirecting = true;
+                        redirectAfterLoader(payload.redirect);
                         return;
                     }
                     if (authError) {
@@ -141,7 +259,8 @@
                     return;
                 }
 
-                window.location.href = routeUrl(payload.redirect || 'applicant-dashboard#profile-page');
+                isRedirecting = true;
+                redirectAfterLoader(payload.redirect || 'applicant-dashboard#profile-page');
             } catch (error) {
                 setAuthLoading(false);
                 if (authError) {
@@ -149,14 +268,28 @@
                     authError.hidden = false;
                 }
             } finally {
-                if (document.visibilityState !== 'hidden') {
+                if (!isRedirecting && document.visibilityState !== 'hidden') {
                     setAuthLoading(false);
-                }
-                if (signInBtn) {
+                    if (signInBtn) {
+                        signInBtn.disabled = false;
+                        signInBtn.textContent = 'Sign in';
+                    }
+                } else if (!isRedirecting && signInBtn) {
                     signInBtn.disabled = false;
                     signInBtn.textContent = 'Sign in';
                 }
+                if (isRedirecting) {
+                    return;
+                }
             }
+        });
+    }
+
+    function setupFileIntegrityChecks() {
+        document.querySelectorAll('input[type="file"]').forEach((input) => {
+            input.addEventListener('change', () => {
+                checkFileIntegrity(input);
+            });
         });
     }
 
@@ -212,11 +345,57 @@
         });
     }
 
+    function setupScrollReveal() {
+        if (document.body.classList.contains('portal-page--signup')) {
+            document.querySelectorAll('.auth-card, .portal-reveal').forEach((item) => {
+                item.classList.add('is-visible');
+            });
+            return;
+        }
+
+        const revealItems = Array.from(document.querySelectorAll([
+            '.home-hero__copy',
+            '.auth-card',
+            '.portal-section__head',
+            '.content-hero__inner',
+            '.content-card:not(.portal-static-copy)',
+            '.timeline-item',
+            '.portal-support-card',
+            '.portal-privacy-card',
+            '.interactive-card'
+        ].join(',')));
+
+        if (!revealItems.length) {
+            return;
+        }
+
+        if (!('IntersectionObserver' in window)) {
+            revealItems.forEach((item) => item.classList.add('portal-reveal', 'is-visible'));
+            return;
+        }
+
+        const observer = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                entry.target.classList.toggle('is-visible', entry.isIntersecting);
+            });
+        }, {
+            threshold: 0.18,
+            rootMargin: '-8% 0px -8% 0px'
+        });
+
+        revealItems.forEach((item) => {
+            item.classList.add('portal-reveal');
+            observer.observe(item);
+        });
+    }
+
     document.addEventListener('DOMContentLoaded', () => {
         setupMobileNav();
         setupAuth();
+        setupFileIntegrityChecks();
         setupAccordions();
         setupSelectableCards();
         setupTimelineDetails();
+        setupScrollReveal();
     });
 })();

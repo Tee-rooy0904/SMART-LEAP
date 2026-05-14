@@ -6,95 +6,79 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP Requirements</title>
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=12">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=44">
 </head>
-<body class="portal-page">
+<body class="portal-page portal-page--content">
     <div class="page-shell">
-        <header class="site-header">
-            <div class="container header-shell">
-                <div class="header-main">
-                    <a class="brand" href="<?= $baseUrl ?>/portal">
-                        <div class="brand-logo" aria-hidden="true"><img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt=""></div>
-                        <div class="brand-copy"><strong class="brand-wordmark">SMART LEAP</strong></div>
-                    </a>
-                    <nav class="primary-nav" aria-label="Primary navigation">
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal">Home</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/guide">Guide</a>
-                        <a class="nav-link is-active" href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/how-it-works">How It Works</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/help">Help</a>
-                    </nav>
-                    <div class="header-actions">
-                        <a class="header-action header-action--ghost" href="<?= $baseUrl ?>/signup">Create Account</a>
-                        <a class="header-action header-action--solid" href="<?= $baseUrl ?>/portal">Sign In</a>
-                        <button id="menuBtn" class="menu-btn" aria-controls="mobileNav" aria-expanded="false" aria-label="Open navigation"><span class="menu-btn__line"></span><span class="menu-btn__line"></span><span class="menu-btn__line"></span></button>
-                    </div>
-                </div>
-                <div id="mobileNav" class="mobile-nav" hidden>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal">Home</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/guide">Guide</a>
-                    <a class="mobile-link is-active" href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/how-it-works">How It Works</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/help">Help</a>
-                </div>
-            </div>
-        </header>
+        <?php
+        $activeNav = 'requirements';
+        $isHome = false;
+        require __DIR__ . '/../layouts/public-header.php';
+        ?>
 
         <main class="page page--content">
             <section class="content-hero">
                 <div class="container content-hero__inner">
                     <span class="section-kicker">Requirements</span>
-                    <h1 class="section-title">Prepare your files properly before starting your SMART LEAP application.</h1>
-                    <p class="page-intro">Use this checklist-style page to confirm what to prepare before uploading anything in the portal.</p>
+                    <h1 class="section-title">Prepare complete and readable files before starting your SMART LEAP application.</h1>
+                    <p class="page-intro">Use this page as a checklist so you can upload clear and complete documents without delay.</p>
                 </div>
             </section>
 
             <section class="content-section">
-                <div class="container content-grid">
-                    <?php if ($requirements !== []): ?>
-                        <?php foreach ($requirements as $requirement): ?>
-                            <article class="content-card interactive-card interactive-card--selectable is-active" tabindex="0" data-select-card>
-                                <h2><?= htmlspecialchars((string) ($requirement->attributes['label'] ?? 'Requirement')) ?></h2>
-                                <ul class="content-list">
-                                    <li><?= htmlspecialchars((string) ($requirement->attributes['description'] ?? 'Prepare this document before starting your application.')) ?></li>
-                                </ul>
-                            </article>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <article class="content-card interactive-card interactive-card--selectable is-active" tabindex="0" data-select-card>
-                            <h2>Valid ID</h2>
-                            <ul class="content-list">
-                                <li>Prepare a clear government-issued identification document.</li>
-                            </ul>
-                        </article>
-                        <article class="content-card interactive-card interactive-card--selectable" tabindex="0" data-select-card>
-                            <h2>Health Certificate</h2>
-                            <ul class="content-list">
-                                <li>Prepare any health or sanitary clearance required for your application.</li>
-                            </ul>
-                        </article>
-                        <article class="content-card interactive-card interactive-card--selectable" tabindex="0" data-select-card>
-                            <h2>Cedula</h2>
-                            <ul class="content-list">
-                                <li>Prepare your current community tax certificate.</li>
-                            </ul>
-                        </article>
-                    <?php endif; ?>
-
-                    <article class="content-card interactive-card interactive-card--selectable" tabindex="0" data-select-card>
-                        <h2>Before You Start</h2>
+                <div class="container content-grid portal-grid--three">
+                    <article class="content-card">
+                        <h2>Prepare these first</h2>
                         <ul class="content-list">
-                            <li>Use clear scans or photos.</li>
-                            <li>Make sure names match your profile details.</li>
-                            <li>Check that pages are complete and not cropped.</li>
-                            <li>Use an active email address for updates.</li>
+                            <?php $renderedRequirementLabels = []; ?>
+                            <?php if ($requirements !== []): ?>
+                                <?php foreach ($requirements as $requirement): ?>
+                                    <?php
+                                        $label = (string) ($requirement->attributes['label'] ?? 'Requirement');
+                                        if (stripos($label, 'endorsement') !== false) {
+                                            continue;
+                                        }
+                                        $renderedRequirementLabels[] = $label;
+                                    ?>
+                                    <li>
+                                        <?= htmlspecialchars($label) ?>
+                                        <span class="small-note"> - <?= htmlspecialchars((string) ($requirement->attributes['description'] ?? 'Prepare this document before starting your application.')) ?></span>
+                                    </li>
+                                <?php endforeach; ?>
+                                <?php if (!in_array('Barangay Clearance', $renderedRequirementLabels, true)): ?>
+                                    <li>Barangay Clearance</li>
+                                <?php endif; ?>
+                            <?php else: ?>
+                                <li>Valid ID</li>
+                                <li>Barangay Clearance</li>
+                                <li>Health Certificate</li>
+                                <li>Cedula</li>
+                            <?php endif; ?>
+                        </ul>
+                    </article>
+                    <article class="content-card">
+                        <h2>File quality reminders</h2>
+                        <ul class="content-list">
+                            <li>Use a clear scan or a bright photo.</li>
+                            <li>Make sure all document edges and text are visible.</li>
+                            <li>Match names and dates with the information in your profile.</li>
+                        </ul>
+                    </article>
+                    <article class="content-card">
+                        <h2>Before you begin</h2>
+                        <ul class="content-list">
+                            <li>Use an active email address for official notices.</li>
+                            <li>Prepare complete information before you submit.</li>
+                            <li>Check the portal again when follow-up forms become available.</li>
                         </ul>
                     </article>
                 </div>
             </section>
         </main>
+
+        <?php require __DIR__ . '/../layouts/public-footer.php'; ?>
     </div>
 
-    <script src="<?= $baseUrl ?>/assets/js/public/portal.js?v=12" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/public/portal.js?v=18" defer></script>
 </body>
 </html>

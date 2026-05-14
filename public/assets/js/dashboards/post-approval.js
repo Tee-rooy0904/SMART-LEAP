@@ -142,7 +142,12 @@
         try {
             const payload = await fetchJson('auth/logout', {
                 method: 'POST',
-                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({ entryPoint: 'portal' }).toString(),
             });
             window.location.href = routeUrl(payload.redirect || 'portal');
         } catch (error) {

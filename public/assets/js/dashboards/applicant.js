@@ -4,9 +4,17 @@
         authUser: window.SMARTLEAP_AUTH_USER || null,
         dashboard: null,
         nextStepPath: null,
-        notificationsExpanded: false,
         loaderStartedAt: Date.now(),
+        supportRecipient: 'social_worker',
+        supportChatTimer: null,
     };
+    const APPLICANT_FORM_REQUIREMENTS = [
+        { code: 'availment_form', title: 'Availment Form' },
+        { code: 'validation_form', title: 'Validation Form' },
+        { code: 'mungkahing_proyekto', title: 'Mungkahing Proyekto' },
+        { code: 'business_plan', title: 'Business Plan' },
+        { code: 'buhat_sa_pagpanumpa', title: 'Buhat sa Pagpanumpa' },
+    ];
     const PORTAL_LOADER_MIN_MS = 3000;
 
     document.addEventListener('DOMContentLoaded', init);
@@ -18,16 +26,27 @@
 
     function bindStaticEvents() {
         document.getElementById('applicantLogoutButton')?.addEventListener('click', handleLogout);
+        document.getElementById('mobileAccountLogout')?.addEventListener('click', handleLogout);
         document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebarMenu);
         document.getElementById('sidebarClose')?.addEventListener('click', closeSidebarMenuOnMobile);
         document.getElementById('sidebarOverlay')?.addEventListener('click', closeSidebarMenuOnMobile);
-        document.addEventListener('click', handleWorkspaceShortcuts);
-        document.getElementById('notificationsToggle')?.addEventListener('click', () => {
-            state.notificationsExpanded = !state.notificationsExpanded;
-            renderNotifications();
+        document.getElementById('mobileAccountToggle')?.addEventListener('click', toggleMobileAccountMenu);
+        document.getElementById('mobileAccountProfile')?.addEventListener('click', () => {
+            closeMobileAccountMenu();
+            openSection('profile-page');
         });
+        document.getElementById('mobileAccountPassword')?.addEventListener('click', () => {
+            closeMobileAccountMenu();
+            openChangePasswordModal();
+        });
+        document.addEventListener('click', (event) => {
+            if (!event.target.closest('.mobile-topbar__account')) {
+                closeMobileAccountMenu();
+            }
+        });
+        document.addEventListener('click', handleWorkspaceShortcuts);
         document.addEventListener('smartleap:profile-state', handleProfileStateSync);
-        document.getElementById('downloadCertificateButton')?.addEventListener('click', () => {
+        document.getElementById('downloadSertipikoButton')?.addEventListener('click', () => {
             const path = state.dashboard?.certificate?.downloadPath;
             if (path) {
                 window.location.href = routeUrl(path);
@@ -38,8 +57,18 @@
                 navigateToPath(state.nextStepPath);
             }
         });
+        document.querySelectorAll('[data-support-recipient]').forEach((button) => {
+            button.addEventListener('click', () => {
+                state.supportRecipient = button.dataset.supportRecipient || 'social_worker';
+                document.querySelectorAll('[data-support-recipient]').forEach((item) => {
+                    item.classList.toggle('is-active', item === button);
+                });
+                loadSupportChat();
+            });
+        });
+        document.getElementById('supportChatForm')?.addEventListener('submit', handleSupportChatSubmit);
 
-        document.querySelectorAll('.sidebar-link').forEach((link) => {
+        document.querySelectorAll('.sidebar-link, .applicant-tabbar__link').forEach((link) => {
             link.addEventListener('click', (event) => {
                 const hash = link.getAttribute('href') || '#dashboard-home';
                 if (!hash.startsWith('#')) {
@@ -48,8 +77,6 @@
                 }
 
                 event.preventDefault();
-                document.querySelectorAll('.sidebar-link').forEach((item) => item.classList.remove('is-active'));
-                link.classList.add('is-active');
                 window.location.hash = hash;
                 applyRouteVisibility();
                 closeSidebarMenuOnMobile();
@@ -66,7 +93,7 @@
         try {
             const payload = await fetchJson('applicant-dashboard/state');
             if (!payload.ok) {
-                throw new Error(payload.message || 'Unable to load applicant dashboard.');
+                throw new Error(payload.message || 'Unable to load the applicant dashboard.');
             }
 
             state.dashboard = payload.state || null;
@@ -74,14 +101,14 @@
             applyRouteVisibility();
             markPortalReady();
         } catch (error) {
-            renderFatalState(error.message || 'Unable to load applicant dashboard.');
+            renderFatalState(error.message || 'Unable to load the applicant dashboard.');
             markPortalReady();
         }
     }
 
     function renderDashboard() {
         if (!state.dashboard) {
-            renderFatalState('Applicant dashboard state is unavailable.');
+            renderFatalState('Wala magamit ang applicant dashboard state.');
             return;
         }
 
@@ -89,12 +116,13 @@
         renderOverview();
         renderProfile();
         renderRequirements();
-        renderApplication();
+        renderFormRequirements();
+        renderAplikasyon();
         renderTraining();
-        renderApplicationForms();
-        renderCertificate();
-        renderNotifications();
+        renderSertipiko();
         renderSupport();
+        loadSupportChat();
+        startSupportChatPolling();
         renderJourney();
         renderAlerts();
     }
@@ -105,12 +133,18 @@
         }
 
         const detail = event.detail || {};
+        if (detail.user) {
+            state.dashboard.authUser = {
+                ...(state.dashboard.authUser || {}),
+                ...detail.user,
+            };
+        }
         if (detail.profile) {
             state.dashboard.profile = {
                 ...(state.dashboard.profile || {}),
                 ...detail.profile,
             };
-            setText('sidebarUserBusiness', detail.profile.businessName || detail.profile.livelihood || 'Applicant profile');
+            setText('sidebarUserBusiness', detail.profile.businessName || detail.profile.livelihood || 'Profile sa aplikante');
         }
 
         if (detail.application) {
@@ -120,8 +154,9 @@
             };
         }
 
+        renderIdentity();
         renderProfile();
-        renderApplication();
+        renderAplikasyon();
         renderOverview();
         renderSupport();
     }
@@ -130,20 +165,54 @@
         const authUser = state.dashboard.authUser || state.authUser || {};
         const profile = state.dashboard.profile || {};
         const displayName = authUser.name || 'Applicant';
-        const businessName = profile.businessName || profile.livelihood || 'Applicant profile';
+        const businessName = profile.businessName || profile.livelihood || 'Profile sa aplikante';
         const initial = (displayName.trim().charAt(0) || 'A').toUpperCase();
+        const photo = getStoredProfilePhoto(authUser);
 
         setText('sidebarUserName', displayName);
         setText('sidebarUserBusiness', businessName);
         setText('profilePageName', displayName);
+        setAvatarNode(document.getElementById('sidebarAvatar'), initial, photo);
+        setMobileAvatar(initial, photo);
+    }
 
-        const avatarIds = ['sidebarAvatar'];
-        avatarIds.forEach((id) => {
-            const node = document.getElementById(id);
-            if (node) {
-                node.textContent = initial;
+    function getStoredProfilePhoto(identity) {
+        return identity?.photo || state.dashboard?.authUser?.photo || state.authUser?.photo || null;
+    }
+
+    function setAvatarNode(node, fallbackInitial, photo) {
+        if (!node) return;
+        if (photo) {
+            node.textContent = '';
+            node.style.backgroundImage = `url("${photo}")`;
+            node.classList.add('has-photo');
+            return;
+        }
+
+        node.style.backgroundImage = '';
+        node.classList.remove('has-photo');
+        node.textContent = fallbackInitial;
+    }
+
+    function setMobileAvatar(fallbackInitial, photo) {
+        const button = document.getElementById('mobileAccountToggle');
+        const badge = document.getElementById('mobileAccountAvatar');
+        if (photo) {
+            button?.classList.add('has-photo');
+            if (badge) {
+                badge.textContent = fallbackInitial;
+                badge.style.backgroundImage = `url("${photo}")`;
+                badge.classList.add('has-photo');
             }
-        });
+            return;
+        }
+
+        button?.classList.remove('has-photo');
+        if (badge) {
+            badge.style.backgroundImage = '';
+            badge.classList.remove('has-photo');
+            badge.textContent = fallbackInitial;
+        }
     }
 
     function renderOverview() {
@@ -157,18 +226,18 @@
         const verifiedCount = requirements.filter((item) => String(item.status || '').toLowerCase() === 'verified').length;
 
         const status = application?.status || 'No application yet';
-        const profileCompletion = profile?.completionPercent ?? 0;
+        const profilePagkompleto = profile?.completionPercent ?? 0;
         const trainingSummary = training.summary || {};
         setText('nextStepStatus', status);
 
-        setText('dashboardProfileCompletion', `${profileCompletion}%`);
+        setText('dashboardProfileCompletion', `${profilePagkompleto}%`);
         setText(
             'dashboardProfileCompletionNote',
-            profileCompletion >= 100
-                ? 'Your applicant profile is complete and ready for current workflow steps.'
+            profilePagkompleto >= 100
+                ? 'Your applicant profile is complete and ready for the current workflow steps.'
                 : 'Keep your applicant profile complete.'
         );
-        setText('dashboardRequirementsSummary', `${uploadedCount}/${requirements.length || 3} uploaded`);
+        setText('dashboardRequirementsSummary', `${uploadedCount}/${requirements.length || 4} uploaded`);
         setText(
             'dashboardRequirementsSummaryNote',
             verifiedCount > 0
@@ -177,10 +246,10 @@
         );
         setText('dashboardTrainingCompletion', `${Math.round((((trainingSummary.attended || 0) + (trainingSummary.completed || 0)) / Math.max(1, training.invitees?.length || 0)) * 100)}% complete`);
         setText('dashboardTrainingCompletionNote', buildTrainingOverviewNote(trainingSummary, training));
-        setText('dashboardCertificateStatus', certificate.statusLabel || 'Locked');
-        setText('dashboardCertificateStatusNote', sanitizeCertificateNote(certificate.note || 'Available after your training and application requirements are complete.'));
+        setText('dashboardSertipikoStatus', certificate.statusLabel || 'Locked');
+        setText('dashboardSertipikoStatusNote', sanitizeSertipikoNote(certificate.note || 'Available after your training and application requirements are complete.'));
         setText('nextStepTitle', sanitizeApplicantWording(nextStep.title || 'Complete your applicant profile'));
-        setText('nextStepDescription', workflowActionDescription(nextStep.actionPath, nextStep.description || 'Your next required action will appear here.'));
+        setText('nextStepDescription', workflowActionDescription(nextStep.actionPath, nextStep.description || 'The next required action will appear here.'));
     }
 
     function renderProfile() {
@@ -194,17 +263,17 @@
             'profileWorkspaceCompletionNote',
             completionPercent >= 100
                 ? 'Your personal details look complete. Use Application for uploads and submission.'
-                : 'Complete missing personal details here, then continue in Application.'
+                : 'Complete the missing personal details here, then continue to Application.'
         );
-        setText('profileWorkspaceApplicationStatus', application?.status || 'No application yet');
-        setText('profileWorkspaceApplicationNote', buildProfileApplicationNote(application));
+        setText('profileWorkspaceAplikasyonStatus', application?.status || 'No application yet');
+        setText('profileWorkspaceAplikasyonNote', buildProfileAplikasyonNote(application));
     }
 
     function renderRequirements() {
         const requirements = state.dashboard.requirements || [];
         const list = document.getElementById('requirementsList');
         const uploadedCount = requirements.filter((item) => item.file && item.file.path).length;
-        const total = requirements.length || 3;
+        const total = requirements.length || 4;
         const percent = total > 0 ? Math.round((uploadedCount / total) * 100) : 0;
         const issues = requirements.filter((item) => isRequirementIssue(item.status)).length;
         const verified = requirements.filter((item) => String(item.status || '').toLowerCase() === 'verified').length;
@@ -228,18 +297,18 @@
         }
 
         if (requirements.length === 0) {
-            list.innerHTML = '<li class="empty">No requirement records available yet.</li>';
+            list.innerHTML = '<li class="empty">No requirement records yet.</li>';
             return;
         }
 
         list.innerHTML = requirements.map((item) => {
             const statusClass = requirementStatusClass(item.status);
             const statusText = normalizeRequirementStatusSimple(item);
-            const fileName = item.file?.name ? escapeHtml(item.file.name) : 'No uploaded file yet';
+            const fileName = item.file?.name ? escapeHtml(item.file.name) : 'No file uploaded yet';
             const fileMeta = item.updatedAt ? `Last update: ${formatDate(item.updatedAt)}` : 'You can upload this in the Application page.';
             const reviewerNote = item.reviewerRemarks || item.remarks || item.note || '';
             const actionHref = item.file?.url ? escapeAttribute(item.file.url) : '#application-page';
-            const actionLabel = item.file?.url ? 'View file' : 'Open Application';
+            const actionLabel = item.file?.url ? 'View file' : 'Go to uploads';
             const actionAttrs = item.file?.url ? 'target="_blank" rel="noopener"' : 'data-open-application-workspace';
 
             return `
@@ -262,12 +331,52 @@
         }).join('');
     }
 
-    function renderApplication() {
+    function renderFormRequirements() {
+        const root = document.getElementById('applicationFormCards');
+        if (!root) {
+            return;
+        }
+
+        const taskMap = new Map(
+            (state.dashboard?.postApproval?.tasks || []).map((task) => [String(task.code || '').toLowerCase(), task])
+        );
+
+        root.innerHTML = APPLICANT_FORM_REQUIREMENTS.map((definition) => {
+            const task = taskMap.get(definition.code) || null;
+            const file = task?.file || null;
+            const statusText = normalizeFormCardStatus(task);
+            const statusClass = formCardStatusClass(statusText);
+            const fileMeta = file
+                ? `${file.name || 'Uploaded form'}${file.size ? ` | ${formatFileSize(file.size)}` : ''}${file.type ? ` | ${file.type}` : ''}`
+                : 'Uploaded by PDO/Admin in the application checker';
+            const helperText = buildFormRequirementHelper(task);
+            const reviewerNote = task?.reviewerRemarks || '';
+
+            return `
+                <article class="doc-tile application-form-card ${statusClass}">
+                    <div class="doc-header">
+                        <strong>${escapeHtml(task?.title || definition.title)}</strong>
+                        <span class="doc-status ${statusClass === 'is-approved' ? 'is-approved' : (statusClass === 'is-uploaded' ? 'is-uploaded' : (statusClass === 'is-rejected' ? 'is-rejected' : ''))}">${escapeHtml(statusText)}</span>
+                    </div>
+                    <div class="doc-meta">${escapeHtml(fileMeta)}</div>
+                    <div class="doc-note">${escapeHtml(helperText)}</div>
+                    ${reviewerNote ? `<div class="doc-note application-form-card__review-note"><strong>Reviewer note:</strong> ${escapeHtml(truncateText(reviewerNote, 120))}</div>` : ''}
+                    <div class="doc-actions">
+                        ${file?.url
+                            ? `<a class="btn-primary" href="${escapeAttribute(file.url)}" target="_blank" rel="noopener">View file</a>`
+                            : '<span class="btn-outline application-form-card__disabled" aria-disabled="true">Waiting for PDO/Admin upload</span>'}
+                    </div>
+                </article>
+            `;
+        }).join('');
+    }
+
+    function renderAplikasyon() {
         const application = state.dashboard.application;
         const remarks = application?.remarks || [];
         const latestRemark = remarks[0] || null;
         const currentStatus = application?.status || 'Draft';
-        const nextStepSummary = buildApplicationNextStepSummary(application, latestRemark);
+        const nextStepSummary = buildAplikasyonNextStepSummary(application, latestRemark);
 
         setText('applicationStatusValue', application?.status || 'No application yet');
         setText('applicationStatusPill', currentStatus);
@@ -275,12 +384,12 @@
         setText('applicationReviewStatusValue', currentStatus);
         setText('applicationStatusNextStep', nextStepSummary);
         setText('applicationReviewStatusNote', nextStepSummary);
-        setText('applicationStatusDates', buildApplicationDateMeta(application));
-        setText('applicationStatusReviewedDate', application?.reviewedAt ? formatDate(application.reviewedAt) : 'Not reviewed yet');
+        setText('applicationStatusDates', buildAplikasyonDateMeta(application));
+        setText('applicationStatusReviewedDate', application?.reviewedAt ? formatDate(application.reviewedAt) : 'No review yet');
         const assignedPdo = application?.assignedPdo || null;
         setText('assignedPdoName', assignedPdo?.name || 'Not assigned');
         setText('assignedPdoEmail', assignedPdo?.email || 'Assigned PDO details will appear here once scoped.');
-        setText('supportPdoName', assignedPdo?.name || 'Not assigned yet');
+        setText('supportPdoName', assignedPdo?.name || 'Not yet assigned');
         setText('supportPdoEmail', assignedPdo?.email || 'Assigned PDO details will appear once scoped.');
 
         const reviewSummary = application?.reviewSummary || { verified: 0, total: 0, pending: 0, issues: 0 };
@@ -299,7 +408,7 @@
             'applicationRemarkNote',
             latestRemark
                 ? `${latestRemark.actorName || 'CSWDD'}: ${truncateText(latestRemark.comment || 'Applicant-visible note available.', 92)}`
-                : 'Applicant-visible review notes will be summarized here.'
+                : 'Applicant-visible review notes are summarized here.'
         );
         setText('applicationLatestRemarkTitle', latestRemark?.actorName || 'No message yet');
         setText(
@@ -309,8 +418,8 @@
                 : 'Applicant-visible review notes will appear here first.'
         );
         setText('dashboardSnapshotStatus', application?.status || 'Draft');
-        setText('dashboardSnapshotDate', buildApplicationDateMeta(application));
-        setText('dashboardSnapshotPdo', assignedPdo?.name || 'Not assigned yet');
+        setText('dashboardSnapshotDate', buildAplikasyonDateMeta(application));
+        setText('dashboardSnapshotPdo', assignedPdo?.name || 'Not yet assigned');
         setText(
             'dashboardSnapshotRemark',
             latestRemark
@@ -336,11 +445,11 @@
         setText(
             'trainingSummaryNote',
             invitees.length === 0
-                ? 'No training assignment has been recorded yet.'
+                ? 'No training assignment recorded yet.'
                 : `${invitees.length} training assignment${invitees.length === 1 ? '' : 's'} recorded for your applicant profile.`
         );
-        setText('trainingNotifiedCount', String(summary.notified || 0));
-        setText('trainingCompletedCount', String(summary.completed || 0));
+        setText('trainingNapahibaloanCount', String(summary.notified || 0));
+        setText('trainingNahumanCount', String(summary.completed || 0));
         setText('trainingMissedCount', String(summary.missed || 0));
         setText('trainingProgressMeta', `${progressPercent}% completion`);
 
@@ -367,17 +476,17 @@
         renderAttendanceTable(invitees);
     }
 
-    function renderCertificate() {
+    function renderSertipiko() {
         const certificate = state.dashboard?.certificate || {};
-        const statusButton = document.getElementById('downloadCertificateButton');
+        const statusButton = document.getElementById('downloadSertipikoButton');
 
         setText('certificateStatus', certificate.statusLabel || 'Locked');
-        const trainingCompleted = certificate.trainingCompleted || 0;
+        const trainingNahuman = certificate.trainingNahuman || 0;
         const trainingTotal = certificate.trainingTotal || 0;
         const postApprovalVerified = certificate.postApprovalVerified || 0;
         const postApprovalTotal = certificate.postApprovalTotal || 0;
-        setText('certificateMeta', `${trainingCompleted}/${trainingTotal} trainings completed • ${postApprovalVerified}/${postApprovalTotal} verified application requirements`);
-        setText('certificateNote', sanitizeCertificateNote(certificate.note || 'Certificate availability will be shown here once your training and application requirements are complete.'));
+        setText('certificateMeta', `${trainingNahuman}/${trainingTotal} trainings completed ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ ${postApprovalVerified}/${postApprovalTotal} verified application requirements`);
+        setText('certificateNote', sanitizeSertipikoNote(certificate.note || 'Certificate availability will be shown here once your training and application requirements are complete.'));
 
         if (statusButton) {
             statusButton.disabled = !certificate.eligible;
@@ -387,138 +496,18 @@
         }
     }
 
-    function renderApplicationForms() {
-        const postApproval = state.dashboard.postApproval || {};
-        const tasks = Array.isArray(postApproval.tasks) ? postApproval.tasks : [];
-        const unlocked = Boolean(postApproval.isUnlocked);
-        const firstActionable = tasks.find((task) => task.interactive && ['Unlocked', 'In Progress', 'Needs Correction', 'Rejected'].includes(task.status))
-            || tasks.find((task) => task.interactive)
-            || tasks[0]
-            || null;
-        const remarkTask = tasks.find((task) => task.reviewerRemarks);
-        const summary = postApproval.summary || {};
-        const container = document.getElementById('applicationFormsTaskCards');
-
-        setText('applicationFormsSubtitle', unlocked
-            ? 'Open the form requirement marked available now. Waiting forms cannot be opened yet.'
-            : 'Fill-up form requirements will appear here when your application record reaches that step.');
-        setText('applicationFormsPriority', firstActionable ? firstActionable.title : 'Waiting for fill-up form requirements');
-        setText('applicationFormsNextAction', firstActionable
-            ? (firstActionable.interactive ? 'What to do next: open the available form requirement below.' : 'What to do next: wait for the earlier requirement to finish.')
-            : 'The next required form will be shown here.');
-        setText('applicationFormsUnlockedAt', unlocked && postApproval.unlockedAt ? formatDateTime(postApproval.unlockedAt) : 'Not available yet');
-        setText('applicationFormsUnlockMeta', unlocked
-            ? `Available in your application workspace${postApproval.unlockedAt ? ` on ${formatDateTime(postApproval.unlockedAt)}` : ''}.`
-            : 'Fill-up form requirements will appear here when your application record reaches that step.');
-        setText('applicationFormsTaskCount', `${tasks.length} form${tasks.length === 1 ? '' : 's'}`);
-        setText('applicationFormsTaskChip', `${tasks.length} form${tasks.length === 1 ? '' : 's'}`);
-        setText('applicationFormsProgressMeta', tasks.length > 0
-            ? `${(summary.submitted || 0) + (summary.inProgress || 0) + (summary.needsCorrection || 0)} form${(((summary.submitted || 0) + (summary.inProgress || 0) + (summary.needsCorrection || 0)) === 1) ? '' : 's'} still need action or review.`
-            : 'No fill-up form requirements are currently available.');
-        setText('applicationFormsFeedbackSummary', remarkTask ? 'Please review' : 'No fix needed');
-        setText('applicationFormsFeedbackMeta', remarkTask ? remarkTask.reviewerRemarks : 'If a reviewer asks for changes, the note will appear here.');
-
-        if (!container) {
-            return;
-        }
-
-        if (tasks.length === 0) {
-            container.innerHTML = '<article class="post-approval-taskcard is-empty">Fill-up form requirements will appear here when available.</article>';
-            return;
-        }
-
-        container.innerHTML = tasks.map((task, index) => {
-            const href = task.interactive
-                ? routeUrl(`post-approval-form?code=${encodeURIComponent(task.code)}`)
-                : '';
-            const summaryText = task.summary || task.helpText || 'Form details will appear here.';
-            const progressText = buildTaskProgressText(task);
-            const primaryState = buildTaskPrimaryState(task);
-
-            return `
-                <article class="post-approval-taskcard ${task.interactive ? 'is-clickable' : 'is-disabled'}" ${task.interactive ? '' : 'aria-disabled="true"'}>
-                    <div class="post-approval-taskcard__meta">
-                        <span class="post-approval-taskcard__index">Requirement ${index + 1}</span>
-                        <span class="post-approval-taskcard__status status-${slugify(task.status)}">${escapeHtml(task.status)}</span>
-                        <span class="post-approval-taskcard__badge ${task.interactive ? '' : 'is-muted'}">${escapeHtml(primaryState)}</span>
-                    </div>
-                    <strong>${escapeHtml(task.title)}</strong>
-                    <p>${escapeHtml(summaryText)}</p>
-                    <div class="post-approval-taskcard__footer">
-                        <span>${escapeHtml(progressText)}</span>
-                        <span class="post-approval-taskcard__actions">
-                            ${task.reviewerRemarks ? '<span class="post-approval-taskcard__issue">Review note</span>' : ''}
-                            ${task.interactive ? '<span class="tracker-task-open">Open requirement</span>' : '<span class="post-approval-taskcard__locked-note">Unavailable</span>'}
-                        </span>
-                    </div>
-                    ${task.interactive ? `<a class="post-approval-taskcard__overlay" href="${escapeAttribute(href)}" aria-label="Open ${escapeAttribute(task.title)}"></a>` : ''}
-                </article>
-            `;
-        }).join('');
-    }
-
-    function renderNotifications() {
-        const notifications = state.dashboard.notifications || [];
-        const list = document.getElementById('notificationList');
-        const toggle = document.getElementById('notificationsToggle');
-        if (!list) {
-            return;
-        }
-
-        if (notifications.length === 0) {
-            list.innerHTML = '<li class="empty">No notifications yet.</li>';
-            toggle?.classList.add('is-hidden');
-            return;
-        }
-
-        const preparedNotifications = prepareNotifications(notifications);
-        const prioritizedNotifications = dedupeNotifications(preparedNotifications);
-        const visibleLimit = 4;
-        const collapsedNotifications = prioritizedNotifications.slice(0, visibleLimit);
-        const visibleNotifications = state.notificationsExpanded
-            ? preparedNotifications
-            : collapsedNotifications;
-        const hiddenCount = Math.max(0, preparedNotifications.length - collapsedNotifications.length);
-        const canExpand = hiddenCount > 0;
-
-        if (toggle) {
-            toggle.classList.toggle('is-hidden', !canExpand);
-            toggle.textContent = state.notificationsExpanded ? 'Show fewer' : `Show ${hiddenCount} more`;
-        }
-
-        list.innerHTML = visibleNotifications.map((item) => {
-            const summary = item.summary ? truncateText(item.summary, 96) : '';
-
-            return `
-                <li class="notification-card notification-card--${item.tone} ${item.requiresAction ? 'notification-card--action' : 'notification-card--info'}">
-                    <div class="notification-main">
-                        <div class="notification-top">
-                            <span class="notification-type">${escapeHtml(notificationToneLabel(item.tone))}</span>
-                            ${item.requiresAction ? '<span class="notification-flag">Needs your attention</span>' : ''}
-                        </div>
-                        <div class="notification-title">${escapeHtml(item.title)}</div>
-                        ${summary ? `<p class="notification-copy">${escapeHtml(summary)}</p>` : ''}
-                        ${item.meta ? `<p class="notification-hint">${escapeHtml(item.meta)}</p>` : ''}
-                        ${item.actionHref ? `<a class="btn-outline small notification-action" href="${escapeAttribute(routeMaybeAbsolute(item.actionHref))}">${escapeHtml(notificationActionLabel(item.tone, item.requiresAction))}</a>` : ''}
-                    </div>
-                    <div class="notification-meta">${escapeHtml(formatDateTime(item.dateValue))}</div>
-                </li>
-            `;
-        }).join('');
-    }
-
     function renderSupport() {
         const nextStep = state.dashboard.nextStep || {};
         const application = state.dashboard.application || {};
         state.nextStepPath = nextStep.actionPath || null;
 
         setText('nextStepTitle', sanitizeApplicantWording(nextStep.title || 'Complete your applicant profile'));
-        setText('nextStepDescription', workflowActionDescription(nextStep.actionPath, nextStep.description || 'Your next required action will appear here.'));
+        setText('nextStepDescription', workflowActionDescription(nextStep.actionPath, nextStep.description || 'The next required action will appear here.'));
         setText('supportGuidanceTitle', 'Guidance for your current step');
         setText(
             'supportGuidanceText',
             application?.status
-                ? `${workflowActionDescription(nextStep.actionPath, nextStep.description || 'Your next required action will appear here.')} Current application status: ${application.status}.`
+                ? `${workflowActionDescription(nextStep.actionPath, nextStep.description || 'The next required action will appear here.')} Current application status: ${application.status}.`
                 : 'Your next required action will appear here once your applicant record updates.'
         );
 
@@ -527,6 +516,91 @@
             nextStepAction.textContent = workflowActionLabel(nextStep.actionPath, nextStep.actionLabel || 'Refresh dashboard');
             nextStepAction.disabled = !nextStep.actionPath;
         }
+    }
+
+    async function loadSupportChat(silent = false) {
+        const stream = document.getElementById('supportChatMessages');
+        if (!stream) {
+            return;
+        }
+
+        try {
+            const payload = await fetchJson(`api/support-chat/messages?recipient=${encodeURIComponent(state.supportRecipient)}`);
+            renderSupportChat(payload.messages || []);
+            setSupportChatStatus('');
+        } catch (error) {
+            if (!silent) {
+                setSupportChatStatus(error.message || 'Unable to load chat messages.');
+            }
+        }
+    }
+
+    async function handleSupportChatSubmit(event) {
+        event.preventDefault();
+        const input = document.getElementById('supportChatInput');
+        const message = String(input?.value || '').trim();
+        if (!message) {
+            return;
+        }
+
+        setSupportChatStatus('Gipadala...');
+        try {
+            const payload = await fetchJson('api/support-chat/messages', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    recipient: state.supportRecipient,
+                    message,
+                }),
+            });
+            if (input) {
+                input.value = '';
+            }
+            renderSupportChat(payload.messages || []);
+            setSupportChatStatus('Napadala ang mensahe.');
+        } catch (error) {
+            setSupportChatStatus(error.message || 'Dili mapadala ang imong mensahe.');
+        }
+    }
+
+    function renderSupportChat(messages) {
+        const stream = document.getElementById('supportChatMessages');
+        if (!stream) {
+            return;
+        }
+
+        if (!Array.isArray(messages) || messages.length === 0) {
+            stream.innerHTML = '<p class="support-chat__empty">Ang mga mensahe sa imong support team makita dinhi.</p>';
+            return;
+        }
+
+        stream.innerHTML = messages.map((message) => `
+            <article class="support-chat__message ${message.isOwn ? 'is-own' : ''}">
+                <strong>${escapeHtml(message.senderName || 'SMART LEAP support')}</strong>
+                <p>${escapeHtml(message.body || '')}</p>
+                <span>${escapeHtml(formatDateTime(message.createdAt))}</span>
+            </article>
+        `).join('');
+        stream.scrollTop = stream.scrollHeight;
+    }
+
+    function setSupportChatStatus(message) {
+        const status = document.getElementById('supportChatStatus');
+        if (status) {
+            status.textContent = message || '';
+        }
+    }
+
+    function startSupportChatPolling() {
+        if (state.supportChatTimer || !document.getElementById('supportChatMessages')) {
+            return;
+        }
+
+        state.supportChatTimer = window.setInterval(() => {
+            if ((window.location.hash || '#dashboard-home').replace('#', '') === 'support-page') {
+                loadSupportChat(true);
+            }
+        }, 10000);
     }
 
     function renderJourney() {
@@ -539,13 +613,13 @@
 
         const applicationStatus = String(application.status || '').toLowerCase();
         const applicationReady = ['approved', 'for training', 'training', 'completed'].includes(applicationStatus);
-        setJourneyState('journeyStepApplication', applicationReady ? 'complete' : ((profile.completionPercent || 0) >= 100 ? 'current' : 'upcoming'));
+        setJourneyState('journeyStepAplikasyon', applicationReady ? 'complete' : ((profile.completionPercent || 0) >= 100 ? 'current' : 'upcoming'));
 
         const trainingSummary = training.summary || {};
         const trainingStarted = (training.invitees || []).length > 0;
         const trainingComplete = (trainingSummary.totalPrograms || 0) > 0 && (trainingSummary.completed || 0) >= (trainingSummary.totalPrograms || 0);
         setJourneyState('journeyStepTraining', trainingComplete ? 'complete' : (trainingStarted ? 'current' : 'upcoming'));
-        setJourneyState('journeyStepCertificate', certificate.eligible ? 'complete' : (trainingComplete ? 'current' : 'upcoming'));
+        setJourneyState('journeyStepSertipiko', certificate.eligible ? 'complete' : (trainingComplete ? 'current' : 'upcoming'));
     }
 
     function renderAlerts() {
@@ -597,7 +671,7 @@
         }
 
         if (alerts.length === 0) {
-            list.innerHTML = '<li class="attention-list__empty">High-value updates will appear here as your application moves.</li>';
+            list.innerHTML = '<li class="attention-list__empty">Important updates will appear here while your application moves forward.</li>';
             return;
         }
 
@@ -636,7 +710,7 @@
         }
 
         if (invitees.length === 0) {
-            grid.innerHTML = '<article class="training-schedule-empty">No training schedule yet. Wait for CSWDD notice updates.</article>';
+            grid.innerHTML = '<article class="training-schedule-empty">No training schedule yet. Wait for notice updates from CSWDD.</article>';
             return;
         }
 
@@ -688,7 +762,7 @@
                         <small class="table-secondary">${escapeHtml(formatTimeRange(program.startsAt, program.endsAt))}</small>
                     </td>
                     <td><span class="badge-status ${attendanceBadgeClass(invitee.status)}">${escapeHtml(invitee.status || 'Not Scheduled')}</span></td>
-                    <td>${escapeHtml(invitee.remarks || 'No remarks yet.')}</td>
+                    <td>${escapeHtml(invitee.remarks || 'Walay remarks yet.')}</td>
                     <td>${escapeHtml(buildNoticeMeta(invitee))}</td>
                 </tr>
             `;
@@ -707,7 +781,7 @@
                         </div>
                         <p class="attendance-card__meta">${escapeHtml(formatDate(program.startsAt))} | ${escapeHtml(formatTimeRange(program.startsAt, program.endsAt))}</p>
                         <p class="attendance-card__meta">${escapeHtml(program.venue || 'Venue TBA')}</p>
-                        <p class="attendance-card__copy">${escapeHtml(invitee.remarks || 'No remarks yet.')}</p>
+                        <p class="attendance-card__copy">${escapeHtml(invitee.remarks || 'Walay remarks yet.')}</p>
                         <p class="attendance-card__hint">${escapeHtml(buildNoticeMeta(invitee))}</p>
                     </article>
                 `;
@@ -738,7 +812,7 @@
             <li>
                 <div class="timeline-main">
                     <div class="timeline-title">${escapeHtml(transition)}</div>
-                    <div class="timeline-copy">${escapeHtml(item.remarks || 'No remarks recorded for this status update.')}</div>
+                    <div class="timeline-copy">${escapeHtml(item.remarks || 'Walay remarks recorded for this status update.')}</div>
                 </div>
                 <div class="timeline-meta">${escapeHtml(item.actorName || 'System')} | ${escapeHtml(formatDateTime(item.createdAt))}</div>
             </li>
@@ -812,7 +886,12 @@
         try {
             const payload = await fetchJson('auth/logout', {
                 method: 'POST',
-                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: new URLSearchParams({ entryPoint: 'portal' }).toString(),
             });
             const remaining = Math.max(0, PORTAL_LOADER_MIN_MS - (Date.now() - state.loaderStartedAt));
             window.setTimeout(() => {
@@ -820,7 +899,7 @@
             }, remaining);
         } catch (error) {
             hidePortalLoader();
-            showToast(error.message || 'Unable to log out right now.', 'warning');
+            showToast(error.message || 'Dili makagawas karon.', 'warning');
         }
     }
 
@@ -838,7 +917,7 @@
         if (!contentType.includes('application/json')) {
             if (response.redirected) {
                 window.location.href = response.url;
-                throw new Error('Redirecting...');
+                throw new Error('Nag-redirect...');
             }
 
             throw new Error(`Unexpected response from ${path}.`);
@@ -848,15 +927,15 @@
         if (!response.ok) {
             if (payload.redirect) {
                 window.location.href = routeUrl(payload.redirect);
-                throw new Error('Redirecting...');
+                throw new Error('Nag-redirect...');
             }
 
-            throw new Error(payload.message || 'Request failed.');
+            throw new Error(payload.message || 'Napakyas ang request.');
         }
 
         if (payload.redirect) {
             window.location.href = routeUrl(payload.redirect);
-            throw new Error('Redirecting...');
+            throw new Error('Nag-redirect...');
         }
 
         return payload;
@@ -870,12 +949,11 @@
             'profile-page': 'profile-page',
             'requirements-progress': 'application-page',
             'application-status': 'application-page',
-            'notifications-panel': 'application-page',
-            'application-forms': 'application-page',
             'application-page': 'application-page',
             'training-progress': 'training-page',
             'training-page': 'training-page',
             'support-panel': 'support-page',
+            'support-chat': 'support-page',
             'support-page': 'support-page',
         };
         const rawHash = (window.location.hash || '#dashboard-home').replace('#', '');
@@ -890,7 +968,14 @@
             const href = (link.getAttribute('href') || '').replace('#', '');
             link.classList.toggle('is-active', href === target?.id);
         });
+        document.querySelectorAll('.applicant-tabbar__link').forEach((link) => {
+            const href = (link.getAttribute('href') || '').replace('#', '');
+            link.classList.toggle('is-active', href === target?.id);
+        });
 
+        const activeLink = Array.from(document.querySelectorAll('.sidebar-link')).find((link) => link.classList.contains('is-active')) || null;
+        updateMobileTopbarTitle(activeLink, target?.id || 'dashboard-home');
+        closeMobileAccountMenu();
         syncSidebarMenuState();
     }
 
@@ -910,11 +995,6 @@
             return;
         }
 
-        if (isApplicationFormsPath(path)) {
-            openSection('application-forms');
-            return;
-        }
-
         window.location.href = routeUrl(path);
     }
 
@@ -924,6 +1004,7 @@
             return;
         }
 
+        closeMobileAccountMenu();
         sidebar.classList.toggle('is-open');
         syncSidebarMenuState();
     }
@@ -940,6 +1021,7 @@
 
     function handleGlobalKeydown(event) {
         if (event.key === 'Escape') {
+            closeMobileAccountMenu();
             closeSidebarMenuOnMobile();
         }
     }
@@ -949,6 +1031,13 @@
         if (profileTrigger) {
             event.preventDefault();
             openSection('profile-page');
+            return;
+        }
+
+        const backHomeTrigger = event.target.closest('[data-open-dashboard-home]');
+        if (backHomeTrigger) {
+            event.preventDefault();
+            openSection('dashboard-home');
             return;
         }
 
@@ -977,6 +1066,7 @@
             sidebar.removeAttribute('aria-modal');
             sidebar.removeAttribute('aria-hidden');
             closeButton?.setAttribute('tabindex', '-1');
+            closeMobileAccountMenu();
             return;
         }
 
@@ -994,6 +1084,55 @@
         closeButton?.setAttribute('tabindex', isOpen ? '0' : '-1');
     }
 
+    function toggleMobileAccountMenu(event) {
+        event?.stopPropagation();
+        const menu = document.getElementById('mobileAccountMenu');
+        const toggle = document.getElementById('mobileAccountToggle');
+        if (!menu || !toggle) {
+            return;
+        }
+        const willOpen = !menu.classList.contains('is-open');
+        closeMobileAccountMenu();
+        document.dispatchEvent(new CustomEvent('smartleap:close-notifications'));
+        menu.classList.toggle('is-open', willOpen);
+        menu.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+        toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    }
+
+    function closeMobileAccountMenu() {
+        const menu = document.getElementById('mobileAccountMenu');
+        const toggle = document.getElementById('mobileAccountToggle');
+        menu?.classList.remove('is-open');
+        menu?.setAttribute('aria-hidden', 'true');
+        toggle?.setAttribute('aria-expanded', 'false');
+    }
+
+    function updateMobileTopbarTitle(activeLink, routeId) {
+        const title = document.getElementById('mobileTopbarTitle');
+        if (!title) {
+            return;
+        }
+        const keyMap = {
+            'dashboard-home': 'overview',
+            'profile-page': 'profile',
+            'application-page': 'application',
+            'training-page': 'training',
+            'support-page': 'support',
+        };
+        const activeKey = keyMap[routeId] || 'overview';
+        title.dataset.i18nKey = activeKey;
+        const translatedLabel = window.SMARTLEAP_I18N?.translate?.(activeKey);
+        const linkLabel = activeLink?.querySelector('span:last-child')?.textContent?.trim();
+        const fallbackMap = {
+            'dashboard-home': 'Overview',
+            'profile-page': 'Profile',
+            'application-page': 'Application',
+            'training-page': 'Training',
+            'support-page': 'Support',
+        };
+        title.textContent = translatedLabel || linkLabel || fallbackMap[routeId] || 'Overview';
+    }
+
     function routeUrl(path) {
         const base = state.baseUrl || '';
         return `${base}/${String(path || '').replace(/^\/+/, '')}`;
@@ -1001,20 +1140,105 @@
 
     function isProfileEditorPath(path) {
         const normalized = String(path || '').trim().toLowerCase().replace(/^\/+/, '');
-        return normalized === 'profile-completion'
-            || normalized === 'applicant-dashboard#profile-page'
+        return normalized === 'applicant-dashboard#profile-page'
             || normalized === 'applicant-dashboard/?welcome=1#profile-page'
             || normalized === 'applicant-dashboard?welcome=1#profile-page'
             || normalized.endsWith('#profile-page');
     }
 
-    function workflowActionLabel(path, fallback) {
-        if (isProfileEditorPath(path)) {
-            return 'Edit Profile';
+    function openChangePasswordModal() {
+        closeCenteredModal();
+        const modal = document.createElement('div');
+        modal.className = 'beneficiary-centered-modal';
+        modal.dataset.centeredModal = 'true';
+        modal.innerHTML = `
+            <div class="beneficiary-centered-modal__backdrop" data-close-centered-modal></div>
+            <div class="beneficiary-centered-modal__card" role="dialog" aria-modal="true" aria-labelledby="applicantPasswordTitle">
+                <button type="button" class="beneficiary-centered-modal__close" data-close-centered-modal aria-label="Close">&times;</button>
+                <div class="beneficiary-centered-modal__header">
+                    <span class="panel-eyebrow">Account Security</span>
+                    <h3 id="applicantPasswordTitle">Change Password</h3>
+                    <p>Update your account password using your current password first.</p>
+                </div>
+                <form id="applicantChangePasswordForm" class="beneficiary-centered-modal__form">
+                    <label class="form-field">
+                        <span>Current password</span>
+                        <input type="password" name="currentPassword" required>
+                    </label>
+                    <label class="form-field">
+                        <span>New password</span>
+                        <input type="password" name="newPassword" required minlength="8">
+                    </label>
+                    <label class="form-field">
+                        <span>Confirm new password</span>
+                        <input type="password" name="confirmPassword" required minlength="8">
+                    </label>
+                    <div class="notice error" id="applicantPasswordError" hidden></div>
+                    <div class="beneficiary-centered-modal__actions">
+                        <button type="button" class="btn-outline" data-close-centered-modal>Back</button>
+                        <button type="submit" class="btn-primary">Save Password</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        modal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-centered-modal]')) {
+                closeCenteredModal();
+            }
+        });
+        modal.querySelector('#applicantChangePasswordForm')?.addEventListener('submit', submitChangePassword);
+        document.body.appendChild(modal);
+    }
+
+    function closeCenteredModal() {
+        document.querySelector('[data-centered-modal="true"]')?.remove();
+    }
+
+    async function submitChangePassword(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const errorNode = document.getElementById('applicantPasswordError');
+        const submitButton = form.querySelector('button[type="submit"]');
+        submitButton.disabled = true;
+        if (errorNode) {
+            errorNode.hidden = true;
+            errorNode.textContent = '';
         }
 
-        if (isApplicationFormsPath(path)) {
-            return 'Open Application';
+        const formData = new URLSearchParams();
+        formData.set('currentPassword', String(form.currentPassword?.value || ''));
+        formData.set('newPassword', String(form.newPassword?.value || ''));
+        formData.set('confirmPassword', String(form.confirmPassword?.value || ''));
+
+        try {
+            const response = await fetch(routeUrl('account/change-password'), {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                },
+                credentials: 'same-origin',
+                body: formData.toString(),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.message || 'Unable to change password.');
+            }
+            showToast(payload.message || 'Password updated.', 'success');
+            closeCenteredModal();
+        } catch (error) {
+            if (errorNode) {
+                errorNode.hidden = false;
+                errorNode.textContent = error.message || 'Unable to change password.';
+            }
+        } finally {
+            submitButton.disabled = false;
+        }
+    }
+
+    function workflowActionLabel(path, fallback) {
+        if (isProfileEditorPath(path)) {
+            return 'I-edit ang Profile';
         }
 
         return fallback;
@@ -1025,18 +1249,7 @@
             return 'Open your Profile page to update your personal details. Use Application for uploads, review, and submission.';
         }
 
-        if (isApplicationFormsPath(path)) {
-            return 'Open the Application page to complete your requirements, fill-up forms, and review updates.';
-        }
-
         return sanitizeApplicantWording(fallback);
-    }
-
-    function isApplicationFormsPath(path) {
-        const normalized = String(path || '').trim().toLowerCase().replace(/^\/+/, '');
-        return normalized === 'post-approval'
-            || normalized === 'applicant-dashboard#application-forms'
-            || normalized.endsWith('#application-forms');
     }
 
     function buildTaskProgressText(task) {
@@ -1172,7 +1385,7 @@
         return 'Training activity is available in your applicant record.';
     }
 
-    function buildApplicationDateMeta(application) {
+    function buildAplikasyonDateMeta(application) {
         if (!application) {
             return 'Application has not been submitted yet.';
         }
@@ -1190,7 +1403,7 @@
         return parts.join(' | ') || 'Awaiting workflow timestamps.';
     }
 
-    function buildProfileApplicationNote(application) {
+    function buildProfileAplikasyonNote(application) {
         if (!application || !application.status || application.status === 'Draft') {
             return 'Keep these details updated before you upload or submit application requirements.';
         }
@@ -1198,13 +1411,13 @@
         return 'Your Application page uses the same profile details shown here.';
     }
 
-    function sanitizeCertificateNote(note) {
+    function sanitizeSertipikoNote(note) {
         return sanitizeApplicantWording(note)
             .replace(/verified application forms/gi, 'verified application requirements')
             .replace(/application forms/gi, 'application requirements');
     }
 
-    function buildApplicationNextStepSummary(application, latestRemark) {
+    function buildAplikasyonNextStepSummary(application, latestRemark) {
         if (latestRemark?.comment) {
             return truncateText(latestRemark.comment, 120);
         }
@@ -1252,7 +1465,7 @@
             return `Last sent ${formatDateTime(invitee.lastNoticeSentAt)}`;
         }
         if (invitee.notifiedAt) {
-            return `Notified ${formatDateTime(invitee.notifiedAt)}`;
+            return `Napahibaloan ${formatDateTime(invitee.notifiedAt)}`;
         }
         return 'No notice sent yet';
     }
@@ -1265,13 +1478,42 @@
         return 'This file is needed before your application can move to the next step.';
     }
 
+    function normalizeFormCardStatus(task) {
+        const raw = String(task?.status || '').toLowerCase();
+        if (['verified', 'approved', 'completed'].includes(raw)) return 'Approved';
+        if (task?.file?.url || raw === 'submitted') return 'Uploaded';
+        if (['needs correction', 'rejected'].includes(raw)) return 'Needs correction';
+        return 'Pending PDO upload';
+    }
+
+    function formCardStatusClass(status) {
+        const value = String(status || '').toLowerCase();
+        if (value === 'approved') return 'is-approved';
+        if (value === 'uploaded') return 'is-uploaded';
+        if (value === 'needs correction') return 'is-rejected';
+        return '';
+    }
+
+    function buildFormRequirementHelper(task) {
+        if (task?.reviewerRemarks) {
+            return 'This uploaded form needs correction based on the latest review remarks.';
+        }
+        if (task?.file?.url && String(task?.status || '').toLowerCase() === 'verified') {
+            return 'This uploaded form has been reviewed and approved. It can no longer be replaced here.';
+        }
+        if (task?.file?.url) {
+            return 'This form copy was uploaded by your assigned PDO or Admin and is currently under review.';
+        }
+        return 'Your assigned PDO or Admin will upload this form copy in the application checker once it is prepared.';
+    }
+
     function normalizeRequirementStatusSimple(item) {
-        const raw = String(item.status || '').toLowerCase();
-        if (raw === 'verified') return 'Approved';
-        if (raw === 'pending') return item.file?.path ? 'Under review' : 'Not uploaded';
-        if (raw === 'missing') return 'Not uploaded';
-        if (raw === 'flagged' || raw === 'needs correction' || raw === 'needs_correction' || raw === 'rejected') return 'Needs correction';
-        return item.file?.path ? 'Uploaded' : 'Not uploaded';
+        const raw = String(item.status || '').toLowerCase().replace(/[^a-z]/g, '');
+        if (['verified', 'approved', 'complete', 'completed', 'approvedbypdo', 'pdoapproved', 'requirementsverified'].includes(raw)) return 'Approved';
+        if (raw === 'pending') return item.file?.path ? 'Under review' : 'Not uploaded yet';
+        if (raw === 'missing') return item.file?.path ? 'Uploaded' : 'Not uploaded yet';
+        if (['flagged', 'needscorrection', 'rejected'].includes(raw)) return 'Needs changes';
+        return item.file?.path ? 'Uploaded' : 'Not uploaded yet';
     }
 
     function notificationTone(item) {
@@ -1287,7 +1529,7 @@
         if (tone === 'correction') return 'Correction needed';
         if (tone === 'schedule') return 'Schedule';
         if (tone === 'review') return 'Review update';
-        if (tone === 'success') return 'Completed';
+        if (tone === 'success') return 'Nahuman';
         return 'Reminder';
     }
 
@@ -1335,6 +1577,8 @@
         const requiresAction = tone === 'correction' || hasActionPhrase(summary);
 
         return {
+            id: Number(item.id || 0) || null,
+            isRead: Boolean(item.isRead),
             tone,
             title,
             summary,
@@ -1373,7 +1617,7 @@
 
     function notificationSubject(item, title, summary) {
         const source = `${item.title || ''} ${title} ${summary}`;
-        const match = source.match(/(business plan|valid id|health certificate|cedula|training|session|certificate|barangay certificate)/i);
+        const match = source.match(/(business plan|valid id|health certificate|cedula|training|session|certificate|barangay clearance|barangay certificate)/i);
         if (match) {
             return match[1].toLowerCase();
         }
@@ -1422,6 +1666,41 @@
             return path;
         }
         return routeUrl(path);
+    }
+
+    async function markNotificationsRead(ids) {
+        const notificationIds = Array.from(new Set((Array.isArray(ids) ? ids : [])
+            .map((value) => Number(value || 0))
+            .filter((value) => value > 0)));
+        const unreadIds = notificationIds.filter((id) => {
+            const entry = (state.dashboard?.notifications || []).find((item) => Number(item?.id || 0) === id);
+            return entry && !entry.isRead;
+        });
+
+        if (!unreadIds.length) {
+            return;
+        }
+
+        if (Array.isArray(state.dashboard?.notifications)) {
+            state.dashboard.notifications = state.dashboard.notifications.map((entry) => unreadIds.includes(Number(entry.id || 0))
+                ? { ...entry, isRead: true }
+                : entry);
+        }
+
+        try {
+            const payload = await fetchJson('api/notifications/read', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json;charset=UTF-8',
+                },
+                body: JSON.stringify({ ids: unreadIds }),
+            });
+            if (Array.isArray(payload.notifications) && state.dashboard) {
+                state.dashboard.notifications = payload.notifications;
+            }
+        } catch (error) {
+            console.warn('Unable to mark notifications as read', error);
+        }
     }
 
     function attendanceBadgeClass(status) {
@@ -1475,5 +1754,14 @@
             return text;
         }
         return `${text.slice(0, Math.max(0, limit - 1)).trimEnd()}...`;
+    }
+
+    function formatFileSize(bytes) {
+        const size = Number(bytes || 0);
+        if (!Number.isFinite(size) || size <= 0) return '0 KB';
+        if (size >= 1024 * 1024) {
+            return `${Math.round((size / (1024 * 1024)) * 10) / 10} MB`;
+        }
+        return `${Math.max(1, Math.round(size / 1024))} KB`;
     }
 })();

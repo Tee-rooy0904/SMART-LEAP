@@ -54,6 +54,22 @@
     'Villa Kananga'
   ];
 
+  const OFFICIAL_BARANGAYS = [
+    'Agao Pob.', 'Agusan Pequeño', 'Ambago', 'Amparo', 'Ampayon', 'Anticala', 'Antongalon', 'Aupagan',
+    'Baan KM 3', 'Babag', 'Bading Pob.', 'Bancasi', 'Banza', 'Baobaoan', 'Basag', 'Bayanihan Pob.',
+    'Bilay', 'Bit-os', 'Bitan-agan', 'Bobon', 'Bonbon', 'Bugabus', 'Buhangin Pob.', 'Cabcabon',
+    'Camayahan', 'Baan Riverside Pob.', 'Dankias', 'Imadejas Pob.', 'Diego Silang Pob.', 'Doongan',
+    'Dumalagan', 'Golden Ribbon Pob.', 'Dagohoy Pob.', 'Jose Rizal Pob.', 'Holy Redeemer Pob.', 'Humabon Pob.',
+    'Kinamlutan', 'Lapu-lapu Pob.', 'Lemon', 'Leon Kilat Pob.', 'Libertad', 'Limaha Pob.',
+    'Los Angeles', 'Lumbocan', 'Maguinda', 'Mahay', 'Mahogany Pob.', 'Maibu', 'Mandamo', 'Manila de Bugabus',
+    'Maon Pob.', 'Masao', 'Maug', 'Port Poyohon Pob.', 'New Society Village Pob.', 'Ong Yiu Pob.',
+    'Pianing', 'Pinamanculan', 'Rajah Soliman Pob.', 'San Ignacio Pob.', 'San Mateo', 'San Vicente',
+    'Sikatuna Pob.', 'Silongan Pob.', 'Sumilihon', 'Tagabaca', 'Taguibo', 'Taligaman',
+    'Tandang Sora Pob.', 'Tiniwisan', 'Tungao', 'Urduja Pob.', 'Villa Kananga', 'Obrero Pob.',
+    'Bugsukan', 'De Oro', 'Dulag', 'Florida', 'Nong-nong', 'Pagatpatan', 'Pangabugan', 'Salvacion',
+    'Santo Niño', 'Sumile', 'Don Francisco', 'Pigdaulan'
+  ];
+
   // Business categories (as per task requirements)
   const BUSINESS_TYPES = ["Establishment", "Buy & Sell", "Homemade", "Livestock", "Services"];
 
@@ -346,7 +362,7 @@
 
   window.App = window.App || {};
   window.App.data = {
-    BARANGAYS,
+    BARANGAYS: OFFICIAL_BARANGAYS,
     BUSINESS_TYPES,
     BUSINESS_TYPES_BASELINE,
     beneficiaries,

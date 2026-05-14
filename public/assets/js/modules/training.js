@@ -1,28 +1,25 @@
 (function () {
-  const { qs, on, setHTML } = window.App.dom;
+  const { qs, setHTML } = window.App.dom;
   const { formatDate } = window.App.format;
 
-  const state = {
-    filters: { status: '', date: '', programName: '' },
-    data: { programs: [], eligibleInvitees: [], summary: {}, statuses: [] },
-    activeProgram: null,
-    editingId: null,
-    searchTimer: null,
-  };
-
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
-
   const routeUrl = (path) => `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
+
+  const state = {
+    data: { programs: [], rounds: [], summary: {}, statuses: [], seminarForms: [] },
+    view: 'overview',
+    activeRoundNumber: 0,
+    activeGroupNumber: 0,
+    activeProgram: null,
+    loading: { list: false, detail: false, save: false, notices: false },
+  };
 
   const section = () => qs('#training-section');
 
   const parseJson = async (response) => {
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
-      return {
-        ok: false,
-        message: response.status === 401 ? 'Your session has expired. Please sign in again.' : 'Unexpected server response.',
-      };
+      return { ok: false, message: response.status === 401 ? 'Your session has expired. Please sign in again.' : 'Unexpected server response.' };
     }
     return response.json();
   };
@@ -30,12 +27,8 @@
   const apiGet = async (path, params = {}) => {
     const query = new URLSearchParams(params);
     const url = query.toString() ? `${routeUrl(path)}?${query}` : routeUrl(path);
-
     try {
-      const response = await fetch(url, {
-        headers: { Accept: 'application/json' },
-        credentials: 'same-origin',
-      });
+      const response = await fetch(url, { headers: { Accept: 'application/json' }, credentials: 'same-origin' });
       return await parseJson(response);
     } catch (error) {
       return { ok: false, message: 'Unable to reach the server right now.' };
@@ -51,14 +44,10 @@
       }
       body.append(key, value ?? '');
     });
-
     try {
       const response = await fetch(routeUrl(path), {
         method: 'POST',
-        headers: {
-          Accept: 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-        },
+        headers: { Accept: 'application/json', 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
         credentials: 'same-origin',
         body: body.toString(),
       });
@@ -68,770 +57,630 @@
     }
   };
 
-  const apiFormPost = async (path, formData) => {
-    try {
-      const response = await fetch(routeUrl(path), {
-        method: 'POST',
-        headers: { Accept: 'application/json' },
-        credentials: 'same-origin',
-        body: formData,
-      });
-      return await parseJson(response);
-    } catch (error) {
-      return { ok: false, message: 'Unable to reach the server right now.' };
-    }
-  };
-
-  const renderShell = () => {
-    const target = section();
-    if (!target) return;
-
-    setHTML(target, `
-      <div class="training-workspace">
-        <section class="training-hero">
-          <div class="training-hero__copy">
-            <span class="training-hero__eyebrow">Admin Training Workspace</span>
-            <h3>Manage approved applicants from scheduling to attendance completion.</h3>
-          </div>
-          <div class="training-hero__actions">
-            <button type="button" class="app-btn-primary" id="training-focus-create">
-              <i class="fas fa-plus"></i>
-              <span>Create Training Program</span>
-            </button>
-            <button type="button" class="app-btn-outline" id="training-refresh">
-              <i class="fas fa-rotate-right"></i>
-              <span>Refresh</span>
-            </button>
-          </div>
-        </section>
-
-        <div class="notice" id="training-notice" hidden></div>
-
-        <div class="training-shell-grid">
-          <section class="training-panel training-panel--form" id="training-program-form"></section>
-          <section class="training-panel training-panel--summary" id="training-kpis"></section>
-        </div>
-
-        <section class="training-panel training-panel--filters" id="training-filters"></section>
-        <section class="training-panel training-panel--table" id="training-program-table"></section>
-        <section class="training-panel training-panel--detail" id="training-program-detail"></section>
-      </div>
-    `);
-  };
-
-  const renderSummary = () => {
-    const summary = state.data.summary || {};
-    const root = qs('#training-kpis');
-    if (!root) return;
-
-    setHTML(root, `
-      <div class="training-panel__header">
-        <div>
-          <span class="training-panel__eyebrow">Live training status</span>
-          <h4>Operational summary</h4>
-        </div>
-      </div>
-      <div class="training-kpi-grid">
-        ${renderKpi('Programs', summary.total || 0)}
-        ${renderKpi('Scheduled', summary.scheduled || 0)}
-        ${renderKpi('Notified', summary.notified || 0)}
-        ${renderKpi('Participants', summary.participants || 0)}
-        ${renderKpi('Attended', summary.attended || 0)}
-        ${renderKpi('Excused', summary.excused || 0)}
-        ${renderKpi('Completed', summary.completed || 0)}
-      </div>
-    `);
-  };
-
-  const renderFilters = () => {
-    const root = qs('#training-filters');
-    if (!root) return;
-
-    const statuses = [''].concat(state.data.statuses || []);
-    setHTML(root, `
-      <div class="training-panel__header training-panel__header--compact">
-        <div>
-          <span class="training-panel__eyebrow">Program filters</span>
-          <h4>Find a training schedule quickly</h4>
-        </div>
-      </div>
-      <div class="applications-filters training-filters">
-        <div class="filter-group">
-          <span class="filter-label">Status</span>
-          <select id="training-filter-status" class="filter-select">
-            ${statuses.map((status) => `<option value="${status}" ${state.filters.status === status ? 'selected' : ''}>${escapeHtml(status || 'All statuses')}</option>`).join('')}
-          </select>
-        </div>
-        <div class="filter-group">
-          <span class="filter-label">Date</span>
-          <input type="date" id="training-filter-date" class="filter-select" value="${escapeHtml(state.filters.date)}">
-        </div>
-        <label class="filter-search applications-search">
-          <i class="fas fa-search"></i>
-          <input type="search" id="training-filter-name" placeholder="Search training program name" value="${escapeHtml(state.filters.programName)}">
-        </label>
-        <div class="filter-actions">
-          <button class="app-btn-ghost" id="training-filter-reset">Reset</button>
-        </div>
-      </div>
-    `);
-  };
-
-  const renderProgramForm = () => {
-    const root = qs('#training-program-form');
-    if (!root) return;
-
-    const editing = (state.data.programs || []).find((item) => item.id === state.editingId) || null;
-    const statuses = state.data.statuses || [];
-
-    setHTML(root, `
-      <div class="training-panel__header">
-        <div>
-          <span class="training-panel__eyebrow">${editing ? 'Update program' : 'Create training program'}</span>
-          <h4>${editing ? escapeHtml(editing.programName) : 'Schedule a new SMART LEAP training session'}</h4>
-        </div>
-        ${editing ? '<button class="app-btn-ghost" id="training-cancel-edit">Cancel edit</button>' : ''}
-      </div>
-      <form id="training-program-save-form" class="training-form-grid">
-        <input type="hidden" name="programId" value="${editing ? editing.id : ''}">
-        <label>
-          <span>Program name</span>
-          <input type="text" name="programName" value="${escapeHtml(editing?.programName || '')}" required>
-        </label>
-        <label>
-          <span>Venue</span>
-          <input type="text" name="venue" value="${escapeHtml(editing?.venue || '')}" placeholder="CSWDD Training Hall">
-        </label>
-        <label>
-          <span>Speaker</span>
-          <input type="text" name="speaker" value="${escapeHtml(editing?.speaker || '')}" placeholder="Name of speaker or facilitator">
-        </label>
-        <label>
-          <span>Date</span>
-          <input type="date" name="date" value="${escapeHtml(editing?.date || '')}" required>
-        </label>
-        <label>
-          <span>Status</span>
-          <select name="status">
-            ${statuses.map((status) => `<option value="${status}" ${status === (editing?.status || 'Scheduled') ? 'selected' : ''}>${escapeHtml(status)}</option>`).join('')}
-          </select>
-        </label>
-        <label>
-          <span>Training coverage</span>
-          <select name="trainingMode">
-            <option value="all" ${(editing?.trainingMode || 'all') === 'all' ? 'selected' : ''}>All participants</option>
-            <option value="batch" ${(editing?.trainingMode || 'all') === 'batch' ? 'selected' : ''}>By batch</option>
-          </select>
-        </label>
-        <label>
-          <span>Start time</span>
-          <input type="time" name="startTime" value="${escapeHtml(editing?.startTime || '')}" required>
-        </label>
-        <label>
-          <span>End time</span>
-          <input type="time" name="endTime" value="${escapeHtml(editing?.endTime || '')}" required>
-        </label>
-        <label class="training-form-grid__wide">
-          <span>Description</span>
-          <textarea name="description" rows="3" placeholder="Summarize the session objectives and flow.">${escapeHtml(editing?.description || '')}</textarea>
-        </label>
-        <label class="training-form-grid__wide">
-          <span>What to bring</span>
-          <textarea name="whatToBring" rows="2" placeholder="List requirements participants should bring on the day.">${escapeHtml(editing?.whatToBring || '')}</textarea>
-        </label>
-        <label class="training-form-grid__wide">
-          <span>Instructions</span>
-          <textarea name="instructions" rows="3" placeholder="Add arrival instructions, dress code, or attendance guidance.">${escapeHtml(editing?.instructions || '')}</textarea>
-        </label>
-        <div class="training-form-grid__wide training-inline-note">
-          ${(editing?.trainingMode || 'all') === 'batch'
-            ? 'Batch mode uses 3 groups with 85 participants each, regardless of barangay.'
-            : 'All mode can include the full SMART LEAP training roster without a participant cap.'}
-        </div>
-        <div class="training-form-grid__actions">
-          <button type="submit" class="app-btn-primary">${editing ? 'Save program changes' : 'Create training program'}</button>
-        </div>
-      </form>
-    `);
-  };
-
-  const renderProgramTable = () => {
-    const root = qs('#training-program-table');
-    if (!root) return;
-
-    const programs = state.data.programs || [];
-    const rows = programs.map((program) => `
-      <tr class="${state.activeProgram && state.activeProgram.id === program.id ? 'is-selected' : ''}">
-        <td>
-          <div class="applicant-cell">
-            <strong>${escapeHtml(program.programName)}</strong>
-            <span>${escapeHtml(program.description || '--')}</span>
-          </div>
-        </td>
-        <td>${formatDate(program.date)}</td>
-        <td>${escapeHtml(program.venue || '--')}</td>
-        <td>${escapeHtml(program.speaker || '--')}</td>
-        <td>${escapeHtml(program.startTime || '--')} - ${escapeHtml(program.endTime || '--')}</td>
-        <td>${escapeHtml(trainingModeLabel(program.trainingMode))}</td>
-        <td><span class="status-badge ${statusClass(program.status)}">${escapeHtml(program.status)}</span></td>
-        <td>${program.participantCount || 0}</td>
-        <td>${program.completedCount || 0}</td>
-        <td class="actions">
-          <button class="app-btn-outline" data-training-open="${program.id}">Open workspace</button>
-          <button class="app-btn-ghost" data-training-edit="${program.id}">Edit</button>
-        </td>
-      </tr>
-    `).join('');
-
-    setHTML(root, `
-      <div class="training-panel__header">
-        <div>
-          <span class="training-panel__eyebrow">Program registry</span>
-          <h4>Training programs</h4>
-        </div>
-        <span class="chip">${programs.length} ${programs.length === 1 ? 'program' : 'programs'}</span>
-      </div>
-      <div class="table-wrapper">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Program</th>
-              <th>Date</th>
-              <th>Venue</th>
-              <th>Speaker</th>
-              <th>Time</th>
-              <th>Coverage</th>
-              <th>Status</th>
-              <th>Participants</th>
-              <th>Completed</th>
-              <th class="actions">Actions</th>
-            </tr>
-          </thead>
-          <tbody>${rows || '<tr><td colspan="10"><div class="training-empty training-empty--inline">No training programs found yet.</div></td></tr>'}</tbody>
-        </table>
-      </div>
-    `);
-  };
-
-  const renderProgramDetail = () => {
-    const root = qs('#training-program-detail');
-    if (!root) return;
-
-    const program = state.activeProgram;
-    if (!program) {
-      setHTML(root, `
-        <div class="training-empty">
-          <div class="training-empty__icon"><i class="fas fa-chalkboard-user"></i></div>
-          <h4>Select a training program</h4>
-        </div>
-      `);
-      return;
-    }
-
-    const invitees = Array.isArray(program.invitees) ? program.invitees : [];
-    const selectedInvitees = new Set(invitees.map((item) => String(item.applicantProfileId)));
-    const eligibleRows = (state.data.eligibleInvitees || []).map((invitee) => `
-      <label class="training-picklist__item">
-        <input type="checkbox" name="applicantProfileIds" value="${invitee.applicantProfileId}" ${selectedInvitees.has(String(invitee.applicantProfileId)) ? 'checked' : ''}>
-        <span class="training-picklist__text">
-          <strong>${escapeHtml(invitee.name)}</strong>
-          <small>${escapeHtml(invitee.barangay || '--')} | ${escapeHtml(invitee.businessName || '--')} | ${escapeHtml(invitee.status || '--')}</small>
-        </span>
-      </label>
-    `).join('');
-    const participantRows = invitees.map((invitee) => `
-      <tr>
-        <td>
-          <div class="applicant-cell">
-            <strong>${escapeHtml(invitee.user?.name || '')}</strong>
-            <span>${escapeHtml(invitee.barangay || '--')}</span>
-          </div>
-        </td>
-        <td>${escapeHtml(invitee.businessName || '--')}</td>
-        <td>${invitee.batchGroupNumber ? `Group ${escapeHtml(String(invitee.batchGroupNumber))}` : 'All'}</td>
-        <td><span class="status-badge ${statusClass(invitee.status)}">${escapeHtml(trainingStatusLabel(invitee.status))}</span></td>
-        <td>${invitee.lastNoticeSentAt || invitee.notifiedAt ? '<span class="training-pill training-pill--info">Notice sent</span>' : '<span class="training-pill">Pending notice</span>'}</td>
-        <td>${formatDate(invitee.lastNoticeSentAt || invitee.notifiedAt)}</td>
-        <td>${formatDate(invitee.checkedInAt)}</td>
-        <td>
-          <select class="filter-select" data-training-status-select="${invitee.id}">
-            ${['Scheduled', 'Notified', 'Attended', 'Excused', 'Missed', 'Completed'].map((status) => `<option value="${status}" ${status === invitee.status ? 'selected' : ''}>${escapeHtml(status === 'Missed' ? 'Absent' : status)}</option>`).join('')}
-          </select>
-        </td>
-        <td>
-          <textarea class="filter-select" data-training-remarks="${invitee.id}" rows="2" placeholder="Remarks or proof note">${escapeHtml(invitee.remarks || '')}</textarea>
-        </td>
-        <td>
-          <div class="training-proof-cell">
-            ${invitee.proofAttachment?.file_path ? `<a class="app-btn-ghost" href="${escapeHtml(routeUrl(invitee.proofAttachment.file_path))}" target="_blank" rel="noopener">View proof</a>` : '<span class="table-subcopy">No proof</span>'}
-            <input type="file" data-training-proof="${invitee.id}" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf">
-          </div>
-        </td>
-        <td class="actions">
-          <button class="app-btn-outline" data-training-send-invitee="${invitee.id}">Send notice</button>
-          <button class="app-btn-primary" data-training-save-attendance="${invitee.id}">Save</button>
-        </td>
-      </tr>
-    `).join('');
-    const attendanceSummary = summarizeAttendance(invitees);
-
-    setHTML(root, `
-      <div class="training-panel__header">
-        <div>
-          <span class="training-panel__eyebrow">Program workspace</span>
-          <h4>${escapeHtml(program.programName)}</h4>
-        </div>
-        <div class="training-workspace__status">
-          <span class="status-badge ${statusClass(program.status)}">${escapeHtml(program.status)}</span>
-          <span class="chip">${invitees.length} participants</span>
-        </div>
-      </div>
-
-      <div class="training-detail-overview">
-        <article class="training-overview-card">
-          <span class="training-overview-card__label">Schedule</span>
-          <strong>${formatDate(program.date)}</strong>
-          <small>${escapeHtml(program.startTime || '--')} - ${escapeHtml(program.endTime || '--')}</small>
-        </article>
-        <article class="training-overview-card">
-          <span class="training-overview-card__label">Venue</span>
-          <strong>${escapeHtml(program.venue || '--')}</strong>
-          <small>${escapeHtml(program.description || '--')}</small>
-        </article>
-        <article class="training-overview-card">
-          <span class="training-overview-card__label">Speaker</span>
-          <strong>${escapeHtml(program.speaker || '--')}</strong>
-        </article>
-        <article class="training-overview-card">
-          <span class="training-overview-card__label">Coverage</span>
-          <strong>${escapeHtml(trainingModeLabel(program.trainingMode))}</strong>
-          <small>${program.trainingMode === 'batch' ? '3 groups of up to 85 each' : 'No participant cap for all-mode sessions'}</small>
-        </article>
-        <article class="training-overview-card">
-          <span class="training-overview-card__label">What to bring</span>
-          <strong>${escapeHtml(program.whatToBring || '--')}</strong>
-        </article>
-        <article class="training-overview-card">
-          <span class="training-overview-card__label">Instructions</span>
-          <strong>${escapeHtml(program.instructions || '--')}</strong>
-        </article>
-      </div>
-
-      <div class="training-detail-grid">
-        <section class="training-subpanel">
-          <div class="training-subpanel__header">
-            <div>
-              <span class="training-panel__eyebrow">Eligible applicants</span>
-              <h5>Assign approved participants</h5>
-            </div>
-            <span class="chip">${(state.data.eligibleInvitees || []).length} eligible</span>
-          </div>
-          <form id="training-invitee-form" class="training-picklist">
-            <input type="hidden" name="programId" value="${program.id}">
-            <div class="training-picklist__body">
-              ${eligibleRows || '<div class="training-empty training-empty--inline">No approved applicants are eligible for training yet.</div>'}
-            </div>
-            <div class="training-picklist__actions">
-              <button type="submit" class="app-btn-primary">Save participant list</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="training-subpanel">
-          <div class="training-subpanel__header">
-            <div>
-              <span class="training-panel__eyebrow">Notice actions</span>
-              <h5>Send or resend training notices</h5>
-            </div>
-          </div>
-          <div class="training-action-stack">
-            <div class="training-action-card">
-              <strong>Bulk notice dispatch</strong>
-              <button class="app-btn-primary" data-training-send-program="${program.id}">Send notices to all invitees</button>
-            </div>
-            <div class="training-action-card">
-              <strong>Attendance overview</strong>
-              <div class="training-attendance-list">
-                ${Object.entries(attendanceSummary).map(([label, count]) => `
-                  <div class="training-attendance-item">
-                    <span>${label}</span>
-                    <strong>${count}</strong>
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-
-      <section class="training-subpanel training-subpanel--participants">
-        <div class="training-subpanel__header">
-          <div>
-            <span class="training-panel__eyebrow">Program participants</span>
-            <h5>Invitees, notice status, and attendance visibility</h5>
-          </div>
-          <span class="chip">${invitees.length} assigned</span>
-        </div>
-        <div class="table-wrapper">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Participant</th>
-                <th>Business</th>
-                <th>Group</th>
-                <th>Attendance status</th>
-                <th>Notice state</th>
-                <th>Last notice</th>
-                <th>Attendance recorded</th>
-                <th>Update status</th>
-                <th>Remarks</th>
-                <th>Excuse proof</th>
-                <th class="actions">Actions</th>
-              </tr>
-            </thead>
-            <tbody>${participantRows || '<tr><td colspan="11"><div class="training-empty training-empty--inline">No participants assigned yet.</div></td></tr>'}</tbody>
-          </table>
-        </div>
-      </section>
-    `);
-  };
-
-  const renderKpi = (label, value, meta = '') => `
-    <article class="training-kpi-card">
-      <span class="training-kpi-card__label">${escapeHtml(label)}</span>
-      <strong>${escapeHtml(String(value))}</strong>
-      ${meta ? `<small>${escapeHtml(meta)}</small>` : ''}
-    </article>
-  `;
-
-  const summarizeAttendance = (invitees) => {
-    const summary = {
-      Scheduled: 0,
-      Notified: 0,
-      Attended: 0,
-      Excused: 0,
-      Missed: 0,
-      Completed: 0,
-    };
-
-    invitees.forEach((invitee) => {
-      const key = String(invitee.status || '');
-      if (Object.prototype.hasOwnProperty.call(summary, key)) {
-        summary[key] += 1;
-      }
-    });
-
-    return summary;
-  };
-
-  const load = async () => {
-    clearNotice();
-    const response = await apiGet('api/training', state.filters);
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
-    if (!response.ok) {
-      showNotice(response.message || 'Unable to load training programs.', 'danger');
-      return;
-    }
-
-    state.data = response.data || state.data;
-
-    if (state.activeProgram && !(state.data.programs || []).some((item) => item.id === state.activeProgram.id)) {
-      state.activeProgram = null;
-    }
-
-    renderSummary();
-    renderFilters();
-    renderProgramForm();
-    renderProgramTable();
-
-    if (state.activeProgram) {
-      await loadProgramDetail(state.activeProgram.id, false);
-      return;
-    }
-
-    renderProgramDetail();
-  };
-
-  const loadProgramDetail = async (programId, showNoticeOnError = true) => {
-    const response = await apiGet('api/training/show', { id: programId });
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
-    if (!response.ok) {
-      if (showNoticeOnError) {
-        showNotice(response.message || 'Unable to load training program details.', 'danger');
-      }
-      return;
-    }
-
-    state.activeProgram = response.program || null;
-    renderProgramTable();
-    renderProgramDetail();
-  };
-
-  const submitProgramForm = async (event) => {
-    event.preventDefault();
-    const form = event.target;
-    if (!(form instanceof HTMLFormElement)) {
-      showNotice('Unable to read the training form.', 'danger');
-      return;
-    }
-
-    const formData = new FormData(form);
-    const payload = Object.fromEntries(formData.entries());
-    const response = await apiPost(payload.programId ? 'api/training/update' : 'api/training', payload);
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
-    if (!response.ok) {
-      showNotice(firstError(response.errors) || 'Unable to save training program.', 'danger');
-      return;
-    }
-
-    state.editingId = null;
-    showNotice('Training program saved.', 'success');
-    await load();
-    if (response.programId) {
-      await loadProgramDetail(response.programId, false);
-    }
-  };
-
-  const submitInviteeForm = async (event) => {
-    event.preventDefault();
-    const form = event.target;
-    if (!(form instanceof HTMLFormElement)) {
-      showNotice('Unable to read the participant assignment form.', 'danger');
-      return;
-    }
-
-    const formData = new FormData(form);
-    const payload = {
-      programId: formData.get('programId') || '',
-      applicantProfileIds: formData.getAll('applicantProfileIds'),
-    };
-    const response = await apiPost('api/training/invitees', payload);
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
-    if (!response.ok) {
-      showNotice(firstError(response.errors) || 'Unable to save training participants.', 'danger');
-      return;
-    }
-
-    showNotice('Training participants updated.', 'success');
-    await load();
-    if (payload.programId) {
-      await loadProgramDetail(Number(payload.programId), false);
-    }
-  };
-
-  const sendNotices = async (programId, inviteeIds = []) => {
-    const response = await apiPost('api/training/notices', { programId, inviteeIds });
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
-    if (!response.ok) {
-      showNotice(firstError(response.errors) || 'Unable to send training notices.', 'danger');
-      return;
-    }
-
-    showNotice(`Training notices processed. ${response.sentCount || 0} sent or logged.`, 'success');
-    await loadProgramDetail(programId, false);
-    await load();
-  };
-
-  const updateAttendance = async (trainingInviteeId) => {
-    const statusSelect = qs(`[data-training-status-select="${trainingInviteeId}"]`, section());
-    const remarksField = qs(`[data-training-remarks="${trainingInviteeId}"]`, section());
-    const proofField = qs(`[data-training-proof="${trainingInviteeId}"]`, section());
-    const payload = new FormData();
-    payload.append('trainingInviteeId', String(trainingInviteeId));
-    payload.append('status', String(statusSelect?.value || 'Scheduled'));
-    payload.append('remarks', String(remarksField?.value || ''));
-    if (proofField instanceof HTMLInputElement && proofField.files?.[0]) {
-      payload.append('proofAttachment', proofField.files[0]);
-    }
-
-    const response = await apiFormPost('api/training/attendance', payload);
-    if (response.redirect) {
-      window.location.href = routeUrl(response.redirect);
-      return;
-    }
-    if (!response.ok) {
-      showNotice(firstError(response.errors) || 'Unable to update training attendance.', 'danger');
-      return;
-    }
-
-    showNotice('Attendance updated.', 'success');
-    if (state.activeProgram?.id) {
-      await loadProgramDetail(state.activeProgram.id, false);
-    }
-    await load();
-  };
-
-  const showNotice = (message, tone = 'info') => {
-    const notice = qs('#training-notice');
-    if (!notice) return;
-
-    notice.hidden = false;
-    notice.className = `notice ${tone}`;
-    notice.textContent = message;
-    notice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  };
-
-  const clearNotice = () => {
-    const notice = qs('#training-notice');
-    if (!notice) return;
-
-    notice.hidden = true;
-    notice.textContent = '';
-    notice.className = 'notice';
-  };
-
-  const focusCreateForm = () => {
-    state.editingId = null;
-    renderProgramForm();
-    const target = qs('#training-program-form');
-    target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
-
-  const bind = () => {
-    const target = section();
-    if (!target || target.dataset.trainingBound === 'true') return;
-    target.dataset.trainingBound = 'true';
-
-    on(target, 'change', (event) => {
-      if (event.target.id === 'training-filter-status') {
-        state.filters.status = event.target.value;
-        load();
-      }
-
-      if (event.target.id === 'training-filter-date') {
-        state.filters.date = event.target.value;
-        load();
-      }
-    });
-
-    on(target, 'input', (event) => {
-      if (event.target.id !== 'training-filter-name') {
-        return;
-      }
-
-      state.filters.programName = event.target.value;
-      clearTimeout(state.searchTimer);
-      state.searchTimer = window.setTimeout(() => {
-        load();
-      }, 200);
-    });
-
-    on(target, 'click', async (event) => {
-      if (event.target.closest('#training-filter-reset')) {
-        state.filters = { status: '', date: '', programName: '' };
-        await load();
-        return;
-      }
-
-      if (event.target.closest('#training-cancel-edit')) {
-        state.editingId = null;
-        renderProgramForm();
-        return;
-      }
-
-      if (event.target.closest('#training-focus-create')) {
-        focusCreateForm();
-        return;
-      }
-
-      if (event.target.closest('#training-refresh')) {
-        await load();
-        return;
-      }
-
-      const edit = event.target.closest('[data-training-edit]');
-      if (edit) {
-        state.editingId = Number(edit.dataset.trainingEdit);
-        renderProgramForm();
-        focusCreateForm();
-        return;
-      }
-
-      const open = event.target.closest('[data-training-open]');
-      if (open) {
-        await loadProgramDetail(Number(open.dataset.trainingOpen));
-        qs('#training-program-detail')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        return;
-      }
-
-      const sendProgram = event.target.closest('[data-training-send-program]');
-      if (sendProgram) {
-        await sendNotices(Number(sendProgram.dataset.trainingSendProgram));
-        return;
-      }
-
-      const sendInvitee = event.target.closest('[data-training-send-invitee]');
-      if (sendInvitee && state.activeProgram) {
-        await sendNotices(state.activeProgram.id, [Number(sendInvitee.dataset.trainingSendInvitee)]);
-        return;
-      }
-
-      const saveAttendance = event.target.closest('[data-training-save-attendance]');
-      if (saveAttendance) {
-        await updateAttendance(Number(saveAttendance.dataset.trainingSaveAttendance));
-      }
-    });
-
-    on(target, 'submit', (event) => {
-      if (event.target.id === 'training-program-save-form') {
-        submitProgramForm(event);
-      }
-
-      if (event.target.id === 'training-invitee-form') {
-        submitInviteeForm(event);
-      }
-    });
-  };
-
-  const statusClass = (status) => {
-    const value = String(status || '').toLowerCase();
-    if (value === 'completed' || value === 'attended') return 'is-success';
-    if (value === 'excused') return 'is-warning';
-    if (value === 'missed') return 'is-danger';
-    if (value === 'notified' || value === 'scheduled') return 'is-warning';
-    return 'is-muted';
-  };
-
-  const trainingModeLabel = (mode) => String(mode || '').toLowerCase() === 'batch'
-    ? 'Batch (3 groups × 85)'
-    : 'All participants';
-
-  const trainingStatusLabel = (status) => String(status || '') === 'Missed' ? 'Absent' : String(status || '--');
-
-  const firstError = (errors) => {
-    if (!errors || typeof errors !== 'object') return '';
-    const values = Object.values(errors);
-    return values.length ? values[0] : '';
-  };
-
-  const escapeHtml = (value) => String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
   const init = () => {
     if (!section()) return;
     renderShell();
     bind();
     load();
   };
+
+  function renderShell() {
+    const root = section();
+    if (!root) return;
+    setHTML(root, `
+      <div class="po-section-shell">
+        <section id="admin-training-overview-view"></section>
+        <section id="admin-training-workspace-view" hidden></section>
+        <div id="admin-training-notice" class="notice" hidden></div>
+      </div>
+    `);
+  }
+
+  async function load() {
+    state.loading.list = true;
+    render();
+    const response = await apiGet('api/training');
+    state.loading.list = false;
+    if (!response.ok) {
+      showNotice(response.message || 'Unable to load the training workflow.', 'danger');
+      render();
+      return;
+    }
+
+    state.data = response.data || state.data;
+    syncActiveProgramFromListing();
+    render();
+  }
+
+  function syncActiveProgramFromListing() {
+    if (!state.activeProgram) return;
+    const activeProgramId = Number(state.activeProgram.id || 0);
+    if (activeProgramId <= 0) {
+      const draftRound = resolveRound(state.activeRoundNumber);
+      if (!draftRound) {
+        state.view = 'overview';
+        state.activeProgram = null;
+      }
+      return;
+    }
+
+    const refreshed = (state.data.programs || []).find((program) => Number(program.id) === activeProgramId);
+    if (!refreshed) {
+      state.view = 'overview';
+      state.activeProgram = null;
+      return;
+    }
+
+    state.activeProgram = { ...state.activeProgram, ...refreshed };
+  }
+
+  async function loadProgram(programId, roundNumber, groupNumber) {
+    state.loading.detail = true;
+    render();
+    const response = await apiGet('api/training/show', { id: programId });
+    state.loading.detail = false;
+    if (!response.ok) {
+      showNotice(response.message || 'Unable to load this training group slot.', 'danger');
+      render();
+      return;
+    }
+
+    state.activeRoundNumber = Number(roundNumber || response.program?.roundNumber || 1);
+    state.activeGroupNumber = Number(groupNumber || response.program?.targetGroupNumber || 1);
+    state.activeProgram = response.program || null;
+    state.view = 'workspace';
+    clearNotice();
+    render();
+  }
+
+  function resolveRound(roundNumber) {
+    return (state.data.rounds || []).find((round) => Number(round.roundNumber) === Number(roundNumber)) || null;
+  }
+
+  function resolveRoundSlot(roundNumber, groupNumber) {
+    const round = resolveRound(roundNumber);
+    if (!round) return null;
+    return (round.slots || []).find((slot) => Number(slot.groupNumber) === Number(groupNumber)) || null;
+  }
+
+  function slotProgram(slot) {
+    return slot?.program || null;
+  }
+
+  function draftInviteesForGroup(groupNumber) {
+    const yearlyBatch = state.data.summary?.yearlyBatch || {};
+    const groupRosters = yearlyBatch.groupRosters || {};
+    const rows = groupRosters[`group${groupNumber}`] || [];
+    return rows.map((row, index) => ({
+      id: `draft-${groupNumber}-${index + 1}`,
+      applicantProfileId: Number(row.applicantProfileId || 0),
+      batchGroupNumber: Number(groupNumber),
+      remarks: '',
+      status: 'Scheduled',
+      inviteStatus: 'Scheduled',
+      businessName: row.businessName || '--',
+      user: { name: row.fullName || '--' },
+    }));
+  }
+
+  function buildDraftProgram(roundNumber, groupNumber) {
+    const round = resolveRound(roundNumber);
+    const baseProgram = (round?.slots || [])
+      .map((slot) => slotProgram(slot))
+      .find((program) => program) || null;
+
+    return {
+      id: null,
+      roundNumber,
+      targetGroupNumber: groupNumber,
+      programName: baseProgram?.programName || '',
+      title: baseProgram?.programName || '',
+      description: baseProgram?.description || '',
+      date: baseProgram?.date || '',
+      startTime: baseProgram?.startTime || '',
+      endTime: baseProgram?.endTime || '',
+      venue: baseProgram?.venue || '',
+      speaker: baseProgram?.speaker || '',
+      whatToBring: baseProgram?.whatToBring || '',
+      instructions: baseProgram?.instructions || '',
+      seminarFormCodes: Array.isArray(baseProgram?.seminarFormCodes) ? [...baseProgram.seminarFormCodes] : [],
+      status: 'Scheduled',
+      storedStatus: 'Scheduled',
+      isLocked: false,
+      noticeSentCount: 0,
+      participantCount: draftInviteesForGroup(groupNumber).length,
+      invitees: draftInviteesForGroup(groupNumber),
+      yearlyBatch: state.data.summary?.yearlyBatch || {},
+    };
+  }
+
+  function openRoundSlot(roundNumber, groupNumber) {
+    const slot = resolveRoundSlot(roundNumber, groupNumber);
+    const program = slotProgram(slot);
+    state.activeRoundNumber = Number(roundNumber);
+    state.activeGroupNumber = Number(groupNumber);
+    state.view = 'workspace';
+
+    if (program?.id) {
+      return loadProgram(program.id, roundNumber, groupNumber);
+    }
+
+    state.activeProgram = buildDraftProgram(Number(roundNumber), Number(groupNumber));
+    clearNotice();
+    render();
+    return null;
+  }
+
+  function openFirstAvailableSlot() {
+    const round = (state.data.rounds || []).find((entry) => Array.isArray(entry.availableGroups) && entry.availableGroups.length);
+    if (!round) {
+      showNotice('All three yearly training sessions and all group notices are already prepared.', 'info');
+      return;
+    }
+    openRoundSlot(round.roundNumber, round.availableGroups[0]);
+  }
+
+  function render() {
+    renderOverview();
+    renderWorkspace();
+  }
+
+  function renderOverview() {
+    const root = qs('#admin-training-overview-view');
+    if (!root) return;
+
+    const rounds = state.data.rounds || [];
+    const yearlyBatch = state.data.summary?.yearlyBatch || {};
+    const nextRound = rounds.find((round) => (round.availableGroups || []).length) || null;
+    const roundsStarted = rounds.filter((round) => (round.slots || []).some((slot) => slot.program)).length;
+    const loadingCopy = state.loading.list ? '<div class="po-empty">Loading training rounds...</div>' : '';
+
+    setHTML(root, `
+      <section class="admin-section-tools admin-training-tools">
+        <div class="po-training-page-head__actions">
+          <button type="button" class="app-btn-primary" id="training-focus-create" ${(nextRound ? '' : 'disabled')}>Prepare Next Group Schedule</button>
+        </div>
+      </section>
+      <section class="admin-training-summary metric-grid">
+        ${buildSummaryCard('Eligible for Training', (state.data.eligibleInvitees || []).length, 'Ready List')}
+        ${buildSummaryCard('Session Rounds Started', roundsStarted, 'Yearly Flow')}
+        ${buildSummaryCard('Current Unlocked Round', nextRound ? `Session ${nextRound.roundNumber}` : 'Complete', 'Scheduler')}
+        ${buildSummaryCard('Group 1 Count', yearlyBatch.yearlyGroup1Count || 0, 'PDO Grouping')}
+        ${buildSummaryCard('Group 2 Count', yearlyBatch.yearlyGroup2Count || 0, 'PDO Grouping')}
+        ${buildSummaryCard('Group 3 Count', yearlyBatch.yearlyGroup3Count || 0, 'PDO Grouping')}
+      </section>
+      <section class="po-training-program-list">
+        <div class="po-training-work-block__header">
+          <div>
+            <span class="po-panel-label">Round Workflow</span>
+            <h4>Yearly Training Sessions</h4>
+          </div>
+          <span class="po-summary-chip">${rounds.filter((round) => round.isComplete).length}/${rounds.length || 3} rounds complete</span>
+        </div>
+        ${loadingCopy || buildRoundBoard(rounds)}
+      </section>
+    `);
+  }
+
+  function buildRoundBoard(rounds) {
+    if (!rounds.length) {
+      return '<div class="po-empty">Training rounds are not available right now.</div>';
+    }
+
+    return `<div class="training-round-board">${rounds.map((round) => buildRoundCard(round)).join('')}</div>`;
+  }
+
+  function buildRoundCard(round) {
+    const slots = round.slots || [];
+    const status = round.isComplete ? 'Completed' : (round.isUnlocked ? 'Active' : 'Locked');
+    return `
+      <article class="training-round-card ${round.isUnlocked ? '' : 'is-disabled'}">
+        <div class="training-round-card__header">
+          <div>
+            <span class="po-panel-label">Yearly Session</span>
+            <h4>${escapeHtml(round.label || `Session ${round.roundNumber}`)}</h4>
+          </div>
+          <span class="po-status-chip ${round.isComplete ? 'is-success' : (round.isUnlocked ? 'is-warning' : 'is-muted')}">${escapeHtml(status)}</span>
+        </div>
+        <p class="training-round-card__copy">
+          ${round.isComplete
+            ? 'All three groups are already notified for this yearly session.'
+            : (round.isUnlocked
+              ? 'Prepare one group schedule, notify that group, then continue with the remaining groups.'
+              : `Finish Session ${round.roundNumber - 1} first to unlock this round.`)}
+        </p>
+        <div class="training-round-card__groups">
+          ${slots.map((slot) => buildGroupButton(round, slot)).join('')}
+        </div>
+      </article>
+    `;
+  }
+
+  function buildGroupButton(round, slot) {
+    const program = slotProgram(slot);
+    const slotState = slot.state || 'available';
+    const slotLabel = slotState === 'locked'
+      ? 'Notified'
+      : (slotState === 'draft' ? 'Draft' : (slot.disabled ? 'Disabled' : 'Available'));
+    const isActive = Number(state.activeRoundNumber) === Number(round.roundNumber)
+      && Number(state.activeGroupNumber) === Number(slot.groupNumber)
+      && state.view === 'workspace';
+
+    return `
+      <button
+        type="button"
+        class="training-group-slot training-group-slot--${escapeHtml(slotState)} ${isActive ? 'is-active' : ''}"
+        data-training-round-slot="${round.roundNumber}:${slot.groupNumber}"
+        ${slot.disabled && !program ? 'disabled' : ''}
+      >
+        <strong>${escapeHtml(slot.label || `Group ${slot.groupNumber}`)}</strong>
+        <span>${escapeHtml(slotLabel)}</span>
+      </button>
+    `;
+  }
+
+  function renderWorkspace() {
+    const root = qs('#admin-training-workspace-view');
+    if (!root) return;
+
+    root.hidden = state.view !== 'workspace' || !state.activeProgram;
+    if (state.view !== 'workspace' || !state.activeProgram) {
+      setHTML(root, '');
+      return;
+    }
+
+    const program = state.activeProgram;
+    const round = resolveRound(state.activeRoundNumber);
+    const invitees = Array.isArray(program.invitees) ? program.invitees : [];
+    const isLocked = Boolean(program.isLocked);
+    const allRoundGroupsDone = Boolean(round?.isComplete);
+
+    setHTML(root, `
+      <section class="po-training-session-shell training-workspace-shell">
+        <div class="po-training-session-shell__topbar">
+          <button type="button" class="app-btn-ghost" data-training-action="back-overview">Back</button>
+          <div class="po-training-session-shell__meta">
+            <span class="po-panel-label">Round Workspace</span>
+            <strong>${escapeHtml(`Session ${program.roundNumber} • Group ${program.targetGroupNumber}`)}</strong>
+          </div>
+          <button type="button" class="app-btn-outline" data-training-action="refresh-overview">Refresh</button>
+        </div>
+        <section class="po-training-session-hero training-workspace-hero">
+          <div class="po-training-session-hero__identity">
+            <span class="po-panel-label">Selected Group Slot</span>
+            <h3>${escapeHtml(program.programName || `Session ${program.roundNumber}`)}</h3>
+            <div class="po-training-session-context__meta">
+              <span>${escapeHtml(`Session ${program.roundNumber}`)}</span>
+              <span>${escapeHtml(`Group ${program.targetGroupNumber}`)}</span>
+              <span>${escapeHtml(`${invitees.length} participants`)}</span>
+              <span>${escapeHtml(program.date ? formatDate(program.date) : 'No date yet')}</span>
+            </div>
+          </div>
+          <span class="po-status-chip po-status-chip--header ${isLocked ? 'is-success' : 'is-warning'}">${escapeHtml(isLocked ? 'Notified / Locked' : 'Draft / Editable')}</span>
+        </section>
+        <section class="training-workspace-group-strip">
+          ${(round?.slots || []).map((slot) => buildGroupButton(round, slot)).join('')}
+        </section>
+        ${isLocked
+          ? `<div class="po-training-validation-banner">This group slot is locked because notices were already sent. Use the remaining available groups in this round, or move to the next round once all three groups are notified.</div>`
+          : `<div class="po-training-validation-banner">Save the group schedule first, then notify the entire group. Once notice is sent, this group slot becomes locked.</div>`}
+        <form id="training-round-form" class="po-training-session-form">
+          <input type="hidden" name="programId" value="${escapeHtml(String(program.id || ''))}">
+          <input type="hidden" name="roundNumber" value="${escapeHtml(String(program.roundNumber || 1))}">
+          <input type="hidden" name="targetGroupNumber" value="${escapeHtml(String(program.targetGroupNumber || 1))}">
+          <section class="po-training-workspace po-training-workspace--setup">
+            <div class="po-training-work-block__header"><div><span class="po-panel-label">Session Details</span><h4>Shared Round Information</h4></div></div>
+            <div class="po-training-setup">
+              <label class="po-training-field po-training-setup__identity">
+                <span>Program Name</span>
+                <input class="section-filter" type="text" name="programName" value="${escapeHtml(program.programName || '')}" placeholder="Program Name" ${isLocked ? 'disabled' : ''}>
+              </label>
+              <div class="po-training-setup__grid">
+                ${field('Date', 'date', normalizeDate(program.date || program.startsAt), 'date', isLocked)}
+                ${field('Venue / Place', 'venue', program.venue || '', 'text', isLocked)}
+                ${field('Start Time', 'startTime', normalizeTime(program.startTime || program.startsAt), 'time', isLocked)}
+                ${field('Speaker / Facilitator', 'speaker', program.speaker || '', 'text', isLocked)}
+                ${field('End Time', 'endTime', normalizeTime(program.endTime || program.endsAt), 'time', isLocked)}
+              </div>
+              <div class="po-training-essentials">
+                ${textareaField('What to Bring', 'whatToBring', program.whatToBring || '', 3, isLocked)}
+                ${textareaField('Instructions / Reminders', 'instructions', program.instructions || '', 3, isLocked)}
+              </div>
+            </div>
+          </section>
+          <section class="po-training-workspace">
+            <header class="po-training-workspace__header"><div><span class="po-panel-label">Training Forms</span><h4>Forms to Cover</h4></div></header>
+            <div class="po-training-form-list">
+              ${(state.data.seminarForms || []).map((form) => {
+                const checked = (program.seminarFormCodes || []).includes(form.code) ? 'checked' : '';
+                return `<label class="po-training-assignment__item ${isLocked ? 'is-blocked' : 'is-eligible'}"><input type="checkbox" name="seminarFormCodes[]" value="${escapeHtml(form.code)}" ${checked} ${isLocked ? 'disabled' : ''}><span class="po-training-assignment__copy"><strong>${escapeHtml(form.label)}</strong></span></label>`;
+              }).join('')}
+            </div>
+          </section>
+          <div class="po-training-session-actions">
+            <button type="submit" class="action-button po-case-action" ${isLocked || state.loading.save ? 'disabled' : ''}>${state.loading.save ? 'Saving...' : 'Save Group Schedule'}</button>
+          </div>
+        </form>
+        <section class="po-training-workspace">
+          <header class="po-training-workspace__header"><div><span class="po-panel-label">Notice Flow</span><h4>Notify This Group</h4></div></header>
+          <div class="po-training-summary-rail">
+            ${miniMetric('Group', `Group ${program.targetGroupNumber}`)}
+            ${miniMetric('Participants', invitees.length)}
+            ${miniMetric('Notice Status', isLocked ? 'Locked' : 'Pending')}
+            ${miniMetric('Round Complete', allRoundGroupsDone ? 'Yes' : 'No')}
+          </div>
+          <div class="po-training-announcement__preview training-notice-preview">
+            <div class="po-training-preview-grid">
+              <div><span>Date</span><strong>${escapeHtml(program.date ? formatDate(program.date) : '--')}</strong></div>
+              <div><span>Time</span><strong>${escapeHtml(`${normalizeTime(program.startTime || program.startsAt) || '--'} - ${normalizeTime(program.endTime || program.endsAt) || '--'}`)}</strong></div>
+              <div><span>Venue</span><strong>${escapeHtml(program.venue || '--')}</strong></div>
+              <div><span>Speaker</span><strong>${escapeHtml(program.speaker || '--')}</strong></div>
+            </div>
+          </div>
+          <div class="po-training-row-actions">
+            <button type="button" class="action-button po-case-action" data-training-notify-group ${(!program.id || isLocked || state.loading.notices) ? 'disabled' : ''}>${state.loading.notices ? 'Sending...' : `Notify Group ${program.targetGroupNumber}`}</button>
+          </div>
+          <div class="table-card po-training-work-block">
+            <div class="table-wrapper">
+              <table class="data-table">
+                <thead><tr><th>Participant</th><th>Business</th><th>Group</th><th>Workflow</th><th>Last Notice</th></tr></thead>
+                <tbody>
+                  ${invitees.length ? invitees.map((invitee) => `
+                    <tr>
+                      <td>${escapeHtml(invitee.user?.name || invitee.fullName || '--')}</td>
+                      <td>${escapeHtml(invitee.businessName || '--')}</td>
+                      <td>${escapeHtml(`Group ${invitee.batchGroupNumber || program.targetGroupNumber || '--'}`)}</td>
+                      <td><span class="po-status-chip ${isInviteeNotified(invitee) ? 'is-success' : 'is-warning'}">${escapeHtml(isInviteeNotified(invitee) ? 'Notified' : 'Scheduled')}</span></td>
+                      <td>${escapeHtml(formatDateTime(invitee.lastNoticeSentAt || invitee.notifiedAt || ''))}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="5">No participants are currently assigned to this group slot.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+        <section class="po-training-workspace">
+          <header class="po-training-workspace__header"><div><span class="po-panel-label">Attendance Snapshot</span><h4>Group Attendance</h4></div></header>
+          <div class="po-training-summary-rail">
+            ${miniMetric('Present', invitees.filter((invitee) => deriveAttendanceStatus(invitee) === 'Present').length)}
+            ${miniMetric('Absent', invitees.filter((invitee) => deriveAttendanceStatus(invitee) === 'Absent').length)}
+            ${miniMetric('Excused', invitees.filter((invitee) => deriveAttendanceStatus(invitee) === 'Excused').length)}
+          </div>
+          <div class="table-card po-training-work-block">
+            <div class="table-wrapper">
+              <table class="data-table po-training-attendance-table">
+                <thead><tr><th>Participant</th><th>Attendance</th><th>Remarks</th></tr></thead>
+                <tbody>
+                  ${invitees.length ? invitees.map((invitee) => `
+                    <tr>
+                      <td>${escapeHtml(invitee.user?.name || invitee.fullName || '--')}</td>
+                      <td><span class="po-status-chip ${attendanceClass(deriveAttendanceStatus(invitee))}">${escapeHtml(deriveAttendanceStatus(invitee))}</span></td>
+                      <td>${escapeHtml(invitee.remarks || '--')}</td>
+                    </tr>
+                  `).join('') : '<tr><td colspan="3">Attendance will appear here after PDO/Admin records it for this group slot.</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+    `);
+  }
+
+  function buildSummaryCard(label, value, eyebrow) {
+    return `
+      <article class="metric-card metric-card--soft admin-training-summary-card">
+        <span class="metric-card__label">${escapeHtml(eyebrow)}</span>
+        <div class="metric-card__body">
+          <strong class="metric-card__value">${escapeHtml(String(value))}</strong>
+        </div>
+      </article>
+    `;
+  }
+
+  function field(label, name, value, type = 'text', disabled = false) {
+    return `<label class="po-training-field"><span>${escapeHtml(label)}</span><input class="section-filter" type="${type}" name="${escapeHtml(name)}" value="${escapeHtml(value)}" ${disabled ? 'disabled' : ''}></label>`;
+  }
+
+  function textareaField(label, name, value, rows, disabled = false) {
+    return `<label class="po-training-field po-training-field--stacked"><span>${escapeHtml(label)}</span><textarea class="po-inline-remarks po-training-compact-textarea" name="${escapeHtml(name)}" rows="${rows}" ${disabled ? 'disabled' : ''}>${escapeHtml(value)}</textarea></label>`;
+  }
+
+  function miniMetric(label, value) {
+    return `<article class="po-summary-card"><span class="po-summary-card__label">${escapeHtml(label)}</span><strong class="po-summary-card__value">${escapeHtml(String(value))}</strong></article>`;
+  }
+
+  function deriveAttendanceStatus(invitee) {
+    const value = String(invitee?.status || invitee?.inviteStatus || '').toLowerCase();
+    if (value === 'attended' || value === 'present') return 'Present';
+    if (value === 'missed' || value === 'absent') return 'Absent';
+    if (value === 'excused') return 'Excused';
+    return 'Not Marked';
+  }
+
+  function attendanceClass(status) {
+    if (status === 'Present') return 'is-success';
+    if (status === 'Excused') return 'is-warning';
+    if (status === 'Absent') return 'is-danger';
+    return 'is-muted';
+  }
+
+  function normalizeDate(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toISOString().slice(0, 10);
+  }
+
+  function normalizeTime(value) {
+    if (!value) return '';
+    const raw = String(value);
+    if (raw.includes('T') || raw.includes(' ')) return raw.slice(11, 16);
+    return raw.slice(0, 5);
+  }
+
+  function formatDateTime(value) {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return new Intl.DateTimeFormat('en-PH', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  }
+
+  function isInviteeNotified(invitee) {
+    return Boolean(invitee?.lastNoticeSentAt || invitee?.notifiedAt);
+  }
+
+  function bind() {
+    const root = section();
+    if (!root || root.dataset.trainingBound === 'true') return;
+    root.dataset.trainingBound = 'true';
+
+    root.addEventListener('click', async (event) => {
+      const create = event.target.closest('#training-focus-create');
+      if (create) return openFirstAvailableSlot();
+
+      const refresh = event.target.closest('[data-training-action="refresh-overview"]');
+      if (refresh) return load();
+
+      const back = event.target.closest('[data-training-action="back-overview"]');
+      if (back) {
+        state.view = 'overview';
+        state.activeProgram = null;
+        clearNotice();
+        return render();
+      }
+
+      const slotButton = event.target.closest('[data-training-round-slot]');
+      if (slotButton) {
+        const [roundNumber, groupNumber] = String(slotButton.dataset.trainingRoundSlot || '').split(':').map(Number);
+        if (roundNumber > 0 && groupNumber > 0) {
+          return openRoundSlot(roundNumber, groupNumber);
+        }
+      }
+
+      const notify = event.target.closest('[data-training-notify-group]');
+      if (notify && state.activeProgram) {
+        return sendGroupNotice();
+      }
+    });
+
+    root.addEventListener('submit', (event) => {
+      const form = event.target.closest('#training-round-form');
+      if (!form) return;
+      event.preventDefault();
+      saveProgram(form);
+    });
+  }
+
+  async function saveProgram(form) {
+    if (!(form instanceof HTMLFormElement) || !state.activeProgram) return;
+    const formData = new FormData(form);
+    const payload = {
+      programId: formData.get('programId') || '',
+      roundNumber: formData.get('roundNumber') || state.activeProgram.roundNumber || 1,
+      targetGroupNumber: formData.get('targetGroupNumber') || state.activeProgram.targetGroupNumber || 1,
+      programName: formData.get('programName') || '',
+      description: state.activeProgram.description || '',
+      date: formData.get('date') || '',
+      startTime: formData.get('startTime') || '',
+      endTime: formData.get('endTime') || '',
+      venue: formData.get('venue') || '',
+      speaker: formData.get('speaker') || '',
+      whatToBring: formData.get('whatToBring') || '',
+      instructions: formData.get('instructions') || '',
+      trainingMode: 'batch',
+      status: state.activeProgram.storedStatus || state.activeProgram.status || 'Scheduled',
+      seminarFormCodes: formData.getAll('seminarFormCodes[]'),
+    };
+
+    state.loading.save = true;
+    render();
+    const response = await apiPost(state.activeProgram.id ? 'api/training/update' : 'api/training', payload);
+    state.loading.save = false;
+    if (!response.ok) {
+      render();
+      return showNotice(firstError(response.errors) || response.message || 'Unable to save this group schedule.', 'danger');
+    }
+
+    clearNotice();
+    const savedProgramId = Number(response.programId || state.activeProgram.id || 0);
+    await load();
+    if (savedProgramId > 0) {
+      await loadProgram(savedProgramId, Number(payload.roundNumber), Number(payload.targetGroupNumber));
+    }
+  }
+
+  async function sendGroupNotice() {
+    if (!state.activeProgram?.id) {
+      return showNotice('Save this group schedule first before sending notices.', 'warning');
+    }
+
+    state.loading.notices = true;
+    render();
+    const response = await apiPost('api/training/notices', {
+      programId: state.activeProgram.id,
+      inviteeIds: [],
+    });
+    state.loading.notices = false;
+    if (!response.ok) {
+      render();
+      return showNotice(firstError(response.errors) || response.message || 'Unable to notify this group.', 'danger');
+    }
+
+    clearNotice();
+    const currentRoundNumber = Number(state.activeProgram.roundNumber || state.activeRoundNumber || 1);
+    await load();
+    const currentRound = resolveRound(currentRoundNumber);
+    if (currentRound && Array.isArray(currentRound.availableGroups) && currentRound.availableGroups.length) {
+      return openRoundSlot(currentRoundNumber, currentRound.availableGroups[0]);
+    }
+
+    const nextRound = resolveRound(currentRoundNumber + 1);
+    if (nextRound && Array.isArray(nextRound.availableGroups) && nextRound.availableGroups.length) {
+      return openRoundSlot(nextRound.roundNumber, nextRound.availableGroups[0]);
+    }
+
+    state.view = 'overview';
+    state.activeProgram = null;
+    render();
+    return null;
+  }
+
+  function showNotice(message, tone = 'info') {
+    const notice = qs('#admin-training-notice');
+    if (!notice) return;
+    notice.hidden = false;
+    notice.className = `notice ${tone}`;
+    notice.textContent = message;
+  }
+
+  function clearNotice() {
+    const notice = qs('#admin-training-notice');
+    if (!notice) return;
+    notice.hidden = true;
+    notice.textContent = '';
+  }
+
+  function firstError(errors) {
+    if (!errors || typeof errors !== 'object') return '';
+    const values = Object.values(errors);
+    return values.length ? values[0] : '';
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
   window.App.modules = window.App.modules || {};
   window.App.modules.training = { init };

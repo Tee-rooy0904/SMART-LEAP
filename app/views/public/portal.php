@@ -1,139 +1,158 @@
 <?php /** @var string $baseUrl */ ?>
+<?php
+$portalUser = isset($authUser) && is_array($authUser) ? $authUser : null;
+$portalQuickView = isset($quickView) && is_array($quickView) ? $quickView : null;
+$isCoMakerQuickView = $portalQuickView !== null && (string) ($portalQuickView['type'] ?? '') === 'co-maker';
+$primaryActionHref = $portalQuickView
+    ? $baseUrl . '/' . ltrim((string) ($portalQuickView['actionPath'] ?? 'applicant-dashboard'), '/')
+    : $baseUrl . '/portal/apply';
+$primaryActionLabel = $portalQuickView
+    ? (string) ($portalQuickView['actionLabel'] ?? 'Open Dashboard')
+    : 'Apply Now';
+$heroTitle = $portalQuickView
+    ? ($isCoMakerQuickView ? 'Open your co-maker repayment access.' : 'Continue your SMART LEAP record.')
+    : 'Start your SMART LEAP registration here.';
+$heroSecondaryHref = $portalQuickView
+    ? ($isCoMakerQuickView ? '' : '#portal-progress')
+    : '';
+$heroSecondaryLabel = $portalQuickView
+    ? ($isCoMakerQuickView ? '' : 'View Current Step')
+    : '';
+$heroBody = $portalQuickView
+    ? ($isCoMakerQuickView ? 'This account is only for repayment access linked to a deceased primary beneficiary. It is not part of the applicant training or beneficiary application workflow.' : 'Continue from your current SMART LEAP step, review the latest notices, and keep your record complete.')
+    : 'Submit your registration with your name, complete address, contact number, email, valid ID, and existing business photo. Approved registrants can proceed to account creation and continue their application in the portal.';
+$heroFactLine = $portalQuickView
+    ? ($isCoMakerQuickView ? 'Upload repayment receipts and follow PDO/Admin verification from the beneficiary dashboard.' : 'Stay updated on your current review, training, or follow-up record.')
+    : 'SMART LEAP serves Butuan City residents with microbusinesses or livelihood activities who need organized CSWDD screening before the full applicant workflow.';
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP Applicant and Beneficiary Portal</title>
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=12">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=<?= urlencode((string) (@filemtime(base_path('public/assets/css/public/portal.css')) ?: time())) ?>">
 </head>
 <body class="portal-page portal-page--home">
+    <div class="portal-backdrop" aria-hidden="true">
+        <span class="portal-backdrop__orb portal-backdrop__orb--left"></span>
+        <span class="portal-backdrop__orb portal-backdrop__orb--right"></span>
+        <span class="portal-backdrop__horizon"></span>
+        <span class="portal-backdrop__city"></span>
+    </div>
+
     <div class="page-shell">
-        <header class="site-header" id="top">
-            <div class="container header-shell">
-                <div class="header-main">
-                    <a class="brand" href="<?= $baseUrl ?>/portal" aria-label="SMART LEAP home">
-                        <div class="brand-logo" aria-hidden="true">
-                            <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="">
-                        </div>
-                        <div class="brand-copy">
-                            <strong class="brand-wordmark">SMART LEAP</strong>
-                        </div>
-                    </a>
+        <?php
+        $activeNav = 'home';
+        $isHome = true;
+        $showLoginNav = false;
+        require __DIR__ . '/../layouts/public-header.php';
+        ?>
 
-                    <nav class="primary-nav" aria-label="Primary navigation">
-                        <a class="nav-link is-active" href="<?= $baseUrl ?>/portal">Home</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/guide">Guide</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/how-it-works">How It Works</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/help">Help</a>
-                    </nav>
-
-                    <div class="header-actions">
-                        <a class="header-action header-action--ghost" href="<?= $baseUrl ?>/signup">Create Account</a>
-                        <button type="button" class="header-action header-action--solid" data-action="open-auth">Sign In</button>
-                        <button id="menuBtn" class="menu-btn" aria-controls="mobileNav" aria-expanded="false" aria-label="Open navigation">
-                            <span class="menu-btn__line"></span>
-                            <span class="menu-btn__line"></span>
-                            <span class="menu-btn__line"></span>
-                        </button>
-                    </div>
-                </div>
-
-                <div id="mobileNav" class="mobile-nav" hidden>
-                    <a class="mobile-link is-active" href="<?= $baseUrl ?>/portal">Home</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/guide">Guide</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/how-it-works">How It Works</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/help">Help</a>
-                    <div class="mobile-nav__actions">
-                        <a class="header-action header-action--ghost" href="<?= $baseUrl ?>/signup">Create Account</a>
-                        <button type="button" class="header-action header-action--solid mobile-cta" data-action="open-auth">Sign In</button>
-                    </div>
-                </div>
-            </div>
-        </header>
-
-        <main class="page" id="content">
-            <section class="home-hero" id="home">
-                <div class="container home-hero__grid">
+        <main class="page page--home" id="content">
+            <section class="home-hero portal-hero<?= $portalQuickView === null ? ' portal-hero--photo' : '' ?>" id="home">
+                <div class="container home-hero__grid<?= $portalQuickView === null ? ' home-hero__grid--public' : '' ?>">
                     <div class="home-hero__copy">
                         <div class="home-hero__copy-inner">
-                            <span class="section-kicker">Official CSWDD livelihood assistance portal</span>
-                            <h1 class="home-hero__title">Sign in or create your SMART LEAP account.</h1>
-                            <p class="home-hero__text">Applicants and beneficiaries use the same portal account to continue their record.</p>
+                            <h1 class="home-hero__title"><?= htmlspecialchars($heroTitle, ENT_QUOTES) ?></h1>
+                            <p class="home-hero__text"><?= htmlspecialchars($heroBody, ENT_QUOTES) ?></p>
+                            <p class="home-hero__fact"><?= htmlspecialchars($heroFactLine, ENT_QUOTES) ?></p>
                         </div>
 
                         <div class="home-hero__actions">
-                            <a class="header-action header-action--solid" href="<?= $baseUrl ?>/signup">Create Account</a>
-                            <button type="button" class="header-action header-action--ghost" data-action="open-auth">Sign In</button>
+                            <a class="header-action header-action--solid" href="<?= htmlspecialchars($primaryActionHref, ENT_QUOTES) ?>"><?= htmlspecialchars($primaryActionLabel, ENT_QUOTES) ?></a>
+                            <?php if ($heroSecondaryLabel !== '' && $heroSecondaryHref !== ''): ?>
+                            <a class="portal-hero__link text-link" href="<?= htmlspecialchars($heroSecondaryHref, ENT_QUOTES) ?>"><?= htmlspecialchars($heroSecondaryLabel, ENT_QUOTES) ?></a>
+                            <?php endif; ?>
                         </div>
                     </div>
 
-                    <aside class="auth-card" id="authShell" aria-label="Portal sign in">
-                        <div class="auth-card__top">
-                            <h2>Sign in</h2>
-                            <p>Use your registered email and password.</p>
+                    <?php if ($portalQuickView !== null): ?>
+                    <aside class="auth-card auth-card--portal portal-quick-view" id="authShell" aria-label="Portal quick view">
+                        <div class="auth-card__top portal-quick-view__top">
+                            <h2><?= htmlspecialchars((string) ($portalQuickView['userName'] ?? 'SMART LEAP User'), ENT_QUOTES) ?></h2>
+                            <p class="portal-quick-view__status"><?= htmlspecialchars((string) ($portalQuickView['statusLine'] ?? ''), ENT_QUOTES) ?></p>
                         </div>
 
-                        <form id="authForm" novalidate>
-                            <input type="hidden" name="entryPoint" value="portal">
-                            <div class="auth-error" role="status" aria-live="polite" hidden></div>
-
-                            <label class="field">
-                                <span>Email address</span>
-                                <input id="email" type="email" autocomplete="email" placeholder="you@example.com" required>
-                            </label>
-
-                            <label class="field">
-                                <span>Password</span>
-                                <div class="field__secure">
-                                    <input id="password" type="password" autocomplete="current-password" placeholder="Enter your password" required minlength="8">
-                                    <button class="field-toggle" type="button" data-action="toggle-password">Show</button>
+                        <?php if (!$isCoMakerQuickView): ?>
+                        <div class="portal-progress" id="portal-progress" aria-label="SMART LEAP progress tracker">
+                            <?php foreach (($portalQuickView['steps'] ?? []) as $step): ?>
+                                <div class="portal-progress__step is-<?= htmlspecialchars((string) ($step['state'] ?? 'upcoming'), ENT_QUOTES) ?>">
+                                    <span class="portal-progress__dot" aria-hidden="true"><?= (int) ($step['number'] ?? 0) ?></span>
+                                    <span class="portal-progress__label"><?= htmlspecialchars((string) ($step['label'] ?? ''), ENT_QUOTES) ?></span>
                                 </div>
-                            </label>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php endif; ?>
 
-                            <div class="auth-inline-actions auth-inline-actions--end">
-                                <a class="text-link" href="#" data-action="forgot-password">Forgot password?</a>
+                        <div class="portal-quick-view__meta">
+                            <?php if ($isCoMakerQuickView): ?>
+                            <div class="portal-quick-view__meta-card">
+                                <span class="portal-quick-view__meta-label">Primary beneficiary</span>
+                                <strong><?= htmlspecialchars((string) (($portalQuickView['primaryBeneficiaryName'] ?? '') ?: 'Linked beneficiary'), ENT_QUOTES) ?></strong>
                             </div>
+                            <div class="portal-quick-view__meta-card">
+                                <span class="portal-quick-view__meta-label">Relationship</span>
+                                <strong><?= htmlspecialchars((string) (($portalQuickView['relationshipToPrimaryBeneficiary'] ?? '') ?: 'Not set'), ENT_QUOTES) ?></strong>
+                            </div>
+                            <div class="portal-quick-view__meta-card">
+                                <span class="portal-quick-view__meta-label">Access type</span>
+                                <strong>Repayment only</strong>
+                            </div>
+                            <?php else: ?>
+                            <div class="portal-quick-view__meta-card">
+                                <span class="portal-quick-view__meta-label">Current step</span>
+                                <strong><?= htmlspecialchars((string) ($portalQuickView['currentStepLabel'] ?? ''), ENT_QUOTES) ?></strong>
+                            </div>
+                            <div class="portal-quick-view__meta-card">
+                                <span class="portal-quick-view__meta-label">Progress</span>
+                                <strong><?= (int) ($portalQuickView['progressPercent'] ?? 0) ?>%</strong>
+                            </div>
+                            <div class="portal-quick-view__meta-card">
+                                <span class="portal-quick-view__meta-label">Reference ID</span>
+                                <strong><?= htmlspecialchars((string) (($portalQuickView['reference'] ?? null) ?: 'Not available yet'), ENT_QUOTES) ?></strong>
+                            </div>
+                            <?php endif; ?>
+                        </div>
 
-                            <button class="auth-submit" id="signInBtn" type="submit">Sign in</button>
-                            <span class="small-note" id="capsHint" hidden>Caps Lock is on.</span>
+                        <p class="portal-quick-view__helper"><?= htmlspecialchars((string) ($portalQuickView['helperText'] ?? ''), ENT_QUOTES) ?></p>
 
-                            <p class="auth-card__subaction">Do not have an account? <a class="text-link" href="<?= $baseUrl ?>/signup">Create account</a></p>
-                        </form>
+                        <a class="auth-submit portal-quick-view__action" href="<?= $baseUrl ?>/<?= htmlspecialchars(ltrim((string) ($portalQuickView['actionPath'] ?? 'applicant-dashboard'), '/'), ENT_QUOTES) ?>">
+                            <?= htmlspecialchars((string) ($portalQuickView['actionLabel'] ?? 'Open Dashboard'), ENT_QUOTES) ?>
+                        </a>
                     </aside>
+                    <?php endif; ?>
                 </div>
             </section>
-        </main>
 
-        <footer class="site-footer" aria-label="Footer">
-            <div class="container footer-grid">
-                <div class="footer-brand">
-                    <strong>SMART LEAP</strong>
-                    <p>Applicant and Beneficiary Portal</p>
-                    <p>City Government of Butuan</p>
-                    <p>City Social Welfare and Development Department (CSWDD)</p>
+            <div class="portal-home-content">
+            <section class="content-section portal-section" aria-labelledby="portal-readiness">
+                <div class="container content-grid">
+                    <article class="content-card portal-static-copy">
+                        <span class="section-kicker">Who Can Apply</span>
+                        <h2 id="portal-readiness">Who can register</h2>
+                        <ul class="content-list">
+                            <li>Residents of Butuan City with an existing microbusiness or a livelihood activity they are actively operating.</li>
+                            <li>Applicants who can provide correct personal, address, contact, and business details during registration and account setup.</li>
+                            <li>Users who are ready to complete the portal requirements, respond to review notices, and continue the process after approval.</li>
+                        </ul>
+                    </article>
+                    <article class="content-card portal-static-copy">
+                        <span class="section-kicker">Requirements Preview</span>
+                        <h2>Prepare these first</h2>
+                        <ul class="content-list">
+                            <li>A valid ID and personal details that match your registration information.</li>
+                            <li>Your complete address, active contact number, email address, and basic business information.</li>
+                            <li>Readable photos or scans of the documents required for account review and application processing.</li>
+                            <li>Supporting local records such as barangay documents and other files requested inside the portal.</li>
+                        </ul>
+                    </article>
                 </div>
-                <div class="footer-column">
-                    <strong>Quick Links</strong>
-                    <a href="<?= $baseUrl ?>/portal">Home</a>
-                    <a href="<?= $baseUrl ?>/portal/guide">Guide</a>
-                    <a href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                    <a href="<?= $baseUrl ?>/portal/how-it-works">How It Works</a>
-                    <a href="<?= $baseUrl ?>/portal/help">Help</a>
-                </div>
-                <div class="footer-column">
-                    <strong>Contact</strong>
-                    <a href="mailto:smartleap@butuan.gov.ph">smartleap@butuan.gov.ph</a>
-                    <span>Office hours: Mon-Fri, 8:00 AM-5:00 PM</span>
-                </div>
-                <div class="footer-column">
-                    <strong>Privacy</strong>
-                    <p>Portal records and personal information are handled under RA 10173, or the Data Privacy Act of 2012.</p>
-                </div>
+            </section>
             </div>
-        </footer>
+
+        </main>
+        <?php require __DIR__ . '/../layouts/public-footer.php'; ?>
     </div>
 
     <div class="auth-loading-screen" id="authLoadingScreen" hidden aria-live="polite" aria-label="Loading">
@@ -143,6 +162,6 @@
         <p class="auth-loading-screen__copy" id="authLoadingCopy">Securing your SMART LEAP session...</p>
     </div>
 
-    <script src="<?= $baseUrl ?>/assets/js/public/portal.js?v=12" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/public/portal.js?v=19" defer></script>
 </body>
 </html>

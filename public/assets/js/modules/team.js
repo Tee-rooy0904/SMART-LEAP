@@ -3,10 +3,11 @@
   const { formatDate } = window.App.format;
 
   const state = {
-    filters: { role: '', status: '', barangayId: '', search: '' },
+    filters: { role: '', status: '', districtCode: '', search: '' },
     staff: [],
-    meta: { roles: [], statuses: [], barangays: [] },
+    meta: { roles: [], statuses: [], districts: [], barangays: [], trainingGroups: [] },
     editingId: null,
+    signatureBusy: false,
   };
 
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
@@ -75,6 +76,20 @@
     }
   };
 
+  const apiFormPost = async (path, formData) => {
+    try {
+      const response = await fetch(routeUrl(path), {
+        method: 'POST',
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+        body: formData,
+      });
+      return await parseJson(response);
+    } catch (error) {
+      return { ok: false, message: 'Unable to reach the server right now.' };
+    }
+  };
+
   const escapeHtml = (value) => String(value || '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -93,6 +108,18 @@
     return match ? match.label : role;
   };
 
+  const isProjectDevelopmentOfficerRole = (role, labelOverride = '') => {
+    const value = String(role || '').trim().toLowerCase();
+    const label = String(labelOverride || getRoleLabel(role) || '').trim().toLowerCase();
+    if (value === 'social_worker' || label.includes('social worker')) return false;
+    if (value === 'admin' || label.includes('admin')) return false;
+    return value === 'pdo'
+      || value === 'project_officer'
+      || label === 'pdo'
+      || label.includes('project officer')
+      || label.includes('project development officer');
+  };
+
   const statusClass = (status) => {
     const value = String(status || '').toLowerCase();
     if (value === 'active') return 'is-success';
@@ -100,40 +127,88 @@
     return 'is-warning';
   };
 
-  const nextStatus = (status) => {
+  const statusLabel = (status) => {
     const value = String(status || '').toLowerCase();
-    if (value === 'active') return 'inactive';
-    if (value === 'inactive') return 'disabled';
-    return 'active';
-  };
-
-  const buttonLabel = (status) => {
-    const target = nextStatus(status);
-    return target === 'inactive' ? 'Inactivate' : target === 'disabled' ? 'Disable' : 'Activate';
+    if (value === 'active') return 'Enable';
+    if (value === 'disabled') return 'Disabled';
+    return status || 'Unknown';
   };
 
   const roleDescription = (role) => {
+    if (role === 'pdo') {
+      return 'Project Development Officers can be assigned to districts for applicant, beneficiary, training, and repayment operations.';
+    }
+    if (role === 'social_worker') {
+      return '';
+    }
+    if (role === 'admin') {
+      return 'Administrators manage system-wide access, oversight, and configuration.';
+    }
     return '';
   };
 
-  const getVisibleStaff = () => {
-    const barangayId = String(state.filters.barangayId || '');
-    return (state.staff || []).filter((item) => {
-      if (!barangayId) return true;
-      return (item.assignedBarangays || []).some((barangay) => String(barangay.id) === barangayId);
+  const deriveNameParts = (staff = null) => {
+    const fullName = String(staff?.name || '').trim();
+    const firstName = String(staff?.firstName || '').trim();
+    const middleName = String(staff?.middleName || '').trim();
+    const lastName = String(staff?.lastName || '').trim();
+    if (firstName || lastName) {
+      return { firstName, middleName, lastName };
+    }
+    const parts = fullName.split(/\s+/).filter(Boolean);
+    return {
+      firstName: parts.shift() || '',
+      middleName: parts.length > 1 ? parts.slice(0, -1).join(' ') : '',
+      lastName: parts.length ? parts[parts.length - 1] : '',
+    };
+  };
+
+  const composeFullName = ({ firstName = '', middleName = '', lastName = '' }) => {
+    return [firstName, middleName, lastName].map((value) => String(value || '').trim()).filter(Boolean).join(' ').trim();
+  };
+
+  const photoMarkup = (staff = null) => {
+    const initials = composeFullName(deriveNameParts(staff)).split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase() || '').join('') || 'SL';
+    if (staff?.photo) {
+      return `<div class="team-profile-photo__frame"><img src="${escapeHtml(staff.photo)}" alt="${escapeHtml(staff.name || 'Staff profile photo')}"></div>`;
+    }
+    return `<div class="team-profile-photo__frame team-profile-photo__frame--placeholder" aria-hidden="true">${escapeHtml(initials)}</div>`;
+  };
+
+  const updateAssignmentSummary = () => {
+    const block = qs('#team-assignment-block');
+    if (!block) return;
+
+    const inputs = Array.from(block.querySelectorAll('input[name="districtCodes"]'));
+    const checked = inputs.filter((input) => input.checked);
+    const counts = [qs('#team-assignment-count'), qs('#team-assignment-side-count')].filter(Boolean);
+    const selected = qs('#team-assignment-selected');
+
+    counts.forEach((count) => {
+      count.textContent = `${checked.length} selected`;
+    });
+
+    if (selected) {
+      selected.innerHTML = checked.length
+        ? checked.map((input) => `<span>${escapeHtml(input.dataset.districtName || 'District')}</span>`).join('')
+        : '<em>No districts assigned yet.</em>';
+    }
+  };
+
+  const filterAssignmentOptions = (query) => {
+    const value = String(query || '').trim().toLowerCase();
+    document.querySelectorAll('[data-district-option]').forEach((option) => {
+      const name = String(option.dataset.districtName || '').toLowerCase();
+      option.hidden = Boolean(value) && !name.includes(value);
     });
   };
 
-  const getSummary = () => {
-    const visible = getVisibleStaff();
-    return {
-      total: visible.length,
-      active: visible.filter((item) => String(item.status).toLowerCase() === 'active').length,
-      inactive: visible.filter((item) => String(item.status).toLowerCase() === 'inactive').length,
-      disabled: visible.filter((item) => String(item.status).toLowerCase() === 'disabled').length,
-      pdo: visible.filter((item) => String(item.role).toLowerCase() === 'pdo').length,
-      socialWorker: visible.filter((item) => String(item.role).toLowerCase() === 'social_worker').length,
-    };
+  const getVisibleStaff = () => {
+    const districtCode = String(state.filters.districtCode || '');
+    return (state.staff || []).filter((item) => {
+      if (!districtCode) return true;
+      return (item.assignedDistricts || []).some((district) => String(district.code) === districtCode);
+    });
   };
 
   const renderShell = () => {
@@ -141,20 +216,15 @@
     if (!section) return;
 
     setHTML(section, `
-      <div class="applications-header team-header">
-        <div>
-          <h3>Team</h3>
-        </div>
+      <div class="admin-section-tools">
         <div class="applications-header__actions">
           <button type="button" class="app-btn-primary" id="team-focus-form">Add Staff</button>
         </div>
       </div>
-      <div id="team-summary-strip"></div>
       <div class="applications-filters" id="team-filters"></div>
       <div class="team-workspace-grid">
         <div class="table-card team-table-shell" id="team-table-card"></div>
       </div>
-      <div class="team-status-strip" id="team-status-strip"></div>
       <div class="notice" id="team-notice" hidden></div>
     `);
     renderModalShell();
@@ -171,41 +241,6 @@
     `);
   };
 
-  const renderSummary = () => {
-    const root = qs('#team-summary-strip');
-    if (!root) return;
-    const summary = getSummary();
-
-    setHTML(root, `
-      <div class="metric-grid metric-grid--compact">
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Total Staff</span>
-          <strong class="metric-card__value">${summary.total}</strong>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Active</span>
-          <strong class="metric-card__value">${summary.active}</strong>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Inactive</span>
-          <strong class="metric-card__value">${summary.inactive}</strong>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Disabled</span>
-          <strong class="metric-card__value">${summary.disabled}</strong>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">PDO Count</span>
-          <strong class="metric-card__value">${summary.pdo}</strong>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Social Worker Count</span>
-          <strong class="metric-card__value">${summary.socialWorker}</strong>
-        </article>
-      </div>
-    `);
-  };
-
   const renderFilters = () => {
     const root = qs('#team-filters');
     if (!root) return;
@@ -214,13 +249,20 @@
       <option value="${role.value}" ${state.filters.role === role.value ? 'selected' : ''}>${role.label}</option>
     `).join('');
     const statusOptions = (state.meta.statuses || []).map((status) => `
-      <option value="${status.value}" ${state.filters.status === status.value ? 'selected' : ''}>${status.label}</option>
+      <option value="${status.value}" ${state.filters.status === status.value ? 'selected' : ''}>${statusLabel(status.value || status.label)}</option>
     `).join('');
-    const barangayOptions = (state.meta.barangays || []).map((barangay) => `
-      <option value="${barangay.id}" ${String(state.filters.barangayId) === String(barangay.id) ? 'selected' : ''}>${barangay.name}</option>
+    const districtOptions = (state.meta.districts || []).map((district) => `
+      <option value="${district.code}" ${String(state.filters.districtCode) === String(district.code) ? 'selected' : ''}>${district.district}</option>
     `).join('');
 
     setHTML(root, `
+      <div class="filter-group filter-group--search">
+        <span class="filter-label">Search</span>
+        <div class="filter-search applications-search">
+          <i class="fas fa-search"></i>
+          <input type="search" id="team-filter-search" placeholder="Search staff by name or email" value="${escapeHtml(state.filters.search)}">
+        </div>
+      </div>
       <div class="filter-group">
         <span class="filter-label">Role</span>
         <select id="team-filter-role" class="filter-select">
@@ -236,17 +278,13 @@
         </select>
       </div>
       <div class="filter-group">
-        <span class="filter-label">Barangay</span>
-        <select id="team-filter-barangay" class="filter-select">
-          <option value="">All barangays</option>
-          ${barangayOptions}
+        <span class="filter-label">District</span>
+        <select id="team-filter-district" class="filter-select">
+          <option value="">All districts</option>
+          ${districtOptions}
         </select>
       </div>
-      <div class="filter-search applications-search">
-        <i class="fas fa-search"></i>
-        <input type="search" id="team-filter-search" placeholder="Search staff by name or email" value="${escapeHtml(state.filters.search)}">
-      </div>
-      <div class="filter-actions">
+      <div class="filter-actions filter-actions--inline">
         <button class="app-btn-ghost" id="team-filter-reset">Reset</button>
       </div>
     `);
@@ -265,14 +303,12 @@
           </div>
         </td>
         <td>${escapeHtml(item.roleLabel || getRoleLabel(item.role))}</td>
-        <td>${item.assignedBarangays.length ? item.assignedBarangays.map((barangay) => escapeHtml(barangay.name)).join(', ') : '--'}</td>
-        <td><span class="status-badge ${statusClass(item.status)}">${escapeHtml(item.status)}</span></td>
+        <td>${item.assignedDistricts?.length ? item.assignedDistricts.map((district) => escapeHtml(district.district)).join(', ') : '--'}</td>
+        <td><span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></td>
         <td>${formatDate(item.lastLoginAt)}</td>
         <td class="actions">
-          <button class="team-action-button team-action-button--soft" data-team-edit="${item.id}">View</button>
           <button class="team-action-button team-action-button--primary" data-team-edit="${item.id}">Edit</button>
-          ${String(item.role).toLowerCase() === 'pdo' ? `<button class="team-action-button team-action-button--soft" data-team-edit="${item.id}">Assign Barangay</button>` : ''}
-          <button class="team-action-button team-action-button--outline" data-team-status="${item.id}" data-next-status="${nextStatus(item.status)}">${buttonLabel(item.status)}</button>
+          <button class="team-action-button team-action-button--soft" data-team-status="${item.id}" data-next-status="${item.status === 'disabled' ? 'active' : 'disabled'}">${item.status === 'disabled' ? 'Enable' : 'Disable'}</button>
         </td>
       </tr>
     `).join('');
@@ -288,7 +324,7 @@
             <tr>
               <th>Name</th>
               <th>Role</th>
-              <th>Assigned Barangay(s)</th>
+              <th>Assigned District(s)</th>
               <th>Status</th>
               <th>Last Active</th>
               <th class="actions">Actions</th>
@@ -305,35 +341,47 @@
     if (!root) return;
 
     const editing = state.staff.find((item) => item.id === state.editingId) || null;
+    const nameParts = deriveNameParts(editing);
     const roleValue = editing ? editing.role : 'pdo';
     const statusValue = editing ? editing.status : 'active';
-    const assignedIds = new Set((editing?.assignedBarangays || []).map((item) => String(item.id)));
-    const isPdo = roleValue === 'pdo';
+    const assignedDistrictCodes = new Set((editing?.assignedDistricts || []).map((item) => String(item.code)));
     const selectedRoleLabel = getRoleLabel(roleValue);
+    const isPdo = isProjectDevelopmentOfficerRole(roleValue, selectedRoleLabel);
     const modalTitle = editing ? 'Edit Staff Account' : 'Add Staff Account';
-
+    const assignedCount = assignedDistrictCodes.size;
+    const trainingGroupValue = editing?.trainingGroupNumber ? String(editing.trainingGroupNumber) : '1';
     setHTML(root, `
       <div class="team-form-header">
         <div>
-          <span class="team-form-kicker">${modalTitle}</span>
+          <span class="team-form-kicker">Staff Editor</span>
           <h4>${editing ? escapeHtml(editing.name) : 'Create a new staff profile'}</h4>
         </div>
         <button class="team-action-button team-action-button--soft" id="team-cancel-edit" type="button" aria-label="Close add staff modal">Close</button>
       </div>
-      <form id="team-form" class="team-form-layout">
+      <form id="team-form" class="team-form-layout team-form-layout--stacked">
         <input type="hidden" name="staffId" value="${editing ? editing.id : ''}">
-        <aside class="team-form-side">
-          <div class="team-form-side__card">
-            <span class="team-form-side__eyebrow">Role Snapshot</span>
-            <strong id="team-role-summary">${escapeHtml(selectedRoleLabel)}</strong>
-            <div class="team-role-pills">
-              <span class="team-role-pill ${isPdo ? 'is-active' : ''}">PDO Assignment ${isPdo ? 'Enabled' : 'Hidden'}</span>
-              <span class="team-role-pill">${editing ? 'Editing Existing Staff' : 'New Staff Setup'}</span>
-            </div>
-          </div>
-        </aside>
-
         <div class="team-form-main">
+          <section class="team-form-panel team-form-panel--hero">
+            <div class="team-form-hero">
+              <div class="team-profile-photo">
+                ${photoMarkup(editing)}
+              </div>
+              <div class="team-form-hero__copy">
+                <span class="team-form-panel__eyebrow">Staff Summary</span>
+                <h5>${editing ? escapeHtml(editing.name) : 'New staff account'}</h5>
+                <div class="team-role-pills">
+                  <span class="team-role-pill" id="team-role-summary">${escapeHtml(selectedRoleLabel)}</span>
+                  ${isPdo ? '<span class="team-role-pill is-active" id="team-coverage-summary">District Coverage Enabled</span>' : ''}
+                </div>
+              </div>
+              ${isPdo ? `<div class="team-form-hero__meta" id="team-coverage-snapshot">
+                <span class="team-form-side__eyebrow">Coverage Snapshot</span>
+                <small id="team-group-side-label">Training Group ${escapeHtml(trainingGroupValue)}</small>
+                <strong id="team-assignment-side-count">${assignedCount} selected</strong>
+              </div>` : ''}
+            </div>
+          </section>
+
           <section class="team-form-panel">
             <div class="team-form-panel__header">
               <div>
@@ -343,20 +391,28 @@
             </div>
             <div class="team-form-grid">
               <label>
-                <span>Full Name</span>
-                <input type="text" name="name" value="${editing ? escapeHtml(editing.name) : ''}" required>
+                <span>First name</span>
+                <input type="text" name="firstName" value="${escapeHtml(nameParts.firstName)}" required>
+              </label>
+              <label>
+                <span>Middle name</span>
+                <input type="text" name="middleName" value="${escapeHtml(nameParts.middleName)}">
+              </label>
+              <label>
+                <span>Last name</span>
+                <input type="text" name="lastName" value="${escapeHtml(nameParts.lastName)}" required>
               </label>
               <label>
                 <span>Email</span>
                 <input type="email" name="email" value="${editing ? escapeHtml(editing.email) : ''}" required>
               </label>
               <label>
-                <span>Optional Contact Info</span>
+                <span>Contact Number</span>
                 <input type="text" name="contactNumber" value="${editing?.contactNumber ? escapeHtml(editing.contactNumber) : ''}">
               </label>
               <label>
-                <span>Position Title</span>
-                <input type="text" name="positionTitle" value="${editing?.positionTitle ? escapeHtml(editing.positionTitle) : ''}">
+                <span>Position</span>
+                <input type="text" name="positionTitle" value="${editing?.positionTitle ? escapeHtml(editing.positionTitle) : escapeHtml(selectedRoleLabel)}">
               </label>
             </div>
           </section>
@@ -378,32 +434,53 @@
               <label>
                 <span>Status</span>
                 <select name="status">
-                  ${(state.meta.statuses || []).map((status) => `<option value="${status.value}" ${status.value === statusValue ? 'selected' : ''}>${status.label}</option>`).join('')}
+                  ${(state.meta.statuses || []).map((status) => `<option value="${status.value}" ${status.value === statusValue ? 'selected' : ''}>${statusLabel(status.value || status.label)}</option>`).join('')}
                 </select>
               </label>
               <label class="team-form-grid__wide">
-                <span>${editing ? 'Password Reset (optional)' : 'Password'}</span>
+                <span>${editing ? 'Password Reset' : 'Password'}</span>
                 <input type="password" name="password" ${editing ? '' : 'required'}>
               </label>
             </div>
           </section>
 
-          <section class="team-form-panel team-assignment-panel" id="team-assignment-block" ${isPdo ? '' : 'hidden'}>
+          ${isPdo ? `<section class="team-form-panel team-assignment-panel" id="team-assignment-block">
             <div class="team-assignment-panel__header">
               <div>
-                <span class="team-form-panel__eyebrow">Barangay Assignment</span>
-                <h5>PDO coverage</h5>
+                <span class="team-form-panel__eyebrow">District Coverage</span>
+                <h5>District coverage</h5>
               </div>
+              <span class="team-assignment-count" id="team-assignment-count">${assignedCount} selected</span>
+            </div>
+            <div class="team-assignment-toolbar">
+              <label class="team-assignment-search">
+                <span>Search district</span>
+                <input type="search" id="team-assignment-search" placeholder="Type a district name">
+              </label>
+              <button type="button" class="team-action-button team-action-button--soft" id="team-assignment-clear">Clear selection</button>
+            </div>
+            <div class="team-form-grid">
+              <label>
+                <span>Training Group</span>
+                <select name="trainingGroupNumber" id="team-training-group-select">
+                  ${(state.meta.trainingGroups || []).map((group) => `<option value="${group.value}" ${String(group.value) === trainingGroupValue ? 'selected' : ''}>${group.label}</option>`).join('')}
+                </select>
+              </label>
+            </div>
+            <div class="team-assignment-selected" id="team-assignment-selected">
+              ${editing && editing.assignedDistricts?.length
+                ? editing.assignedDistricts.map((district) => `<span>${escapeHtml(district.district)}</span>`).join('')
+                : '<em>No districts assigned yet.</em>'}
             </div>
             <div class="team-assignment-grid">
-              ${(state.meta.barangays || []).map((barangay) => `
-                <label class="team-assignment-option ${assignedIds.has(String(barangay.id)) ? 'is-selected' : ''}">
-                  <input type="checkbox" name="barangayIds" value="${barangay.id}" ${assignedIds.has(String(barangay.id)) ? 'checked' : ''}>
-                  <span>${barangay.name}</span>
+              ${(state.meta.districts || []).map((district) => `
+                <label class="team-assignment-option ${assignedDistrictCodes.has(String(district.code)) ? 'is-selected' : ''}" data-district-option data-district-name="${escapeHtml(district.district)}">
+                  <input type="checkbox" name="districtCodes" value="${district.code}" data-district-name="${escapeHtml(district.district)}" ${assignedDistrictCodes.has(String(district.code)) ? 'checked' : ''}>
+                  <span class="team-assignment-option__text"><strong>${district.district}</strong><small>${escapeHtml(district.office || '')}</small></span>
                 </label>
               `).join('')}
             </div>
-          </section>
+          </section>` : ''}
 
           <div class="team-form-actions">
             <button type="button" class="team-action-button team-action-button--soft" id="team-form-cancel">Cancel</button>
@@ -411,25 +488,6 @@
           </div>
         </div>
       </form>
-    `);
-  };
-
-  const renderStatusStrip = () => {
-    const root = qs('#team-status-strip');
-    if (!root) return;
-
-    setHTML(root, `
-      <div class="team-status-explainer">
-        <div class="placeholder-card placeholder-card--soft">
-          <strong>Active</strong>
-        </div>
-        <div class="placeholder-card placeholder-card--soft">
-          <strong>Inactive</strong>
-        </div>
-        <div class="placeholder-card placeholder-card--soft">
-          <strong>Disabled</strong>
-        </div>
-      </div>
     `);
   };
 
@@ -458,11 +516,9 @@
 
     state.staff = response.staff || [];
     state.meta = response.meta || state.meta;
-    renderSummary();
     renderFilters();
     renderTable();
     renderForm();
-    renderStatusStrip();
   };
 
   const createOrUpdate = async (event) => {
@@ -483,8 +539,23 @@
       contactNumber: formData.get('contactNumber') || '',
       positionTitle: formData.get('positionTitle') || '',
       password: formData.get('password') || '',
-      barangayIds: formData.getAll('barangayIds'),
+      districtCodes: formData.getAll('districtCodes'),
+      trainingGroupNumber: formData.get('trainingGroupNumber') || '',
     };
+    payload.firstName = formData.get('firstName') || '';
+    payload.middleName = formData.get('middleName') || '';
+    payload.lastName = formData.get('lastName') || '';
+    payload.name = composeFullName(payload);
+    const districtMap = new Map((state.meta.districts || []).map((district) => [String(district.code), district]));
+    payload.barangayIds = payload.districtCodes.flatMap((code) => {
+      const district = districtMap.get(String(code));
+      return (district?.barangays || []).map((barangay) => barangay.id);
+    });
+    if (payload.role !== 'pdo') {
+      payload.barangayIds = [];
+      payload.districtCodes = [];
+      payload.trainingGroupNumber = '';
+    }
 
     const isEditing = Boolean(payload.staffId);
     const response = await apiPost(isEditing ? 'api/team/update' : 'api/team', payload);
@@ -510,7 +581,7 @@
           return;
         }
         if (!assignmentResponse.ok) {
-          showNotice(firstError(assignmentResponse.errors) || 'Staff saved, but barangay assignment failed.', 'danger');
+          showNotice(firstError(assignmentResponse.errors) || 'Staff saved, but district assignment failed.', 'danger');
           await load();
           return;
         }
@@ -523,19 +594,44 @@
     await load();
   };
 
-  const updateStatusAction = async (staffId, status) => {
-    const response = await apiPost('api/team/status', { staffId, status });
+  const uploadSignature = async () => {
+    const editing = state.staff.find((item) => item.id === state.editingId) || null;
+    const input = document.getElementById('team-signature-input');
+    if (!editing || !(input instanceof HTMLInputElement)) {
+      showNotice('Open an existing staff profile first before uploading a signature.', 'danger');
+      return;
+    }
+
+    const file = input.files?.[0];
+    if (!file) {
+      showNotice('Choose a signature file to upload.', 'danger');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('staffId', String(editing.id));
+    formData.append('signature', file);
+
+    state.signatureBusy = true;
+    renderForm();
+    const response = await apiFormPost('api/team/signature', formData);
+    state.signatureBusy = false;
+
     if (response.redirect) {
       window.location.href = routeUrl(response.redirect);
       return;
     }
     if (!response.ok) {
-      showNotice(firstError(response.errors) || 'Unable to update staff status.', 'danger');
+      renderForm();
+      showNotice(firstError(response.errors) || response.message || 'Unable to save the PDO signature.', 'danger');
       return;
     }
 
-    showNotice('Staff status updated.', 'success');
-    await load();
+    state.staff = response.teamStaff || state.staff;
+    state.editingId = editing.id;
+    renderTable();
+    renderForm();
+    showNotice(response.message || 'Saved signature updated.', 'success');
   };
 
   const openFormModal = () => {
@@ -572,9 +668,8 @@
         state.filters.status = event.target.value;
         load();
       }
-      if (event.target.id === 'team-filter-barangay') {
-        state.filters.barangayId = event.target.value;
-        renderSummary();
+      if (event.target.id === 'team-filter-district') {
+        state.filters.districtCode = event.target.value;
         renderTable();
       }
     });
@@ -589,7 +684,7 @@
     on(section, 'click', async (event) => {
       const reset = event.target.closest('#team-filter-reset');
       if (reset) {
-        state.filters = { role: '', status: '', barangayId: '', search: '' };
+        state.filters = { role: '', status: '', districtCode: '', search: '' };
         await load();
         return;
       }
@@ -611,8 +706,22 @@
 
       const statusButton = event.target.closest('[data-team-status]');
       if (statusButton) {
-        await updateStatusAction(statusButton.dataset.teamStatus, statusButton.dataset.nextStatus);
-        return;
+        const staffId = Number(statusButton.dataset.teamStatus || 0);
+        const nextStatus = String(statusButton.dataset.nextStatus || '');
+        if (staffId > 0 && nextStatus) {
+          apiPost('api/team/status', { staffId, status: nextStatus }).then(async (response) => {
+            if (response.redirect) {
+              window.location.href = routeUrl(response.redirect);
+              return;
+            }
+            if (!response.ok) {
+              showNotice(firstError(response.errors) || 'Unable to update staff status.', 'danger');
+              return;
+            }
+            showNotice(`Staff account ${nextStatus === 'disabled' ? 'disabled' : 'enabled'}.`, 'success');
+            await load();
+          });
+        }
       }
 
     });
@@ -621,21 +730,69 @@
       if (event.target.id === 'team-role-select') {
         const assignmentBlock = qs('#team-assignment-block');
         const roleSummary = qs('#team-role-summary');
+        const coverageSummary = qs('#team-coverage-summary');
+        const coverageSnapshot = qs('#team-coverage-snapshot');
         const roleDescriptionText = qs('#team-role-description');
+        const trainingGroupField = qs('#team-training-group-select')?.closest('label');
+        const trainingGroupSideLabel = qs('#team-group-side-label');
+        const signaturePanel = document.querySelector('.team-form-panel .team-signature-panel')?.closest('.team-form-panel');
+        const selectedRoleLabel = event.target.selectedOptions?.[0]?.textContent || '';
+        const isPdoRole = isProjectDevelopmentOfficerRole(event.target.value, selectedRoleLabel);
         if (assignmentBlock) {
-          assignmentBlock.hidden = event.target.value !== 'pdo';
+          assignmentBlock.hidden = !isPdoRole;
+        }
+        if (signaturePanel) {
+          signaturePanel.hidden = !isPdoRole;
         }
         if (roleSummary) {
           roleSummary.textContent = getRoleLabel(event.target.value);
         }
+        if (coverageSummary) {
+          coverageSummary.hidden = !isPdoRole;
+          coverageSummary.textContent = 'District Coverage Enabled';
+          coverageSummary.classList.add('is-active');
+        }
+        if (coverageSnapshot) {
+          coverageSnapshot.hidden = !isPdoRole;
+        }
+        if (trainingGroupField) {
+          trainingGroupField.hidden = !isPdoRole;
+        }
+        if (trainingGroupSideLabel) {
+          trainingGroupSideLabel.hidden = !isPdoRole;
+        }
         if (roleDescriptionText) {
-          roleDescriptionText.textContent = roleDescription(event.target.value);
+          const nextDescription = roleDescription(event.target.value);
+          roleDescriptionText.textContent = nextDescription;
+          roleDescriptionText.hidden = !nextDescription;
+        }
+        if (!isPdoRole) {
+          document.querySelectorAll('#team-assignment-block input[name="districtCodes"]').forEach((input) => {
+            input.checked = false;
+            input.closest('.team-assignment-option')?.classList.remove('is-selected');
+          });
+        }
+        updateAssignmentSummary();
+      }
+
+      if (event.target.id === 'team-training-group-select') {
+        const trainingGroupSideLabel = qs('#team-group-side-label');
+        if (trainingGroupSideLabel) {
+          const label = event.target.selectedOptions?.[0]?.textContent || `Training Group ${event.target.value || ''}`;
+          trainingGroupSideLabel.textContent = label;
         }
       }
 
       const assignmentOption = event.target.closest('.team-assignment-option');
       if (assignmentOption) {
         assignmentOption.classList.toggle('is-selected', event.target.checked);
+        updateAssignmentSummary();
+      }
+    });
+
+    on(document, 'input', (event) => {
+      if (event.target.id === 'team-assignment-search') {
+        filterAssignmentOptions(event.target.value);
       }
     });
 
@@ -644,6 +801,17 @@
         state.editingId = null;
         renderForm();
         closeFormModal();
+      }
+
+      if (event.target.closest('#team-assignment-clear')) {
+        document.querySelectorAll('#team-assignment-block input[name="districtCodes"]').forEach((input) => {
+          input.checked = false;
+          input.closest('.team-assignment-option')?.classList.remove('is-selected');
+        });
+        const search = qs('#team-assignment-search');
+        if (search) search.value = '';
+        filterAssignmentOptions('');
+        updateAssignmentSummary();
       }
     });
 

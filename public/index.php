@@ -25,9 +25,13 @@ $routes = array_merge(
     require base_path('app/routes/auth.php'),
     require base_path('app/routes/api-team.php'),
     require base_path('app/routes/api-applications.php'),
+    require base_path('app/routes/api-validation.php'),
     require base_path('app/routes/api-training.php'),
+    require base_path('app/routes/api-repayments.php'),
+    require base_path('app/routes/api-reports.php'),
     require base_path('app/routes/api-notifications.php'),
-    require base_path('app/routes/api-post-approval.php')
+    require base_path('app/routes/api-post-approval.php'),
+    require base_path('app/routes/api-support-chat.php')
 );
 $routeKey = $method . ' ' . $routePath;
 $route = $routes[$routeKey] ?? null;
@@ -42,6 +46,7 @@ $middlewareAliases = [
     'auth' => require base_path('app/middleware/auth.php'),
     'guest' => require base_path('app/middleware/guest.php'),
     'admin' => require base_path('app/middleware/admin_only.php'),
+    'admin_or_social_worker' => require base_path('app/middleware/admin_or_social_worker.php'),
     'applicant' => require base_path('app/middleware/applicant_only.php'),
     'beneficiary' => require base_path('app/middleware/beneficiary_only.php'),
     'project_officer' => require base_path('app/middleware/pdo_only.php'),
@@ -68,10 +73,11 @@ foreach (($route['middleware'] ?? []) as $middlewareName) {
     }
 
     if ($middlewareName === 'auth') {
+        $redirect = session_pull('auth.expired_redirect', 'login');
         if ($expectsJson) {
-            response_json(['ok' => false, 'message' => 'Unauthenticated.', 'redirect' => 'login'], 401);
+            response_json(['ok' => false, 'message' => 'Session expired.', 'redirect' => $redirect], 401);
         }
-        redirect('login');
+        redirect($redirect);
     }
 
     if ($expectsJson) {

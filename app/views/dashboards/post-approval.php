@@ -1,13 +1,21 @@
 <?php /** @var string $baseUrl */ ?>
 <?php /** @var array|null $authUser */ ?>
+<?php
+$applicantCssVersion = @filemtime(base_path('public/assets/css/dashboards/applicant.css')) ?: time();
+$postApprovalCssVersion = @filemtime(base_path('public/assets/css/dashboards/post-approval.css')) ?: time();
+$notificationsCssVersion = @filemtime(base_path('public/assets/css/components/notifications.css')) ?: time();
+$postApprovalJsVersion = @filemtime(base_path('public/assets/js/dashboards/post-approval.js')) ?: time();
+$notificationsJsVersion = @filemtime(base_path('public/assets/js/shared/notifications.js')) ?: time();
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP | Post-Approval Tasks</title>
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css">
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval.css">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css?v=<?= urlencode((string) $applicantCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval.css?v=<?= urlencode((string) $postApprovalCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= urlencode((string) $notificationsCssVersion) ?>">
 </head>
 <body class="post-approval-page">
     <script>
@@ -27,14 +35,6 @@
                 <button type="button" class="sidebar-drawer__close" id="sidebarClose" aria-label="Close navigation">
                     <span aria-hidden="true">&times;</span>
                 </button>
-            </div>
-
-            <div class="sidebar-user">
-                <div class="sidebar-avatar" id="sidebarAvatar" aria-hidden="true">A</div>
-                <div class="sidebar-user__meta">
-                    <span class="sidebar-user__name" id="sidebarUserName">Applicant</span>
-                    <span class="sidebar-user__biz" id="sidebarUserBusiness">Post-approval phase</span>
-                </div>
             </div>
 
             <nav class="sidebar-nav">
@@ -121,6 +121,7 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true"></div>
 
-    <script src="<?= $baseUrl ?>/assets/js/dashboards/post-approval.js" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/shared/notifications.js?v=<?= urlencode((string) $notificationsJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/post-approval.js?v=<?= urlencode((string) $postApprovalJsVersion) ?>" defer></script>
 </body>
 </html>

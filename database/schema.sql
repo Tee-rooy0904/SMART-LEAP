@@ -12,6 +12,9 @@ CREATE TABLE IF NOT EXISTS users (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     role_id BIGINT UNSIGNED NOT NULL,
     full_name VARCHAR(160) NOT NULL,
+    first_name VARCHAR(80) NULL,
+    middle_name VARCHAR(80) NULL,
+    last_name VARCHAR(80) NULL,
     email VARCHAR(160) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     verification_status VARCHAR(40) NOT NULL DEFAULT 'pending',
@@ -49,6 +52,11 @@ CREATE TABLE IF NOT EXISTS staff_profiles (
     user_id BIGINT UNSIGNED NOT NULL UNIQUE,
     contact_number VARCHAR(40) NULL,
     position_title VARCHAR(120) NULL,
+    signature_file_path VARCHAR(255) NULL,
+    signature_original_name VARCHAR(255) NULL,
+    signature_mime_type VARCHAR(120) NULL,
+    signature_file_size BIGINT UNSIGNED NULL,
+    signature_uploaded_at DATETIME NULL,
     status VARCHAR(40) NOT NULL DEFAULT 'active',
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -79,7 +87,12 @@ CREATE TABLE IF NOT EXISTS applicant_profiles (
     gender VARCHAR(40) NULL,
     is_4ps TINYINT(1) NOT NULL DEFAULT 0,
     household_size SMALLINT UNSIGNED NULL,
+    educational_attainment VARCHAR(80) NULL,
+    batch_no VARCHAR(40) NULL,
+    required_training_seminars TINYINT UNSIGNED NOT NULL DEFAULT 3,
     sector VARCHAR(120) NULL,
+    sector_other_specify VARCHAR(160) NULL,
+    livelihood_category VARCHAR(120) NULL,
     livelihood_type VARCHAR(160) NULL,
     profile_status VARCHAR(40) NOT NULL DEFAULT 'incomplete',
     completion_submitted_at DATETIME NULL,
@@ -101,6 +114,27 @@ CREATE TABLE IF NOT EXISTS beneficiary_profiles (
     CONSTRAINT fk_beneficiary_profiles_user FOREIGN KEY (user_id) REFERENCES users(id),
     CONSTRAINT fk_beneficiary_profiles_applicant FOREIGN KEY (applicant_profile_id) REFERENCES applicant_profiles(id),
     CONSTRAINT fk_beneficiary_profiles_staff FOREIGN KEY (assigned_staff_profile_id) REFERENCES staff_profiles(id)
+);
+
+CREATE TABLE IF NOT EXISTS beneficiary_feedback (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    beneficiary_profile_id BIGINT UNSIGNED NOT NULL,
+    submitted_by_user_id BIGINT UNSIGNED NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_beneficiary_feedback_profile FOREIGN KEY (beneficiary_profile_id) REFERENCES beneficiary_profiles(id),
+    CONSTRAINT fk_beneficiary_feedback_user FOREIGN KEY (submitted_by_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS user_profile_photos (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL UNIQUE,
+    mime_type VARCHAR(120) NOT NULL,
+    image_data MEDIUMTEXT NOT NULL,
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_user_profile_photos_user FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS applications (
@@ -205,9 +239,10 @@ CREATE TABLE IF NOT EXISTS training_programs (
     ends_at DATETIME NULL,
     what_to_bring TEXT NULL,
     instructions TEXT NULL,
-    training_scope_mode VARCHAR(20) NOT NULL DEFAULT 'all',
+    training_scope_mode VARCHAR(20) NOT NULL DEFAULT 'batch',
     batch_group_count TINYINT UNSIGNED NOT NULL DEFAULT 3,
     batch_group_size SMALLINT UNSIGNED NOT NULL DEFAULT 85,
+    seminar_form_codes JSON NULL,
     status VARCHAR(40) NOT NULL DEFAULT 'scheduled',
     created_by_user_id BIGINT UNSIGNED NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
@@ -314,10 +349,14 @@ CREATE TABLE IF NOT EXISTS post_approval_submissions (
 CREATE TABLE IF NOT EXISTS repayments (
     id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     beneficiary_profile_id BIGINT UNSIGNED NOT NULL,
+    submission_group_id VARCHAR(80) NULL,
     amount DECIMAL(12,2) NOT NULL,
     payment_date DATE NOT NULL,
     official_receipt_number VARCHAR(120) NULL,
     proof_file_path VARCHAR(255) NULL,
+    proof_original_name VARCHAR(255) NULL,
+    proof_mime_type VARCHAR(120) NULL,
+    hard_copy_office_status VARCHAR(40) NOT NULL DEFAULT 'not_submitted',
     status VARCHAR(40) NOT NULL DEFAULT 'submitted',
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -330,6 +369,21 @@ CREATE TABLE IF NOT EXISTS repayment_coverage_months (
     coverage_month DATE NOT NULL,
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_repayment_coverage_months_repayment FOREIGN KEY (repayment_id) REFERENCES repayments(id)
+);
+
+CREATE TABLE IF NOT EXISTS repayment_schedules (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    beneficiary_profile_id BIGINT UNSIGNED NOT NULL,
+    coverage_month DATE NOT NULL,
+    due_date DATE NOT NULL,
+    expected_amount DECIMAL(12,2) NOT NULL DEFAULT 625.00,
+    schedule_status VARCHAR(40) NOT NULL DEFAULT 'scheduled',
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_repayment_schedules_beneficiary FOREIGN KEY (beneficiary_profile_id) REFERENCES beneficiary_profiles(id),
+    UNIQUE KEY uq_repayment_schedules_beneficiary_month (beneficiary_profile_id, coverage_month),
+    KEY idx_repayment_schedules_due_date (due_date),
+    KEY idx_repayment_schedules_status (schedule_status)
 );
 
 CREATE TABLE IF NOT EXISTS repayment_verifications (
@@ -368,6 +422,108 @@ CREATE TABLE IF NOT EXISTS notifications (
     created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     CONSTRAINT fk_notifications_user FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS support_chat_messages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    participant_user_id BIGINT UNSIGNED NOT NULL,
+    sender_user_id BIGINT UNSIGNED NOT NULL,
+    recipient_role VARCHAR(80) NOT NULL,
+    body TEXT NOT NULL,
+    is_read TINYINT(1) NOT NULL DEFAULT 0,
+    created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_support_chat_participant_role (participant_user_id, recipient_role),
+    INDEX idx_support_chat_sender (sender_user_id),
+    CONSTRAINT fk_support_chat_participant FOREIGN KEY (participant_user_id) REFERENCES users(id),
+    CONSTRAINT fk_support_chat_sender FOREIGN KEY (sender_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_no VARCHAR(30) NOT NULL UNIQUE,
+    requester_user_id BIGINT UNSIGNED NOT NULL,
+    requester_role VARCHAR(50) NOT NULL,
+    category VARCHAR(80) NOT NULL,
+    subject VARCHAR(180) NOT NULL,
+    message TEXT NOT NULL,
+    related_record_type VARCHAR(80) NULL,
+    related_record_id VARCHAR(80) NULL,
+    assigned_role VARCHAR(50) NOT NULL,
+    assigned_user_id BIGINT UNSIGNED NULL,
+    priority ENUM('Low','Normal','Urgent') NOT NULL DEFAULT 'Normal',
+    status ENUM('New','In Review','Waiting for Beneficiary','Referred','Resolved','Closed') NOT NULL DEFAULT 'New',
+    unread_for_requester TINYINT(1) NOT NULL DEFAULT 0,
+    unread_for_staff TINYINT(1) NOT NULL DEFAULT 1,
+    last_message_at DATETIME NULL,
+    resolved_at DATETIME NULL,
+    closed_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_support_tickets_requester (requester_user_id),
+    INDEX idx_support_tickets_assigned_role (assigned_role),
+    INDEX idx_support_tickets_assigned_user (assigned_user_id),
+    INDEX idx_support_tickets_category (category),
+    INDEX idx_support_tickets_status (status),
+    INDEX idx_support_tickets_priority (priority),
+    INDEX idx_support_tickets_created (created_at),
+    INDEX idx_support_tickets_last_message (last_message_at),
+    CONSTRAINT fk_support_tickets_requester FOREIGN KEY (requester_user_id) REFERENCES users(id),
+    CONSTRAINT fk_support_tickets_assigned_user FOREIGN KEY (assigned_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket_messages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_id BIGINT UNSIGNED NOT NULL,
+    sender_user_id BIGINT UNSIGNED NOT NULL,
+    sender_role VARCHAR(50) NOT NULL,
+    sender_type ENUM('Beneficiary','Applicant','Social Worker','PDO','Admin','System') NOT NULL,
+    message TEXT NOT NULL,
+    is_internal TINYINT(1) NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_support_messages_ticket (ticket_id),
+    INDEX idx_support_messages_sender (sender_user_id),
+    INDEX idx_support_messages_sender_role (sender_role),
+    INDEX idx_support_messages_internal (is_internal),
+    INDEX idx_support_messages_created (created_at),
+    CONSTRAINT fk_support_messages_ticket FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_support_messages_sender FOREIGN KEY (sender_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket_attachments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_id BIGINT UNSIGNED NOT NULL,
+    message_id BIGINT UNSIGNED NULL,
+    uploaded_by_user_id BIGINT UNSIGNED NOT NULL,
+    original_name VARCHAR(255) NOT NULL,
+    stored_name VARCHAR(255) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    mime_type VARCHAR(120) NOT NULL,
+    file_size INT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_support_attachments_ticket (ticket_id),
+    INDEX idx_support_attachments_message (message_id),
+    INDEX idx_support_attachments_user (uploaded_by_user_id),
+    INDEX idx_support_attachments_created (created_at),
+    CONSTRAINT fk_support_attachments_ticket FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_support_attachments_message FOREIGN KEY (message_id) REFERENCES support_ticket_messages(id) ON DELETE SET NULL,
+    CONSTRAINT fk_support_attachments_user FOREIGN KEY (uploaded_by_user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS support_ticket_activity_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_id BIGINT UNSIGNED NOT NULL,
+    actor_user_id BIGINT UNSIGNED NULL,
+    actor_role VARCHAR(50) NULL,
+    action VARCHAR(120) NOT NULL,
+    old_value VARCHAR(255) NULL,
+    new_value VARCHAR(255) NULL,
+    note TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_support_activity_ticket (ticket_id),
+    INDEX idx_support_activity_created (created_at),
+    CONSTRAINT fk_support_activity_ticket FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_support_activity_actor FOREIGN KEY (actor_user_id) REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS email_logs (

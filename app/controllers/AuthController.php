@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Controllers;
 
+use App\Services\ApplicationService;
 use App\Services\AuthService;
 
 class AuthController extends Controller
@@ -16,7 +17,18 @@ class AuthController extends Controller
             $this->redirectTo($service->redirectPathFor($currentUser));
         }
 
-        $this->view('public/login');
+        $this->view('public/staff-login');
+    }
+
+    public function showPortalLogin(): never
+    {
+        $service = new AuthService();
+        $currentUser = $service->currentUserFromSession();
+        if ($currentUser !== null) {
+            $this->redirectTo($service->redirectPathFor($currentUser));
+        }
+
+        $this->view('public/portal-login');
     }
 
     public function login(): never
@@ -46,7 +58,22 @@ class AuthController extends Controller
     {
         $this->view('public/verify-account', [
             'email' => strtolower(trim((string) ($_GET['email'] ?? ''))),
-            'mode' => strtolower(trim((string) ($_GET['mode'] ?? 'activation'))),
+            'entryPoint' => strtolower(trim((string) ($_GET['entryPoint'] ?? 'portal'))),
+        ]);
+    }
+
+    public function showForgotPassword(): never
+    {
+        $this->view('public/forgot-password', [
+            'email' => strtolower(trim((string) ($_GET['email'] ?? ''))),
+            'entryPoint' => strtolower(trim((string) ($_GET['entryPoint'] ?? 'portal'))),
+        ]);
+    }
+
+    public function showResetPassword(): never
+    {
+        $this->view('public/reset-password', [
+            'email' => strtolower(trim((string) ($_GET['email'] ?? ''))),
             'entryPoint' => strtolower(trim((string) ($_GET['entryPoint'] ?? 'portal'))),
         ]);
     }
@@ -86,11 +113,97 @@ class AuthController extends Controller
         response_json($result);
     }
 
+    public function forgotPassword(): never
+    {
+        $service = new AuthService();
+        $result = $service->requestPasswordReset(
+            (string) ($_POST['email'] ?? ''),
+            (string) ($_POST['entryPoint'] ?? 'portal')
+        );
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function resetPassword(): never
+    {
+        $service = new AuthService();
+        $result = $service->resetPassword(
+            (string) ($_POST['email'] ?? ''),
+            (string) ($_POST['code'] ?? ''),
+            (string) ($_POST['newPassword'] ?? ''),
+            (string) ($_POST['confirmPassword'] ?? ''),
+            (string) ($_POST['entryPoint'] ?? 'portal')
+        );
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function changePassword(): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $payload = $_POST;
+        if ($payload === []) {
+            $decoded = json_decode(file_get_contents('php://input') ?: '[]', true);
+            if (is_array($decoded)) {
+                $payload = $decoded;
+            }
+        }
+
+        $service = new AuthService();
+        $result = $service->changePassword(
+            (int) ($user['id'] ?? 0),
+            (string) ($payload['currentPassword'] ?? ''),
+            (string) ($payload['newPassword'] ?? ''),
+            (string) ($payload['confirmPassword'] ?? '')
+        );
+
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function saveProfilePhoto(): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $payload = $_POST;
+        if ($payload === []) {
+            $decoded = json_decode(file_get_contents('php://input') ?: '[]', true);
+            if (is_array($decoded)) {
+                $payload = $decoded;
+            }
+        }
+
+        $service = new ApplicationService();
+        $result = $service->saveUserProfilePhoto((int) ($user['id'] ?? 0), $payload);
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
     public function logout(): never
     {
         $service = new AuthService();
         $currentUser = $service->currentUserFromSession();
-        $redirect = $this->logoutRedirectPathFor($currentUser);
+        $entryPoint = strtolower(trim((string) ($_POST['entryPoint'] ?? $_GET['entryPoint'] ?? '')));
+        $redirect = $this->logoutRedirectPathFor($currentUser, $entryPoint);
 
         ensure_session_started();
         $_SESSION = [];
@@ -110,12 +223,12 @@ class AuthController extends Controller
         redirect($redirect);
     }
 
-    private function logoutRedirectPathFor(?array $user): string
+    private function logoutRedirectPathFor(?array $user, string $entryPoint = ''): string
     {
         $role = strtolower((string) ($user['role'] ?? ''));
 
-        if (str_contains($role, 'applicant') || str_contains($role, 'beneficiary')) {
-            return 'portal';
+        if ($entryPoint === 'portal' || str_contains($role, 'applicant') || str_contains($role, 'beneficiary')) {
+            return 'portal/login';
         }
 
         return 'login';

@@ -10,10 +10,11 @@ use PDOException;
 class AuthService
 {
     private const VERIFICATION_EXPIRY_MINUTES = 10;
-    private const VERIFICATION_RESEND_COOLDOWN_SECONDS = 60;
+    private const PASSWORD_RESET_EXPIRY_MINUTES = 20;
     private const VERIFICATION_MAX_ATTEMPTS = 5;
     private const CHALLENGE_TYPE_ACCOUNT_ACTIVATION = 'account_activation';
-    private const CHALLENGE_TYPE_LOGIN = 'login_2fa';
+    private const CHALLENGE_TYPE_PASSWORD_RESET = 'password_reset';
+    private ?bool $structuredUserNameColumns = null;
 
     public function attempt(string $email, string $password, string $entryPoint = 'staff'): array
     {
@@ -25,15 +26,7 @@ class AuthService
         }
 
         try {
-            $statement = db()->prepare(
-                'SELECT users.id, users.full_name, users.email, users.password_hash, users.is_active, users.is_disabled, users.verification_status, roles.name AS role
-                 FROM users
-                 INNER JOIN roles ON roles.id = users.role_id
-                 WHERE users.email = :email
-                 LIMIT 1'
-            );
-            $statement->execute(['email' => strtolower($email)]);
-            $user = $statement->fetch();
+            $user = $this->findUserForLoginEmail(strtolower($email));
         } catch (PDOException) {
             return [
                 'ok' => false,
@@ -49,6 +42,14 @@ class AuthService
         }
 
         if (!(bool) $user['is_active']) {
+            $coMakerRegistration = (new CoMakerRegistrationService())->registrationForUser((int) ($user['id'] ?? 0));
+            if ($coMakerRegistration !== null && strtolower((string) ($coMakerRegistration['registrationStatus'] ?? '')) === CoMakerRegistrationService::STATUS_PENDING_REVIEW) {
+                return [
+                    'ok' => false,
+                    'message' => 'Your co-maker registration is still pending PDO/Admin approval.',
+                ];
+            }
+
             return [
                 'ok' => false,
                 'message' => 'This account is inactive.',
@@ -109,56 +110,76 @@ class AuthService
             ];
         }
 
-        if (!$this->requiresLoginTwoFactor($authUser)) {
-            $this->recordLogin((int) $user['id']);
-
-            return [
-                'ok' => true,
-                'user' => $authUser,
-                'redirect' => $this->redirectPathFor($authUser),
-            ];
-        }
-
-        $challenge = $this->startLoginChallenge((int) $user['id'], (string) $user['email'], (string) $user['full_name']);
-        if (!$challenge['ok']) {
-            return $challenge;
-        }
+        $this->recordLogin((int) $user['id']);
 
         return [
-            'ok' => false,
-            'requiresVerification' => true,
-            'message' => 'A verification code was sent to your email. Enter it to complete sign-in.',
-            'redirect' => 'verify-account?email=' . urlencode((string) $user['email']) . '&mode=login&entryPoint=' . urlencode($entryPoint),
+            'ok' => true,
+            'user' => $authUser,
+            'redirect' => $this->redirectPathFor($authUser),
         ];
     }
 
-    private function startLoginChallenge(int $userId, string $email, string $fullName): array
+    private function findUserForLoginEmail(string $email): array|null
     {
-        $challenge = $this->issueVerificationChallenge(
-            $userId,
-            $email,
-            $fullName,
-            self::CHALLENGE_TYPE_LOGIN
+        $statement = db()->prepare(
+            'SELECT users.id, users.full_name, users.email, users.password_hash, users.is_active, users.is_disabled, users.verification_status, roles.name AS role
+             FROM users
+             INNER JOIN roles ON roles.id = users.role_id
+             WHERE users.email = :email
+             LIMIT 1'
         );
-
-        if (!$challenge['ok']) {
-            return [
-                'ok' => false,
-                'message' => $challenge['message'] ?? 'Unable to start two-factor authentication right now.',
-            ];
+        $statement->execute(['email' => $email]);
+        $user = $statement->fetch(PDO::FETCH_ASSOC);
+        if (is_array($user)) {
+            return $user;
         }
 
-        return ['ok' => true];
+        $aliasMap = [
+            'sw@smartleap.local' => ROLE_SOCIAL_WORKER,
+            'pdo@smartleap.local' => ROLE_PROJECT_OFFICER,
+            'po@smartleap.local' => ROLE_PROJECT_OFFICER,
+        ];
+        $roleName = $aliasMap[$email] ?? null;
+        if ($roleName === null) {
+            return null;
+        }
+
+        $aliasStatement = db()->prepare(
+            'SELECT users.id, users.full_name, users.email, users.password_hash, users.is_active, users.is_disabled, users.verification_status, roles.name AS role
+             FROM users
+             INNER JOIN roles ON roles.id = users.role_id
+             WHERE roles.name = :role_name
+               AND users.is_disabled = 0
+             ORDER BY users.id ASC
+             LIMIT 1'
+        );
+        $aliasStatement->execute(['role_name' => $roleName]);
+        $aliasUser = $aliasStatement->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($aliasUser) ? $aliasUser : null;
     }
 
-    public function registerApplicant(string $fullName, string $email, string $password): array
+    public function registerApplicant(array $input): array
     {
+        $firstName = trim((string) ($input['firstName'] ?? ''));
+        $middleName = trim((string) ($input['middleName'] ?? ''));
+        $lastName = trim((string) ($input['lastName'] ?? ''));
+        $email = strtolower(trim((string) ($input['email'] ?? '')));
+        $password = (string) ($input['password'] ?? '');
         $errors = [];
-        $fullName = trim($fullName);
-        $email = strtolower(trim($email));
+        $fullName = trim(implode(' ', array_filter([$firstName, $middleName, $lastName], static fn (string $value): bool => $value !== '')));
+        $applicationService = new ApplicationService();
+
+        if (mb_strlen($firstName) < 2) {
+            $errors['firstName'] = 'Enter your first name.';
+        }
+
+        if (mb_strlen($lastName) < 2) {
+            $errors['lastName'] = 'Enter your last name.';
+        }
 
         if (mb_strlen($fullName) < 3) {
-            $errors['fullName'] = 'Enter your complete name.';
+            $errors['general'] = 'Enter your complete name.';
         }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
@@ -170,6 +191,8 @@ class AuthService
         } elseif (!preg_match('/[A-Z]/', $password) || !preg_match('/[a-z]/', $password) || !preg_match('/\d/', $password)) {
             $errors['password'] = 'Password must include uppercase, lowercase, and a number.';
         }
+
+        $errors = array_merge($errors, $applicationService->validateInitialApplicantProfileInput($input));
 
         if ($errors !== []) {
             return ['ok' => false, 'errors' => $errors];
@@ -192,41 +215,73 @@ class AuthService
 
         $passwordService = new PasswordService();
         $passwordHash = $passwordService->hash($password);
+        $nameParts = $this->normalizeNameParts($firstName, $middleName, $lastName);
+        $pdo = db();
+        $userId = 0;
 
         try {
-            $statement = db()->prepare(
-                'INSERT INTO users (role_id, full_name, email, password_hash, verification_status, is_active, is_disabled)
-                 VALUES (:role_id, :full_name, :email, :password_hash, :verification_status, 1, 0)'
-            );
-            $statement->execute([
-                'role_id' => $roleId,
-                'full_name' => $fullName,
-                'email' => $email,
-                'password_hash' => $passwordHash,
-                'verification_status' => 'pending',
-            ]);
-        } catch (PDOException) {
+            $applicationService->prepareInitialApplicantProfileStorage();
+            $pdo->beginTransaction();
+            if ($this->hasStructuredUserNameColumns()) {
+                $statement = $pdo->prepare(
+                    'INSERT INTO users (role_id, full_name, first_name, middle_name, last_name, email, password_hash, verification_status, is_active, is_disabled)
+                     VALUES (:role_id, :full_name, :first_name, :middle_name, :last_name, :email, :password_hash, :verification_status, 1, 0)'
+                );
+                $statement->execute([
+                    'role_id' => $roleId,
+                    'full_name' => $fullName,
+                    'first_name' => $nameParts['first_name'] ?: null,
+                    'middle_name' => $nameParts['middle_name'] ?: null,
+                    'last_name' => $nameParts['last_name'] ?: null,
+                    'email' => $email,
+                    'password_hash' => $passwordHash,
+                    'verification_status' => 'verified',
+                ]);
+            } else {
+                $statement = $pdo->prepare(
+                    'INSERT INTO users (role_id, full_name, email, password_hash, verification_status, is_active, is_disabled)
+                     VALUES (:role_id, :full_name, :email, :password_hash, :verification_status, 1, 0)'
+                );
+                $statement->execute([
+                    'role_id' => $roleId,
+                    'full_name' => $fullName,
+                    'email' => $email,
+                    'password_hash' => $passwordHash,
+                    'verification_status' => 'verified',
+                ]);
+            }
+            $userId = (int) $pdo->lastInsertId();
+            $applicationService->createInitialApplicantProfile($userId, $input);
+            $pdo->commit();
+        } catch (\Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            log_database_query_failure('auth.register_applicant', $exception, ['email' => $email, 'user_id' => $userId]);
             return [
                 'ok' => false,
-                'errors' => ['general' => 'Unable to create the account right now.'],
+                'errors' => ['general' => 'We could not finish creating your account. Please try again, or sign in if this email was already saved.'],
             ];
         }
 
-        $userId = (int) db()->lastInsertId();
-        $challenge = $this->issueVerificationChallenge($userId, $email, $fullName, self::CHALLENGE_TYPE_ACCOUNT_ACTIVATION);
-        if (!$challenge['ok']) {
-            return [
-                'ok' => false,
-                'errors' => ['general' => $challenge['message'] ?? 'Account created, but verification could not be started.'],
-            ];
-        }
+        $user = $this->sessionPayloadForUser($userId);
 
         return [
             'ok' => true,
-            'message' => 'Account created. Enter the verification code sent to your email to activate your portal access.',
-            'requiresVerification' => true,
-            'redirect' => 'verify-account?email=' . urlencode($email) . '&mode=activation&entryPoint=portal',
+            'message' => 'Your account and profile are ready. Redirecting to your applicant portal.',
+            'user' => $user,
+            'redirect' => 'applicant-dashboard',
         ];
+    }
+
+    public function registerPortalAccount(array $input, array $files = []): array
+    {
+        $mode = strtolower(trim((string) ($input['registrationMode'] ?? 'applicant')));
+        if (in_array($mode, ['co-maker', 'comaker'], true)) {
+            return $this->registerPublicCoMaker($input, $files);
+        }
+
+        return $this->registerApplicant($input);
     }
 
     public function redirectPathFor(array $user): string
@@ -248,7 +303,7 @@ class AuthService
         }
         if (str_contains($role, 'applicant')) {
             if ($this->needsProfileCompletion($userId)) {
-                return 'profile-completion';
+                return 'applicant-dashboard#profile-page';
             }
             return 'applicant-dashboard';
         }
@@ -259,6 +314,210 @@ class AuthService
     public function currentUserFromSession(): ?array
     {
         return auth_user();
+    }
+
+    private function registerPublicCoMaker(array $input, array $files): array
+    {
+        $result = (new CoMakerRegistrationService())->registerPublic($input, $files);
+        if (!$result['ok']) {
+            return $result;
+        }
+
+        $userId = (int) ($result['user_id'] ?? 0);
+        if ($userId <= 0) {
+            return ['ok' => false, 'errors' => ['general' => 'Co-maker account creation did not return a valid account.']];
+        }
+
+        $result['user'] = $this->sessionPayloadForUser($userId);
+        unset($result['user_id']);
+
+        return $result;
+    }
+
+    public function changePassword(int $userId, string $currentPassword, string $newPassword, string $confirmPassword): array
+    {
+        $currentPassword = trim($currentPassword);
+
+        if ($userId < 1) {
+            return ['ok' => false, 'message' => 'Invalid account.'];
+        }
+
+        if ($currentPassword === '') {
+            return ['ok' => false, 'message' => 'Enter your current password.'];
+        }
+
+        if (strlen($newPassword) < 8) {
+            return ['ok' => false, 'message' => 'New password must be at least 8 characters.'];
+        }
+
+        if (!preg_match('/[A-Z]/', $newPassword) || !preg_match('/[a-z]/', $newPassword) || !preg_match('/\d/', $newPassword)) {
+            return ['ok' => false, 'message' => 'New password must include uppercase, lowercase, and a number.'];
+        }
+
+        if ($newPassword !== $confirmPassword) {
+            return ['ok' => false, 'message' => 'New password and confirmation do not match.'];
+        }
+
+        $statement = db()->prepare('SELECT id, password_hash FROM users WHERE id = :id LIMIT 1');
+        $statement->execute(['id' => $userId]);
+        $user = $statement->fetch(PDO::FETCH_ASSOC) ?: null;
+        if ($user === null) {
+            return ['ok' => false, 'message' => 'Account not found.'];
+        }
+
+        $passwords = new PasswordService();
+        $currentHash = (string) ($user['password_hash'] ?? '');
+        if (!$passwords->verify($currentPassword, $currentHash)) {
+            return ['ok' => false, 'message' => 'Current password is incorrect.'];
+        }
+
+        if ($passwords->verify($newPassword, $currentHash)) {
+            return ['ok' => false, 'message' => 'Choose a new password that is different from the current password.'];
+        }
+
+        $update = db()->prepare('UPDATE users SET password_hash = :password_hash, updated_at = NOW() WHERE id = :id');
+        $update->execute([
+            'password_hash' => $passwords->hash($newPassword),
+            'id' => $userId,
+        ]);
+
+        return ['ok' => true, 'message' => 'Password updated successfully.'];
+    }
+
+    public function requestPasswordReset(string $email, string $entryPoint = 'portal'): array
+    {
+        $email = strtolower(trim($email));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['ok' => false, 'message' => 'Enter your registered email address.'];
+        }
+
+        $user = $this->findUserByEmail($email);
+        if ($user === null) {
+            return [
+                'ok' => true,
+                'message' => 'If that email has a SMART LEAP account, a password reset code has been sent.',
+                'redirect' => 'reset-password?email=' . urlencode($email) . '&entryPoint=' . urlencode($entryPoint),
+            ];
+        }
+
+        $roleAccess = $this->checkEntryPointAccess((string) ($user['role'] ?? ''), $entryPoint);
+        if ($roleAccess !== null) {
+            return ['ok' => false, 'message' => $roleAccess];
+        }
+
+        $challenge = $this->issueVerificationChallenge(
+            (int) $user['id'],
+            (string) $user['email'],
+            (string) $user['full_name'],
+            self::CHALLENGE_TYPE_PASSWORD_RESET,
+            self::PASSWORD_RESET_EXPIRY_MINUTES
+        );
+
+        if (!$challenge['ok']) {
+            return ['ok' => false, 'message' => $challenge['message'] ?? 'Unable to send a password reset code right now.'];
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Password reset code sent. Check your email.',
+            'redirect' => 'reset-password?email=' . urlencode((string) $user['email']) . '&entryPoint=' . urlencode($entryPoint),
+        ];
+    }
+
+    public function resetPassword(string $email, string $code, string $newPassword, string $confirmPassword, string $entryPoint = 'portal'): array
+    {
+        $email = strtolower(trim($email));
+        $code = trim($code);
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL) || $code === '') {
+            return ['ok' => false, 'message' => 'Enter your registered email and reset code.'];
+        }
+
+        if (strlen($newPassword) < 8) {
+            return ['ok' => false, 'message' => 'New password must be at least 8 characters.'];
+        }
+        if (!preg_match('/[A-Z]/', $newPassword) || !preg_match('/[a-z]/', $newPassword) || !preg_match('/\d/', $newPassword)) {
+            return ['ok' => false, 'message' => 'New password must include uppercase, lowercase, and a number.'];
+        }
+        if ($newPassword !== $confirmPassword) {
+            return ['ok' => false, 'message' => 'New password and confirmation do not match.'];
+        }
+
+        $user = $this->findUserByEmail($email);
+        if ($user === null) {
+            return ['ok' => false, 'message' => 'No SMART LEAP account was found for that email address.'];
+        }
+
+        $roleAccess = $this->checkEntryPointAccess((string) ($user['role'] ?? ''), $entryPoint);
+        if ($roleAccess !== null) {
+            return ['ok' => false, 'message' => $roleAccess];
+        }
+
+        $this->ensureVerificationChallengeTable();
+        $statement = db()->prepare(
+            'SELECT id, code_hash, expires_at, attempts, consumed_at
+             FROM account_verification_codes
+             WHERE user_id = :user_id
+               AND challenge_type = :challenge_type
+             ORDER BY id DESC
+             LIMIT 1'
+        );
+        $statement->execute([
+            'user_id' => (int) $user['id'],
+            'challenge_type' => self::CHALLENGE_TYPE_PASSWORD_RESET,
+        ]);
+        $challenge = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($challenge)) {
+            return ['ok' => false, 'message' => 'No active password reset code was found. Request a new code.'];
+        }
+        if ($challenge['consumed_at'] !== null) {
+            return ['ok' => false, 'message' => 'That reset code has already been used. Request a new code.'];
+        }
+        if (strtotime((string) $challenge['expires_at']) < time()) {
+            return ['ok' => false, 'message' => 'That reset code has expired. Request a new code.'];
+        }
+        if ((int) $challenge['attempts'] >= self::VERIFICATION_MAX_ATTEMPTS) {
+            return ['ok' => false, 'message' => 'Too many failed reset attempts. Request a new code.'];
+        }
+        if (!password_verify($code, (string) $challenge['code_hash'])) {
+            db()->prepare(
+                'UPDATE account_verification_codes
+                 SET attempts = attempts + 1, updated_at = NOW()
+                 WHERE id = :id'
+            )->execute(['id' => (int) $challenge['id']]);
+
+            return ['ok' => false, 'message' => 'The reset code is incorrect.'];
+        }
+
+        $pdo = db();
+        $pdo->beginTransaction();
+        try {
+            $passwords = new PasswordService();
+            $pdo->prepare(
+                'UPDATE users
+                 SET password_hash = :password_hash, updated_at = NOW()
+                 WHERE id = :id'
+            )->execute([
+                'password_hash' => $passwords->hash($newPassword),
+                'id' => (int) $user['id'],
+            ]);
+            $pdo->prepare(
+                'UPDATE account_verification_codes
+                 SET consumed_at = NOW(), updated_at = NOW()
+                 WHERE id = :id'
+            )->execute(['id' => (int) $challenge['id']]);
+            $pdo->commit();
+        } catch (\Throwable) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            return ['ok' => false, 'message' => 'Unable to reset the password right now.'];
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Password reset successful. Sign in with your new password.',
+            'redirect' => $entryPoint === 'portal' ? 'portal/login' : 'login',
+        ];
     }
 
     private function checkEntryPointAccess(string $role, string $entryPoint): ?string
@@ -381,7 +640,7 @@ class AuthService
 
         return [
             'ok' => true,
-            'message' => $mode === self::CHALLENGE_TYPE_LOGIN ? 'Two-factor authentication complete.' : 'Your account has been verified.',
+            'message' => 'Your account has been verified.',
             'user' => $freshUser,
             'redirect' => $this->redirectPathFor($freshUser),
         ];
@@ -412,46 +671,21 @@ class AuthService
         $role = strtolower((string) ($user['role'] ?? ''));
         $status = strtolower((string) ($user['verification_status'] ?? 'pending'));
 
-        return (str_contains($role, 'beneficiary') || str_contains($role, 'applicant')) && $status !== 'verified';
+        if (str_contains($role, 'beneficiary') || str_contains($role, 'applicant')) {
+            return false;
+        }
+
+        return $status !== 'verified';
     }
 
-    private function requiresLoginTwoFactor(array $user): bool
-    {
-        $role = strtolower((string) ($user['role'] ?? ''));
-        return str_contains($role, 'beneficiary') || str_contains($role, 'applicant');
-    }
-
-    private function issueVerificationChallenge(int $userId, string $email, string $name, string $challengeType): array
+    private function issueVerificationChallenge(int $userId, string $email, string $name, string $challengeType, ?int $expiryMinutes = null): array
     {
         $this->ensureVerificationChallengeTable();
 
-        $statement = db()->prepare(
-            'SELECT id, created_at
-             FROM account_verification_codes
-             WHERE user_id = :user_id
-               AND challenge_type = :challenge_type
-               AND consumed_at IS NULL
-             ORDER BY id DESC
-             LIMIT 1'
-        );
-        $statement->execute([
-            'user_id' => $userId,
-            'challenge_type' => $challengeType,
-        ]);
-        $existing = $statement->fetch(PDO::FETCH_ASSOC);
-        if (is_array($existing) && isset($existing['created_at'])) {
-            $createdAt = strtotime((string) $existing['created_at']);
-            if ($createdAt !== false && (time() - $createdAt) < self::VERIFICATION_RESEND_COOLDOWN_SECONDS) {
-                return [
-                    'ok' => false,
-                    'message' => 'Please wait a moment before requesting another verification code.',
-                ];
-            }
-        }
-
         $code = (string) random_int(100000, 999999);
         $codeHash = password_hash($code, PASSWORD_DEFAULT);
-        $expiresAt = date('Y-m-d H:i:s', time() + (self::VERIFICATION_EXPIRY_MINUTES * 60));
+        $expiresIn = $expiryMinutes ?? self::VERIFICATION_EXPIRY_MINUTES;
+        $expiresAt = date('Y-m-d H:i:s', time() + ($expiresIn * 60));
 
         try {
             db()->prepare(
@@ -470,31 +704,29 @@ class AuthService
             ];
         }
 
-        $subject = $challengeType === self::CHALLENGE_TYPE_LOGIN
-            ? 'SMART LEAP two-factor authentication code'
-            : 'SMART LEAP verification code';
+        $subject = match ($challengeType) {
+            self::CHALLENGE_TYPE_PASSWORD_RESET => 'SMART LEAP password reset code',
+            default => 'SMART LEAP verification code',
+        };
+        $actionLabel = match ($challengeType) {
+            self::CHALLENGE_TYPE_PASSWORD_RESET => 'password reset',
+            default => 'verification',
+        };
         $body = sprintf(
             '<p>Good day %s,</p><p>Your SMART LEAP %s code is <strong style="font-size:1.2rem; letter-spacing:0.18em;">%s</strong>.</p><p>This code expires in %d minutes.</p><p>If you did not request this action, you can ignore this message.</p>',
             htmlspecialchars($name !== '' ? $name : 'Applicant', ENT_QUOTES),
-            htmlspecialchars($challengeType === self::CHALLENGE_TYPE_LOGIN ? 'two-factor authentication' : 'verification', ENT_QUOTES),
+            htmlspecialchars($actionLabel, ENT_QUOTES),
             htmlspecialchars($code, ENT_QUOTES),
-            self::VERIFICATION_EXPIRY_MINUTES
+            $expiresIn
         );
         (new MailService())->send($email, $subject, $body, $userId);
-        (new NotificationService())->createInApp(
-            $userId,
-            $challengeType === self::CHALLENGE_TYPE_LOGIN ? 'Two-factor authentication required' : 'Account verification required',
-            $challengeType === self::CHALLENGE_TYPE_LOGIN
-                ? 'Enter the six-digit code sent to your email to complete your SMART LEAP sign-in.'
-                : 'Enter the six-digit code sent to your email to activate your SMART LEAP portal account.',
-            $challengeType === self::CHALLENGE_TYPE_LOGIN ? 'login_2fa' : 'account_verification'
-        );
 
         return [
             'ok' => true,
-            'message' => $challengeType === self::CHALLENGE_TYPE_LOGIN
-                ? 'A fresh two-factor authentication code was sent to your registered email.'
-                : 'A fresh verification code was sent to your registered email.',
+            'message' => match ($challengeType) {
+                self::CHALLENGE_TYPE_PASSWORD_RESET => 'A fresh password reset code was sent to your registered email.',
+                default => 'A fresh verification code was sent to your registered email.',
+            },
         ];
     }
 
@@ -525,10 +757,7 @@ class AuthService
 
     private function normalizeChallengeMode(string $mode): string
     {
-        $normalized = strtolower(trim($mode));
-        return $normalized === 'login' || $normalized === self::CHALLENGE_TYPE_LOGIN
-            ? self::CHALLENGE_TYPE_LOGIN
-            : self::CHALLENGE_TYPE_ACCOUNT_ACTIVATION;
+        return self::CHALLENGE_TYPE_ACCOUNT_ACTIVATION;
     }
 
     private function recordLogin(int $userId): void
@@ -598,5 +827,32 @@ class AuthService
         $statement->execute(['user_id' => $userId]);
 
         return $statement->fetchColumn() === false;
+    }
+
+    private function normalizeNameParts(string $firstName, string $middleName, string $lastName): array
+    {
+        return [
+            'first_name' => trim($firstName),
+            'middle_name' => trim($middleName),
+            'last_name' => trim($lastName),
+        ];
+    }
+
+    private function hasStructuredUserNameColumns(): bool
+    {
+        if ($this->structuredUserNameColumns !== null) {
+            return $this->structuredUserNameColumns;
+        }
+
+        $statement = db()->prepare(
+            'SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = :table_name
+               AND column_name IN ("first_name", "middle_name", "last_name")'
+        );
+        $statement->execute(['table_name' => 'users']);
+        $this->structuredUserNameColumns = (int) $statement->fetchColumn() === 3;
+
+        return $this->structuredUserNameColumns;
     }
 }

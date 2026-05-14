@@ -19,14 +19,17 @@ is_required = VALUES(is_required);
 
 DELETE FROM initial_requirement_types WHERE code = 'business_plan';
 
-INSERT INTO users (role_id, full_name, email, password_hash, verification_status, is_active, is_disabled) VALUES
-((SELECT id FROM roles WHERE name = 'Administrator'), 'System Administrator', 'admin@smartleap.local', '$2y$12$8ctbT5rIWwyLCRILdZ/buev3PVTrnwOqBgD7aP6ISTLQfDoX4.ls2', 'verified', 1, 0),
-((SELECT id FROM roles WHERE name = 'Project Officer'), 'Default Project Officer', 'po@smartleap.local', '$2y$12$TtxkiDcyoSaprcw1rMQETeh2MuttWc8RG5RqExmxzGrm6nEMMUJI2', 'verified', 1, 0),
-((SELECT id FROM roles WHERE name = 'Social Worker'), 'Default Social Worker', 'sw@smartleap.local', '$2y$12$0w.6caydQgnfwnLS33taSOsZZsbwoXQ8eDf9b3THtznKdonn1cGVy', 'verified', 1, 0),
-((SELECT id FROM roles WHERE name = 'Beneficiary'), 'Default Beneficiary', 'beneficiary@smartleap.local', '$2y$12$RGvQykk9zdI1o7wLmOLLYuvAaPko/7H/gqWXNimhtfzSssyDrKJKm', 'verified', 1, 0)
+INSERT INTO users (role_id, full_name, first_name, middle_name, last_name, email, password_hash, verification_status, is_active, is_disabled) VALUES
+((SELECT id FROM roles WHERE name = 'Administrator'), 'System Administrator', 'System', '', 'Administrator', 'admin@smartleap.local', '$2y$12$8ctbT5rIWwyLCRILdZ/buev3PVTrnwOqBgD7aP6ISTLQfDoX4.ls2', 'verified', 1, 0),
+((SELECT id FROM roles WHERE name = 'Project Officer'), 'Default Project Officer', 'Default', '', 'Project Officer', 'po@smartleap.local', '$2y$12$TtxkiDcyoSaprcw1rMQETeh2MuttWc8RG5RqExmxzGrm6nEMMUJI2', 'verified', 1, 0),
+((SELECT id FROM roles WHERE name = 'Social Worker'), 'Default Social Worker', 'Default', '', 'Social Worker', 'sw@smartleap.local', '$2y$10$0PQuH/rdPjJzMfwBAuRUpuqAXJOPdRuPGtd/IBMaCqsIrM3sDV9xi', 'verified', 1, 0),
+((SELECT id FROM roles WHERE name = 'Beneficiary'), 'Default Beneficiary', 'Default', '', 'Beneficiary', 'beneficiary@smartleap.local', '$2y$12$RGvQykk9zdI1o7wLmOLLYuvAaPko/7H/gqWXNimhtfzSssyDrKJKm', 'verified', 1, 0)
 ON DUPLICATE KEY UPDATE
 role_id = VALUES(role_id),
 full_name = VALUES(full_name),
+first_name = VALUES(first_name),
+middle_name = VALUES(middle_name),
+last_name = VALUES(last_name),
 password_hash = VALUES(password_hash),
 verification_status = VALUES(verification_status),
 is_active = VALUES(is_active),

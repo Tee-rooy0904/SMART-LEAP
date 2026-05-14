@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controllers;
 
 use App\Services\ApplicantDashboardService;
+use App\Services\ApplicationService;
 use App\Services\CertificateService;
 
 class ApplicantDashboardController extends Controller
@@ -18,20 +19,12 @@ class ApplicantDashboardController extends Controller
 
     public function showPostApproval(): never
     {
-        $this->redirectTo('applicant-dashboard#application-forms');
+        $this->redirectTo($this->postApprovalDashboardPath());
     }
 
     public function showPostApprovalForm(): never
     {
-        $code = trim((string) ($_GET['code'] ?? ''));
-        if ($code === '' || !preg_match('/^[a-z0-9_]+$/i', $code)) {
-            $this->redirectTo('applicant-dashboard#application-forms');
-        }
-
-        $this->view('dashboards/post-approval-form', [
-            'authUser' => auth_user(),
-            'taskCode' => $code,
-        ]);
+        $this->redirectTo($this->postApprovalDashboardPath());
     }
 
     public function state(): never
@@ -46,6 +39,66 @@ class ApplicantDashboardController extends Controller
             'ok' => true,
             'state' => $service->stateForUser((int) $user['id']),
         ]);
+    }
+
+    public function redirectProfileCompletion(): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            $this->redirectTo('portal');
+        }
+
+        $role = strtolower((string) ($user['role'] ?? ''));
+        if (str_contains($role, 'beneficiary')) {
+            $this->redirectTo('beneficiary-dashboard');
+        }
+
+        $this->redirectTo('applicant-dashboard#profile-page');
+    }
+
+    public function profileState(): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $service = new ApplicationService();
+        response_json([
+            'ok' => true,
+            'data' => $service->getApplicantEntryState((int) $user['id']),
+        ]);
+    }
+
+    public function saveProfileDraft(): never
+    {
+        $this->persistProfile(false);
+    }
+
+    public function submitProfile(): never
+    {
+        $this->persistProfile(true);
+    }
+
+    public function saveProfilePhoto(): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $payload = json_decode(file_get_contents('php://input') ?: '[]', true);
+        if (!is_array($payload)) {
+            response_json(['ok' => false, 'message' => 'Invalid request payload.'], 422);
+        }
+
+        $service = new ApplicationService();
+        $result = $service->saveUserProfilePhoto((int) $user['id'], $payload);
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
     }
 
     public function downloadCertificate(): never
@@ -70,5 +123,37 @@ class ApplicantDashboardController extends Controller
         header('Content-Length: ' . strlen((string) $certificate['contents']));
         echo $certificate['contents'];
         exit;
+    }
+
+    private function postApprovalDashboardPath(): string
+    {
+        $role = strtolower((string) (auth_user()['role'] ?? ''));
+        if ($role === 'beneficiary') {
+            return 'beneficiary-dashboard#repayments';
+        }
+
+        return 'applicant-dashboard#application-page';
+    }
+
+    private function persistProfile(bool $submit): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $service = new ApplicationService();
+        $result = $service->saveApplicantProfile(
+            (int) $user['id'],
+            $_POST,
+            $_FILES['documents'] ?? [],
+            $submit
+        );
+
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
     }
 }

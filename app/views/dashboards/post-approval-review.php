@@ -5,6 +5,8 @@
 <?php
 $reviewCssVersion = (string) @filemtime(base_path('public/assets/css/dashboards/post-approval-review.css'));
 $reviewJsVersion = (string) @filemtime(base_path('public/assets/js/dashboards/post-approval-review.js'));
+$notificationsCssVersion = (string) @filemtime(base_path('public/assets/css/components/notifications.css'));
+$notificationsJsVersion = (string) @filemtime(base_path('public/assets/js/shared/notifications.js'));
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -13,6 +15,7 @@ $reviewJsVersion = (string) @filemtime(base_path('public/assets/js/dashboards/po
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP | Application Form Review</title>
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval-review.css?v=<?= urlencode($reviewCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= urlencode($notificationsCssVersion) ?>">
 </head>
 <body class="<?= !empty($embedded) ? 'review-body--embedded' : '' ?>">
     <script>
@@ -120,6 +123,7 @@ $reviewJsVersion = (string) @filemtime(base_path('public/assets/js/dashboards/po
 
     <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true"></div>
 
+    <script src="<?= $baseUrl ?>/assets/js/shared/notifications.js?v=<?= urlencode($notificationsJsVersion) ?>" defer></script>
     <script src="<?= $baseUrl ?>/assets/js/dashboards/post-approval-review.js?v=<?= urlencode($reviewJsVersion) ?>" defer></script>
 </body>
 </html>

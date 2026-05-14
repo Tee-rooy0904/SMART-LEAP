@@ -1,16 +1,11 @@
 <?php /** @var string $baseUrl */ ?>
 <?php /** @var string $email */ ?>
-<?php /** @var string $mode */ ?>
 <?php /** @var string $entryPoint */ ?>
 <?php
-$verificationMode = strtolower(trim($mode ?? 'activation'));
 $verificationEntryPoint = strtolower(trim($entryPoint ?? 'portal'));
-$isLoginMode = $verificationMode === 'login';
-$heading = $isLoginMode ? 'Verify your SMART LEAP sign-in' : 'Verify your SMART LEAP account';
-$copy = $isLoginMode
-    ? 'Enter the six-digit code sent to your registered email to complete two-factor authentication.'
-    : 'Enter the six-digit code sent to your registered email. Your portal account stays inactive until verification is complete.';
-$submitLabel = $isLoginMode ? 'Complete sign-in' : 'Verify account';
+$heading = 'Verify your SMART LEAP account';
+$copy = 'Enter the six-digit code sent to your registered email. Your portal account stays inactive until verification is complete.';
+$submitLabel = 'Verify account';
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -18,10 +13,10 @@ $submitLabel = $isLoginMode ? 'Complete sign-in' : 'Verify account';
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP | Verify Account</title>
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=12">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=44">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/signup.css?v=6">
-    <script defer src="<?= $baseUrl ?>/assets/js/public/portal.js?v=12"></script>
-    <script defer src="<?= $baseUrl ?>/assets/js/public/verify-account.js?v=1"></script>
+    <script defer src="<?= $baseUrl ?>/assets/js/public/portal.js?v=18"></script>
+    <script defer src="<?= $baseUrl ?>/assets/js/public/verify-account.js?v=2"></script>
 </head>
 <body class="portal-page portal-page--signup">
     <div class="page-shell">
@@ -53,7 +48,6 @@ $submitLabel = $isLoginMode ? 'Complete sign-in' : 'Verify account';
                         </div>
 
                         <form id="verifyAccountForm" novalidate>
-                            <input type="hidden" id="verifyMode" name="mode" value="<?= htmlspecialchars($verificationMode, ENT_QUOTES) ?>">
                             <input type="hidden" id="verifyEntryPoint" name="entryPoint" value="<?= htmlspecialchars($verificationEntryPoint, ENT_QUOTES) ?>">
                             <label class="field">
                                 <span>Email address</span>
@@ -74,11 +68,7 @@ $submitLabel = $isLoginMode ? 'Complete sign-in' : 'Verify account';
 
                             <p class="auth-feedback" id="verifyFeedback" role="alert" hidden></p>
                             <p class="auth-card__subaction">
-                                <?php if ($isLoginMode): ?>
-                                    Need a different account? <a class="text-link" href="<?= $baseUrl ?>/<?= $verificationEntryPoint === 'staff' ? 'login' : 'portal' ?>">Back to sign in</a>
-                                <?php else: ?>
-                                    Already verified? <a class="text-link" href="<?= $baseUrl ?>/portal">Sign in</a>
-                                <?php endif; ?>
+                                Already verified? <a class="text-link" href="<?= $baseUrl ?>/portal">Sign in</a>
                             </p>
                         </form>
                     </section>

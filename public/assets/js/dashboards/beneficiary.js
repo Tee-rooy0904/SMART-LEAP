@@ -2,32 +2,45 @@
     const AUTH_USER = window.SMARTLEAP_AUTH_USER || null;
     const STORAGE_KEYS = {
         payments: 'smartleap_beneficiary_payments_v1',
-        feedback: 'smartleap_beneficiary_feedback_v1',
-        notifications: 'smartleap_user_notifications_v1',
-        profilePhotos: 'smartleap_profile_photos_v1'
+        submissions: 'smartleap_beneficiary_submissions_v1',
     };
+    const PROFILE_PHOTO_MAX_SIZE = 5 * 1024 * 1024;
     const PORTAL_LOADER_MIN_MS = 3000;
+    const REPAYMENT_PLAN_MONTHS = 24;
+    const MONTHLY_REPAYMENT_AMOUNT = 625;
+    const TOTAL_REPAYMENT_AMOUNT = REPAYMENT_PLAN_MONTHS * MONTHLY_REPAYMENT_AMOUNT;
+    const SUPPORTED_PROOF_EXTENSIONS = ['jpg', 'jpeg', 'png', 'pdf'];
+    const SUPPORTED_PROOF_MIME_TYPES = ['image/jpeg', 'image/png', 'application/pdf'];
+    const OVERVIEW_ACTION_MOBILE_QUERY = window.matchMedia ? window.matchMedia('(max-width: 720px)') : null;
+    window.addEventListener('resize', () => {
+        enhancePortalSelects();
+        syncPortalSelects();
+    });
 
     let user = {
         id: AUTH_USER?.id || null,
         name: AUTH_USER?.name || '',
         fullName: AUTH_USER?.name || '',
         email: AUTH_USER?.email || '',
-        role: AUTH_USER?.role || 'Beneficiary'
+        role: AUTH_USER?.role || 'Benepisyaryo'
     };
     let payments = [];
+    let groupedSubmissions = [];
     let feedbackEntries = [];
     let applicationRecord = null;
     let beneficiaryRecord = null;
+    let repaymentAccount = null;
     let notifications = [];
     let beneficiaryId = Number(AUTH_USER?.id || 0) || null;
     let roleView = 'beneficiary';
-    let profilePhotos = {};
     let loaderStartedAt = Date.now();
+    let supportRecipient = 'social_worker';
+    let supportChatTimer = null;
+    let portalSelectsBound = false;
 
     const REQUIREMENT_ITEMS = [
         { key: 'validId', label: 'Valid ID' },
-        { key: 'healthCertificate', label: 'Health Certificate' },
+        { key: 'healthSertipiko', label: 'Health Sertipiko' },
         { key: 'cedula', label: 'Cedula' },
         { key: 'mungkahingProyekto', label: 'Project proposal' },
         { key: 'businessPlan', label: 'Business plan' },
@@ -38,11 +51,111 @@
 
     document.addEventListener('DOMContentLoaded', init);
 
-    function init() {
+    async function init() {
         loadState();
+        await hydrateBackendState();
         bindEvents();
         renderAll();
         markPortalReady();
+    }
+
+    function publicBase() {
+        const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
+        return match ? match[1] : '';
+    }
+
+    function routeUrl(path) {
+        const trimmed = String(path || '').replace(/^\/+/, '');
+        return `${publicBase()}/${trimmed}`;
+    }
+
+    async function hydrateBackendState() {
+        try {
+            const response = await fetch(routeUrl('beneficiary-dashboard/state'), {
+                headers: { Accept: 'application/json' },
+                credentials: 'same-origin'
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.message || 'Unable to load beneficiary state.');
+            }
+            applyBackendState(payload.data || {});
+        } catch (error) {
+            console.warn('Unable to hydrate beneficiary state', error);
+        }
+    }
+
+    function applyBackendState(data) {
+        if (!data || typeof data !== 'object') {
+            return;
+        }
+
+        if (data.user) {
+            user = {
+                ...user,
+                id: data.user.id || user.id || null,
+                name: data.user.name || user.name || '',
+                fullName: data.user.name || user.fullName || user.name || '',
+                email: data.user.email || user.email || '',
+                role: data.user.role || user.role || 'Benepisyaryo',
+                photo: data.user.photo || user.photo || null
+            };
+            beneficiaryId = Number(user?.id || 0) || null;
+        }
+
+        if (data.profile) {
+            user = {
+                ...user,
+                businessName: data.profile.businessName || user.businessName || '',
+                barangay: data.profile.barangay || user.barangay || '',
+                contactNumber: data.profile.contactNumber || user.contactNumber || '',
+                contact: data.profile.contactNumber || user.contact || '',
+                address: data.profile.address || user.address || '',
+                birthdate: data.profile.birthdate || user.birthdate || '',
+                age: data.profile.age || user.age || '',
+                gender: data.profile.gender || user.gender || '',
+                is4ps: data.profile.is4ps || user.is4ps || '',
+                educationalAttainment: data.profile.educationalAttainment || user.educationalAttainment || '',
+                sector: data.profile.sector || user.sector || '',
+                sectorOtherSpecify: data.profile.sectorOtherSpecify || user.sectorOtherSpecify || '',
+                batchNo: data.profile.batchNo || user.batchNo || '',
+                livelihoodCategory: data.profile.livelihoodCategory || user.livelihoodCategory || '',
+                livelihood: data.profile.livelihood || user.livelihood || ''
+            };
+        }
+
+        applicationRecord = data.application || applicationRecord;
+        beneficiaryRecord = {
+            ...(beneficiaryRecord || {}),
+            ...(data.beneficiary || {}),
+            profile: data.profile || beneficiaryRecord?.profile || null,
+        };
+        beneficiaryId = Number(data.beneficiary?.id || user?.id || 0) || null;
+        if (data.repayments && typeof data.repayments === 'object') {
+            payments = normalizePayments(data.repayments.payments || []);
+            groupedSubmissions = normalizeGroupedSubmissions(data.repayments.submissions || []);
+            repaymentAccount = data.repayments.account && typeof data.repayments.account === 'object'
+                ? data.repayments.account
+                : null;
+            clearLegacyRepaymentStorage();
+        }
+
+        if (Array.isArray(data.feedback)) {
+            feedbackEntries = data.feedback
+                .filter((entry) => entry && typeof entry === 'object')
+                .map((entry) => ({
+                    id: Number(entry.id || 0) || null,
+                    message: String(entry.message || '').trim(),
+                    timestamp: entry.timestamp || entry.createdAt || ''
+                }))
+                .filter((entry) => entry.message !== '');
+            clearLegacyFeedbackStorage();
+        }
+
+        if (Array.isArray(data.notifications)) {
+            notifications = data.notifications.slice();
+            clearLegacyNotificationsStorage();
+        }
     }
 
     function loadState() {
@@ -52,86 +165,376 @@
             name: AUTH_USER?.name || user.name || '',
             fullName: AUTH_USER?.name || user.fullName || user.name || '',
             email: AUTH_USER?.email || user.email || '',
-            role: AUTH_USER?.role || user.role || 'Beneficiary'
+            role: AUTH_USER?.role || user.role || 'Benepisyaryo'
         };
         beneficiaryRecord = null;
         applicationRecord = null;
         roleView = 'beneficiary';
         beneficiaryId = Number(user?.id || 0) || null;
 
-        try {
-            const storedPayments = localStorage.getItem(STORAGE_KEYS.payments);
-            if (storedPayments) payments = JSON.parse(storedPayments) || [];
-        } catch (err) {
-            console.warn('Unable to read stored payments', err);
-        }
-        if (!Array.isArray(payments)) {
-            payments = [];
-        }
+        payments = [];
+        groupedSubmissions = [];
+        repaymentAccount = null;
 
-        try {
-            const storedFeedback = localStorage.getItem(STORAGE_KEYS.feedback);
-            if (storedFeedback) feedbackEntries = JSON.parse(storedFeedback) || [];
-        } catch (err) {
-            console.warn('Unable to read stored feedback', err);
-        }
-        if (!Array.isArray(feedbackEntries)) {
-            feedbackEntries = [];
-        }
+        feedbackEntries = [];
 
-        try {
-            const storedNotifications = localStorage.getItem(STORAGE_KEYS.notifications);
-            if (storedNotifications) notifications = JSON.parse(storedNotifications) || [];
-        } catch (err) {
-            console.warn('Unable to read stored notifications', err);
-        }
-        if (!Array.isArray(notifications)) {
-            notifications = [];
-        }
+        notifications = [];
 
-        try {
-            const storedPhotos = localStorage.getItem(STORAGE_KEYS.profilePhotos);
-            if (storedPhotos) profilePhotos = JSON.parse(storedPhotos) || {};
-        } catch (err) {
-            console.warn('Unable to read profile photos', err);
+    }
+
+    async function postJson(path, payload) {
+        const response = await fetch(routeUrl(path), {
+            method: 'POST',
+            headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json;charset=UTF-8'
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify(payload || {})
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+            throw new Error(result.message || 'Unable to save the repayment record.');
         }
-        if (!profilePhotos || typeof profilePhotos !== 'object') {
-            profilePhotos = {};
+        return result;
+    }
+
+    async function fetchJson(path) {
+        const response = await fetch(routeUrl(path), {
+            headers: { Accept: 'application/json' },
+            credentials: 'same-origin'
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+            throw new Error(result.message || 'Unable to load data.');
+        }
+        return result;
+    }
+
+    function clearLegacyRepaymentStorage() {
+        try {
+            localStorage.removeItem(STORAGE_KEYS.payments);
+            localStorage.removeItem(STORAGE_KEYS.submissions);
+        } catch (error) {
+            console.warn('Unable to clear legacy repayment storage', error);
+        }
+    }
+
+    function clearLegacyFeedbackStorage() {
+        try {
+            localStorage.removeItem('smartleap_beneficiary_feedback_v1');
+        } catch (error) {
+            console.warn('Unable to clear legacy feedback storage', error);
+        }
+    }
+
+    function clearLegacyNotificationsStorage() {
+        try {
+            localStorage.removeItem('smartleap_user_notifications_v1');
+        } catch (error) {
+            console.warn('Unable to clear legacy notifications storage', error);
         }
     }
 
     function bindEvents() {
         document.getElementById('uploadForm')?.addEventListener('submit', handleUploadSubmit);
         document.getElementById('feedbackForm')?.addEventListener('submit', handleFeedbackSubmit);
-        document.getElementById('profileForm')?.addEventListener('submit', handleProfileSubmit);
+        document.getElementById('supportChatForm')?.addEventListener('submit', handleSupportChatSubmit);
+        document.querySelectorAll('[data-support-recipient]').forEach((button) => {
+            button.addEventListener('click', () => {
+                supportRecipient = button.dataset.supportRecipient || 'social_worker';
+                document.querySelectorAll('[data-support-recipient]').forEach((item) => {
+                    item.classList.toggle('is-active', item === button);
+                });
+                loadSupportChat();
+            });
+        });
         document.getElementById('beneficiaryProfileForm')?.addEventListener('submit', handleBeneficiaryProfileSubmit);
+        document.getElementById('beneficiaryProfileForm')?.addEventListener('input', handleBeneficiaryProfileStateChange);
+        document.getElementById('beneficiaryProfileForm')?.addEventListener('change', handleBeneficiaryProfileStateChange);
         document.getElementById('profilePhotoInput')?.addEventListener('change', handleProfilePhotoChange);
+        document.getElementById('beneficiaryBirthdate')?.addEventListener('change', handleBeneficiaryBirthdateChange);
+        document.getElementById('beneficiaryProfileBack')?.addEventListener('click', () => {
+            window.location.hash = '#overview';
+            applyRouteVisibility();
+        });
         document.getElementById('logoutButton')?.addEventListener('click', handleLogout);
+        document.getElementById('mobileAccountLogout')?.addEventListener('click', handleLogout);
         document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebarMenu);
         document.getElementById('sidebarClose')?.addEventListener('click', closeSidebarMenuOnMobile);
         document.getElementById('sidebarOverlay')?.addEventListener('click', closeSidebarMenuOnMobile);
+        document.getElementById('mobileAccountToggle')?.addEventListener('click', toggleMobileAccountMenu);
+        document.getElementById('mobileAccountProfile')?.addEventListener('click', () => {
+            closeMobileAccountMenu();
+            window.location.hash = '#profile';
+            applyRouteVisibility();
+        });
+        document.getElementById('mobileAccountPassword')?.addEventListener('click', () => {
+            closeMobileAccountMenu();
+            openChangePasswordModal();
+        });
         document.getElementById('historyFilterStatus')?.addEventListener('change', renderHistory);
         document.getElementById('historyFilterMonth')?.addEventListener('change', renderHistory);
         document.getElementById('historyTableBody')?.addEventListener('click', handleHistoryTableClick);
+        document.getElementById('historyCardList')?.addEventListener('click', handleHistoryTableClick);
+        document.getElementById('repaymentDueList')?.addEventListener('click', handleRepaymentDueAction);
+        document.getElementById('uploadMonth')?.addEventListener('change', syncRepaymentMode);
         document.getElementById('overviewRepaymentsBtn')?.addEventListener('click', () => {
-            window.location.hash = '#repayments';
+            routeToRepayments(document.getElementById('overviewRepaymentsBtn')?.dataset.target || 'upload');
+        });
+        document.getElementById('overviewUploadReceiptBtn')?.addEventListener('click', () => {
+            routeToRepayments('upload');
+        });
+        document.getElementById('overviewViewRecordsBtn')?.addEventListener('click', () => {
+            routeToRepayments('history');
+        });
+        document.getElementById('overviewSupportBtn')?.addEventListener('click', () => {
+            window.location.hash = '#support-feedback';
             applyRouteVisibility();
         });
-
-        document.querySelectorAll('.sidebar-link').forEach((link) => {
+        document.addEventListener('click', (event) => {
+            const mobileMenu = document.getElementById('mobileAccountMenu');
+            const clickedInsideAccount = event.target.closest('.mobile-topbar__account')
+                || (mobileMenu && mobileMenu.contains(event.target));
+            if (!clickedInsideAccount) {
+                closeMobileAccountMenu();
+            }
+            if (!event.target.closest('[data-select-root]')) {
+                closeAllCustomSelects();
+            }
+            if (!event.target.closest('[data-portal-select-root]')) {
+                closeAllPortalSelects();
+            }
+        });
+        document.addEventListener('keydown', handleCustomSelectKeydown);
+        document.addEventListener('smartleap:notifications-toggle', (event) => {
+            if (event.detail?.open) {
+                closeMobileAccountMenu();
+            }
+        });
+        document.querySelectorAll('[data-select-root]').forEach(setupCustomSelect);
+        enhancePortalSelects();
+        document.querySelectorAll('.sidebar-link, .beneficiary-tabbar__link').forEach((link) => {
             link.addEventListener('click', (event) => {
                 event.preventDefault();
-                document.querySelectorAll('.sidebar-link').forEach((item) => item.classList.remove('is-active'));
-                link.classList.add('is-active');
                 const targetId = (link.getAttribute('href') || '').replace('#', '');
                 if (targetId) {
                     window.location.hash = `#${targetId}`;
                     applyRouteVisibility();
+                    closeSidebarMenuOnMobile();
                 }
             });
         });
 
         initRouting();
+        initializeRepaymentWorkspace();
+        syncOverviewPrimaryActionPlacement();
+        syncMobileAccountMenuLayer();
+        OVERVIEW_ACTION_MOBILE_QUERY?.addEventListener?.('change', syncOverviewPrimaryActionPlacement);
+        window.addEventListener('resize', syncMobileAccountMenuLayer);
+    }
+
+    function syncOverviewPrimaryActionPlacement() {
+        const button = document.getElementById('overviewRepaymentsBtn');
+        const mobileActions = document.getElementById('overviewBalanceActions');
+        const desktopActions = document.getElementById('overviewProgressActions');
+        if (!button || !mobileActions || !desktopActions) {
+            return;
+        }
+
+        const useMobilePlacement = Boolean(OVERVIEW_ACTION_MOBILE_QUERY?.matches);
+        if (useMobilePlacement) {
+            if (button.parentElement !== mobileActions) {
+                mobileActions.appendChild(button);
+            }
+            desktopActions.classList.add('is-relocated');
+            return;
+        }
+
+        if (button.parentElement !== desktopActions) {
+            desktopActions.appendChild(button);
+        }
+        desktopActions.classList.remove('is-relocated');
+    }
+
+    function setupCustomSelect(root) {
+        const native = root?.querySelector('select');
+        const trigger = root?.querySelector('[data-select-trigger]');
+        const menu = root?.querySelector('[data-select-menu]');
+        const options = Array.from(root?.querySelectorAll('[data-select-option]') || []);
+        if (!root || !native || !trigger || !menu || !options.length) {
+            return;
+        }
+
+        const sync = () => syncCustomSelect(root);
+        trigger.addEventListener('click', () => {
+            const isOpen = root.classList.contains('is-open');
+            closeAllCustomSelects();
+            closeAllPortalSelects();
+            if (!isOpen) {
+                root.classList.add('is-open');
+                trigger.setAttribute('aria-expanded', 'true');
+                menu.setAttribute('aria-hidden', 'false');
+                syncMobileSelectOpenState();
+            }
+        });
+
+        options.forEach((option) => {
+            option.addEventListener('click', () => {
+                native.value = option.dataset.value || '';
+                native.dispatchEvent(new Event('change', { bubbles: true }));
+                sync();
+                closeAllCustomSelects();
+                trigger.focus();
+            });
+        });
+
+        native.addEventListener('change', sync);
+        sync();
+    }
+
+    function syncCustomSelect(root) {
+        const native = root?.querySelector('select');
+        const label = root?.querySelector('[data-select-label]');
+        const options = Array.from(root?.querySelectorAll('[data-select-option]') || []);
+        if (!native || !label) {
+            return;
+        }
+        const selectedOption = options.find((option) => option.dataset.value === native.value) || options[0];
+        label.textContent = selectedOption?.textContent?.trim() || '';
+        options.forEach((option) => {
+            const isSelected = option === selectedOption;
+            option.classList.toggle('is-selected', isSelected);
+            option.setAttribute('aria-selected', String(isSelected));
+        });
+    }
+
+    function closeAllCustomSelects() {
+        document.querySelectorAll('[data-select-root].is-open').forEach((root) => {
+            root.classList.remove('is-open');
+            root.querySelector('[data-select-trigger]')?.setAttribute('aria-expanded', 'false');
+            root.querySelector('[data-select-menu]')?.setAttribute('aria-hidden', 'true');
+        });
+        syncMobileSelectOpenState();
+    }
+
+    function handleCustomSelectKeydown(event) {
+        if (event.key === 'Escape') {
+            closeAllCustomSelects();
+            closeAllPortalSelects();
+        }
+    }
+
+    function isMobileSelectViewport() {
+        return window.matchMedia('(max-width: 960px)').matches;
+    }
+
+    function enhancePortalSelects() {
+        if (!isMobileSelectViewport()) return;
+
+        if (!portalSelectsBound) {
+            portalSelectsBound = true;
+        }
+
+        document.querySelectorAll('select').forEach((native) => {
+            if (native.closest('[data-select-root]') || native.closest('[data-portal-select-root]') || native.multiple) {
+                return;
+            }
+
+            const root = document.createElement('div');
+            root.className = 'portal-select';
+            root.dataset.portalSelectRoot = 'true';
+
+            native.parentNode.insertBefore(root, native);
+            root.appendChild(native);
+            native.classList.add('portal-select__native');
+
+            const trigger = document.createElement('button');
+            trigger.type = 'button';
+            trigger.className = 'portal-select__trigger';
+            trigger.dataset.portalSelectTrigger = 'true';
+            trigger.setAttribute('aria-expanded', 'false');
+
+            const label = document.createElement('span');
+            label.className = 'portal-select__label';
+            label.dataset.portalSelectLabel = 'true';
+            trigger.appendChild(label);
+
+            const menu = document.createElement('div');
+            menu.className = 'portal-select__menu';
+            menu.dataset.portalSelectMenu = 'true';
+            menu.setAttribute('aria-hidden', 'true');
+
+            Array.from(native.options).forEach((option) => {
+                if (option.hidden) return;
+                const optionButton = document.createElement('button');
+                optionButton.type = 'button';
+                optionButton.className = 'portal-select__option';
+                optionButton.dataset.value = option.value;
+                optionButton.textContent = option.textContent || '';
+                optionButton.disabled = option.disabled && option.value === '';
+                optionButton.addEventListener('click', () => {
+                    native.value = option.value;
+                    native.dispatchEvent(new Event('change', { bubbles: true }));
+                    syncPortalSelect(root);
+                    closeAllPortalSelects();
+                    trigger.focus();
+                });
+                menu.appendChild(optionButton);
+            });
+
+            trigger.addEventListener('click', () => {
+                const isOpen = root.classList.contains('is-open');
+                closeAllPortalSelects();
+                closeAllCustomSelects();
+                if (!isOpen) {
+                    root.classList.add('is-open');
+                    trigger.setAttribute('aria-expanded', 'true');
+                    menu.setAttribute('aria-hidden', 'false');
+                    syncMobileSelectOpenState();
+                }
+            });
+
+            native.addEventListener('change', () => syncPortalSelect(root));
+
+            root.appendChild(trigger);
+            root.appendChild(menu);
+            syncPortalSelect(root);
+        });
+    }
+
+    function syncPortalSelects() {
+        document.querySelectorAll('[data-portal-select-root]').forEach((root) => syncPortalSelect(root));
+    }
+
+    function syncPortalSelect(root) {
+        const native = root?.querySelector('select');
+        const label = root?.querySelector('[data-portal-select-label]');
+        const options = Array.from(root?.querySelectorAll('.portal-select__option') || []);
+        if (!native || !label) return;
+
+        const selected = Array.from(native.options).find((option) => option.value === native.value) || native.options[0];
+        label.textContent = selected?.textContent?.trim() || '';
+
+        options.forEach((option) => {
+            const isSelected = option.dataset.value === native.value;
+            option.classList.toggle('is-selected', isSelected);
+            option.setAttribute('aria-selected', String(isSelected));
+        });
+    }
+
+    function closeAllPortalSelects() {
+        document.querySelectorAll('[data-portal-select-root].is-open').forEach((root) => {
+            root.classList.remove('is-open');
+            root.querySelector('[data-portal-select-trigger]')?.setAttribute('aria-expanded', 'false');
+            root.querySelector('[data-portal-select-menu]')?.setAttribute('aria-hidden', 'true');
+        });
+        syncMobileSelectOpenState();
+    }
+
+    function syncMobileSelectOpenState() {
+        const hasOpenSelect = Boolean(document.querySelector('[data-select-root].is-open, [data-portal-select-root].is-open'));
+        document.body.classList.toggle('mobile-select-open', hasOpenSelect);
     }
 
     function toggleSidebarMenu() {
@@ -140,6 +543,7 @@
         const toggle = document.getElementById('sidebarToggle');
         if (!sidebar) return;
 
+        closeMobileAccountMenu();
         const isOpen = !sidebar.classList.contains('is-open');
         sidebar.classList.toggle('is-open', isOpen);
         overlay?.classList.toggle('is-visible', isOpen);
@@ -153,6 +557,10 @@
         sidebar?.classList.remove('is-open');
         overlay?.classList.remove('is-visible');
         toggle?.setAttribute('aria-expanded', 'false');
+    }
+
+    function initializeRepaymentWorkspace() {
+        syncRepaymentMode();
     }
 
     function renderAll() {
@@ -170,61 +578,184 @@
             renderFeedback();
             renderAudit();
         }
+        loadSupportChat(true);
+        startSupportChatPolling();
     }
 
     function renderUser() {
-        const name = user.fullName || user.name || 'Beneficiary';
-        const email = user.email || '--';
-        const business = user.businessName
-            || user.business
-            || applicationRecord?.businessName
-            || applicationRecord?.profile?.businessName
-            || beneficiaryRecord?.businessName
-            || beneficiaryRecord?.businessType
-            || applicationRecord?.businessType
-            || user.barangay
-            || user.location
-            || (roleView === 'applicant' ? 'Applicant profile' : '')
-            || 'Your livelihood';
-        const firstName = (name || '').split(' ')[0] || name || 'Beneficiary';
+        const name = user.fullName || user.name || 'Benepisyaryo';
+        const isCoMaker = isCoMakerPortal();
+        const business = isCoMaker
+            ? [
+                beneficiaryRecord?.relationshipToPrimaryBeneficiary,
+                beneficiaryRecord?.primaryBeneficiaryName ? `Paying for ${beneficiaryRecord.primaryBeneficiaryName}` : '',
+            ].filter(Boolean).join(' • ')
+            : (user.businessName
+                || user.business
+                || applicationRecord?.businessName
+                || applicationRecord?.profile?.businessName
+                || beneficiaryRecord?.businessName
+                || beneficiaryRecord?.businessType
+                || applicationRecord?.businessType
+                || user.barangay
+                || user.location
+                || (roleView === 'applicant' ? 'Profile sa aplikante' : '')
+                || 'No business recorded');
+        const firstName = (name || '').split(' ')[0] || name || 'Benepisyaryo';
         const avatarInitial = (name || 'B').trim().charAt(0)?.toUpperCase() || 'B';
+        const photo = getStoredProfilePhoto(user);
 
-        const headerIdentity = business ? `${name || firstName} - ${business}` : `Hello, ${name || firstName}!`;
-        setText('bannerGreeting', headerIdentity);
-        setText('userEmail', email);
+        setText('bannerGreeting', '');
+        setText('userEmail', '');
         setText('sidebarUserName', name);
-        setText('sidebarUserBusiness', business || 'Your livelihood');
+        setText('sidebarUserBusiness', business || 'No business recorded');
+        setText('mobileAccountName', firstName || name || 'Benepisyaryo');
+        setAvatarNode(document.getElementById('bannerAvatar'), avatarInitial, photo);
+        setAvatarNode(document.getElementById('sidebarAvatar'), avatarInitial, photo);
+        setMobileAvatar(avatarInitial, photo);
+    }
 
-        const bannerAvatar = document.getElementById('bannerAvatar');
-        if (bannerAvatar) bannerAvatar.textContent = avatarInitial;
-        const sidebarAvatar = document.getElementById('sidebarAvatar');
-        if (sidebarAvatar) sidebarAvatar.textContent = avatarInitial;
+    function isCoMakerPortal() {
+        return roleView === 'beneficiary' && Boolean(beneficiaryRecord?.isCoMaker);
+    }
+
+    function setBeneficiaryFieldVisibility(element, visible) {
+        if (!element) return;
+        element.hidden = !visible;
+        element.querySelectorAll('input, select, textarea, button').forEach((control) => {
+            if (!Object.prototype.hasOwnProperty.call(control.dataset, 'originalRequired')) {
+                control.dataset.originalRequired = control.required ? 'true' : 'false';
+            }
+            if (!Object.prototype.hasOwnProperty.call(control.dataset, 'originalDisabled')) {
+                control.dataset.originalDisabled = control.disabled ? 'true' : 'false';
+            }
+            control.disabled = visible ? control.dataset.originalDisabled === 'true' : true;
+            control.required = visible ? control.dataset.originalRequired === 'true' : false;
+        });
+    }
+
+    function getRepaymentMetrics() {
+        const scheduleItems = getRepaymentScheduleItems();
+        const verifiedPayments = payments.filter((p) => mapPaymentStage(p.stage) === 'verified');
+        const pendingPayments = payments.filter((p) => mapPaymentStage(p.stage) === 'pending');
+        const uploadedPayments = payments.filter((p) => mapPaymentStage(p.stage) === 'uploaded');
+        const totalVerifiedAmount = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const outstanding = Math.max(TOTAL_REPAYMENT_AMOUNT - totalVerifiedAmount, 0);
+        const verifiedMonths = verifiedPayments.length;
+        const repaymentRate = Math.round((verifiedMonths / REPAYMENT_PLAN_MONTHS) * 100);
+        const rateDisplay = Math.min(100, Math.max(0, repaymentRate));
+        const actionItems = scheduleItems.filter((item) => item.actionable);
+        const nextPending = actionItems[0] || scheduleItems.find((item) => !['verified', 'pending_review'].includes(item.state)) || null;
+        const nextDue = nextPending ? formatMonth(padMonth(nextPending.month)) : 'Nahuman';
+        const overdueCount = scheduleItems.filter((item) => item.state === 'overdue').length;
+        const pendingCount = pendingPayments.length;
+        const uploadedCount = uploadedPayments.length;
+        const pendingVerificationCount = pendingCount + uploadedCount;
+        const percent = Math.round((verifiedMonths / REPAYMENT_PLAN_MONTHS) * 100);
+        const nextAmount = nextPending ? formatCurrency(nextPending.amount || MONTHLY_REPAYMENT_AMOUNT) : formatCurrency(0);
+
+        let statusLabel = 'Active beneficiary';
+        let heroTitle = 'Upload your latest receipt';
+        let heroCopy = 'Submit your next OR.';
+        let reminder = 'Prepare your next OR.';
+        let primaryActionLabel = 'Upload receipt';
+        let primaryActionTarget = 'upload';
+
+        if (overdueCount > 0) {
+            statusLabel = 'Overdue payment';
+            heroTitle = 'Submit late payment';
+            heroCopy = nextPending ? `${formatMonth(padMonth(nextPending.month))} is overdue and needs proof.` : 'An overdue payment needs proof.';
+            reminder = nextPending
+                ? `Submit late payment for ${formatMonth(padMonth(nextPending.month))}.`
+                : 'Submit the missing late payment as soon as possible.';
+            primaryActionLabel = 'Submit late payment';
+            primaryActionTarget = 'upload';
+        } else if (pendingVerificationCount > 0) {
+            statusLabel = 'Pending verification';
+            heroTitle = 'Receipt under verification';
+            heroCopy = 'Wait for review.';
+            reminder = 'A receipt is already under review.';
+            primaryActionLabel = 'View repayments';
+            primaryActionTarget = 'repayments';
+        } else if (verifiedMonths > 0) {
+            statusLabel = 'On track';
+            heroTitle = nextPending ? 'Upload your latest receipt' : 'Account on track';
+            heroCopy = nextPending ? `Next due ${formatMonth(padMonth(nextPending.month))}.` : 'All uploaded receipts are clear.';
+            reminder = nextPending ? `Next due ${formatMonth(padMonth(nextPending.month))}.` : 'No pending OR uploads right now.';
+            if (!nextPending) {
+                primaryActionLabel = 'View repayments';
+                primaryActionTarget = 'repayments';
+            }
+        } else {
+            heroTitle = 'Upload your latest receipt';
+            heroCopy = 'Start your repayment record with your first OR.';
+        }
+
+        return {
+            outstanding,
+            verifiedMonths,
+            pendingCount,
+            uploadedCount,
+            pendingVerificationCount,
+            overdueCount,
+            nextPending,
+            nextDue,
+            nextAmount,
+            scheduleItems,
+            rateDisplay,
+            percent,
+            statusLabel,
+            heroTitle,
+            heroCopy,
+            reminder,
+            primaryActionLabel,
+            primaryActionTarget,
+            programLabel: verifiedMonths > 0 || pendingCount > 0 || uploadedCount > 0 ? 'Released' : 'Active beneficiary',
+        };
+    }
+
+    function getBeneficiaryAttentionSummary(metrics) {
+        if (metrics.overdueCount > 0) {
+            return { title: `${metrics.overdueCount} item${metrics.overdueCount === 1 ? '' : 's'} need action`, meta: 'Overdue receipts need action.' };
+        }
+        if (metrics.pendingCount > 0 || metrics.uploadedCount > 0) {
+            return { title: 'Awaiting verification', meta: 'A receipt is waiting for review.' };
+        }
+        return { title: 'No issues', meta: 'No active repayment issues.' };
+    }
+
+    function buildOverviewUpdates(metrics) {
+        const reminder = metrics.nextPending
+            ? (metrics.overdueCount > 0
+                ? `Upload the OR for ${formatMonth(padMonth(metrics.nextPending.month))}.`
+                : `Next due ${formatMonth(padMonth(metrics.nextPending.month))}.`)
+            : 'No due month queued.';
+        const verification = metrics.pendingVerificationCount > 0
+            ? `${formatCount(metrics.pendingVerificationCount, 'receipt')} waiting for review.`
+            : 'No receipts pending verification.';
+        const support = repaymentAccount?.isRepaymentSuccessor
+            ? `You are paying for the account of ${String(repaymentAccount.replacementForName || 'the linked deceased beneficiary')}. Open Support for repayment help if needed.`
+            : 'Open Support for PDO contact or repayment help.';
+        return { reminder, verification, support };
     }
 
     function renderSummary() {
         if (roleView === 'beneficiary') {
-            const verifiedPayments = payments.filter((p) => p.stage === 'verified');
-            const totalVerifiedAmount = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-            const outstanding = Math.max(15000 - totalVerifiedAmount, 0);
-            const verifiedMonths = verifiedPayments.length;
-            const repaymentRate = Math.round((verifiedMonths / 24) * 100);
+            const metrics = getRepaymentMetrics();
 
-            const nextPending = payments.find((p) => p.stage !== 'verified');
-            const nextDue = nextPending ? formatMonth(padMonth(nextPending.month)) : 'Completed';
-            const rateDisplay = Math.min(100, Math.max(0, repaymentRate));
+            setText('bannerLabelOutstanding', 'Kasamtangang balanse');
+            setText('bannerLabelProgress', 'Payment progress');
+            setText('bannerLabelNextDue', 'Pending verification');
+            setText('bannerLabelRate', 'Aksyon sa repayment');
+            setText('bannerOutstanding', formatCurrency(metrics.outstanding));
+            setText('bannerProgress', `${metrics.verifiedMonths}/${REPAYMENT_PLAN_MONTHS} months`);
+            setText('bannerNextDue', formatCount(metrics.pendingVerificationCount, 'receipt'));
+            setText('bannerRate', `${metrics.rateDisplay}% complete`);
 
-            setText('bannerLabelOutstanding', 'Outstanding balance');
-            setText('bannerLabelProgress', 'Repayment progress');
-            setText('bannerLabelNextDue', 'Next due date');
-            setText('bannerLabelRate', 'Repayment rate');
-            setText('bannerOutstanding', formatCurrency(outstanding));
-            setText('bannerProgress', `${verifiedMonths}/24 months`);
-            setText('bannerNextDue', nextDue);
-            setText('bannerRate', `${rateDisplay}%`);
-
-            setText('supportNextDue', nextDue);
-            setText('supportOutstanding', `Outstanding ${formatCurrency(outstanding)}`);
-            setText('supportRate', `Completion ${rateDisplay}%`);
+            setText('supportNextDue', metrics.nextDue);
+            setText('supportOutstanding', `Unpaid ${formatCurrency(metrics.outstanding)}`);
+            setText('supportRate', `Completion ${metrics.rateDisplay}%`);
+            setText('supportStanding', metrics.statusLabel);
             return;
         }
 
@@ -239,7 +770,7 @@
                 ? 'Ready for approval'
                 : 'Pending review';
         setText('bannerLabelOutstanding', 'Requirement status');
-        setText('bannerLabelProgress', 'Requirements progress');
+        setText('bannerLabelProgress', 'Mga Kinahanglanon progress');
         setText('bannerLabelNextDue', 'Current stage');
         setText('bannerLabelRate', 'Approval status');
         setText('bannerOutstanding', `${completed}/${total} submitted`);
@@ -249,44 +780,84 @@
     }
 
     function renderProgress() {
-        const verified = payments.filter((p) => p.stage === 'verified').length;
-        const pending = payments.filter((p) => p.stage === 'pending').length;
-        const uploaded = payments.filter((p) => p.stage === 'uploaded').length;
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-        const overdue = payments.filter((payment) => {
-            if ((payment.stage || '').toLowerCase() === 'verified') return false;
-            const monthDate = parseMonth(payment.month);
-            return monthDate ? monthDate < startOfMonth : false;
+        const metrics = getRepaymentMetrics();
+        const submittedCount = payments.length;
+        const pendingVerificationCount = metrics.pendingCount + metrics.uploadedCount;
+        const followUpCount = payments.filter((payment) => {
+            const stage = mapPaymentStage(payment.stage);
+            return stage === 'needs_correction' || stage === 'rejected';
         }).length;
-        const percent = Math.round((verified / 24) * 100);
 
         const fill = document.getElementById('progressFill');
         if (fill) {
-            fill.style.width = `${Math.min(100, percent)}%`;
-            fill.parentElement?.setAttribute('aria-valuenow', String(percent));
+            fill.style.width = `${Math.min(100, metrics.percent)}%`;
+            fill.parentElement?.setAttribute('aria-valuenow', String(metrics.percent));
         }
-        setText('progressVerified', `${verified} months verified`);
-        setText('progressPending', `${pending} pending verification`);
-        setText('progressUploaded', `${uploaded} uploaded`);
-        setText('progressOverdue', `${overdue} overdue`);
+        setText('progressVerified', `${metrics.verifiedMonths} months verified`);
+        setText('progressPending', `${pendingVerificationCount} awaiting review`);
+        setText('progressUploaded', `${metrics.uploadedCount} submitted online`);
+        setText('progressOverdue', `${metrics.overdueCount} need follow-up`);
+        setText('repaymentStandingOutstanding', metrics.nextDue || 'Nahuman');
+        setText('repaymentStandingVerified', formatCount(followUpCount, 'issue'));
+        setText('repaymentStandingPending', formatCount(pendingVerificationCount, 'receipt'));
+        setText('repaymentStandingOverdue', formatCount(submittedCount, 'receipt'));
+        setText('repaymentStandingTitle', 'Kinahanglan follow-up');
+        setText('repaymentStandingCopy', followUpCount > 0 ? `${formatCount(followUpCount, 'issue')} need follow-up.` : 'No follow-up needed.');
+        document.getElementById('repaymentStandingVerified')?.closest('.overview-card')?.classList.toggle('has-follow-up', followUpCount > 0);
+        renderRepaymentDueList(metrics.scheduleItems);
+        syncRepaymentMode();
+    }
+
+    function renderRepaymentDueList(items = getRepaymentScheduleItems()) {
+        const root = document.getElementById('repaymentDueList');
+        if (!root) return;
+        const visible = items.filter((item) => item.state !== 'verified').slice(0, 6);
+        if (!visible.length) {
+            root.innerHTML = '<div class="repayment-due-list__empty">No repayment due items need action right now.</div>';
+            return;
+        }
+
+        root.innerHTML = visible.map((item) => {
+            const payment = item.payment || null;
+            const status = repaymentScheduleStatus(item);
+            const action = item.actionable
+                ? `<button type="button" class="btn-outline small" data-repayment-due-action="${escapeHtml(item.month)}">${item.isOverdue ? (item.state === 'needs_correction' ? 'Submit New Late Receipt' : 'Submit Late Payment') : (item.state === 'needs_correction' ? 'Submit New Receipt' : 'Submit Payment')}</button>`
+                : payment
+                    ? '<span class="repayment-due-list__locked">Awaiting review</span>'
+                    : '';
+            return `
+                <article class="repayment-due-item ${item.isOverdue ? 'is-overdue' : ''}">
+                    <div>
+                        <span class="repayment-due-item__label">${item.isOverdue ? 'Overdue month' : 'Due month'}</span>
+                        <strong>${escapeHtml(formatMonth(padMonth(item.month)))}</strong>
+                        <small>${escapeHtml(status.helper)}</small>
+                    </div>
+                    <span class="status-badge ${status.className}">${escapeHtml(status.label)}</span>
+                    ${action}
+                </article>
+            `;
+        }).join('');
     }
 
     function renderHistory() {
         const tbody = document.getElementById('historyTableBody');
+        const cardList = document.getElementById('historyCardList');
         const counter = document.getElementById('historyCounter');
         if (!tbody) return;
 
-        const verifiedCount = payments.filter((p) => (p.stage || '').toLowerCase() === 'verified').length;
-        const pendingCount = payments.filter((p) => (p.stage || '').toLowerCase() === 'pending').length;
-        const uploadedCount = payments.filter((p) => (p.stage || '').toLowerCase() === 'uploaded').length;
+        const verifiedCount = payments.filter((p) => mapPaymentStage(p.stage) === 'verified').length;
+        const pendingCount = payments.filter((p) => mapPaymentStage(p.stage) === 'pending').length;
+        const uploadedCount = payments.filter((p) => mapPaymentStage(p.stage) === 'uploaded').length;
         setText('historyVerifiedCount', formatCount(verifiedCount, 'receipt'));
         setText('historyPendingCount', formatCount(pendingCount, 'receipt'));
         setText('historyUploadedCount', formatCount(uploadedCount, 'receipt'));
 
         tbody.innerHTML = '';
         if (!payments.length) {
-            tbody.innerHTML = '<tr class="empty"><td colspan="6">No receipts yet. Log your first OR to begin.</td></tr>';
+            tbody.innerHTML = '<tr class="empty"><td colspan="6">No receipts yet. Log the first OR to begin.</td></tr>';
+            if (cardList) {
+                cardList.innerHTML = '<article class="history-card history-card--empty">No receipts yet. Log the first OR to begin.</article>';
+            }
             counter && (counter.textContent = '0 receipts');
             return;
         }
@@ -294,8 +865,8 @@
         const statusFilter = (document.getElementById('historyFilterStatus')?.value || '').toLowerCase();
         const monthFilter = document.getElementById('historyFilterMonth')?.value || '';
         const filtered = payments.filter((payment) => {
-            const status = (payment.stage || '').toLowerCase();
-            const statusMatch = !statusFilter || status.includes(statusFilter);
+            const status = mapPaymentStage(payment.stage);
+            const statusMatch = !statusFilter || status === statusFilter;
             const monthMatch = !monthFilter || (payment.month || '') === monthFilter;
             return statusMatch && monthMatch;
         });
@@ -304,11 +875,17 @@
         const rows = sorted
             .map((payment) => {
                 const statusInfo = getPaymentStatus(payment);
+                const stage = mapPaymentStage(payment.stage);
                 const proof = payment.proof || '';
+                const proofName = payment.proofName ? escapeHtml(payment.proofName) : 'View file';
                 const proofAction = proof
-                    ? `<button type="button" class="btn-outline small" data-action="view-proof" data-proof="${escapeHtml(proof)}">View file</button>`
+                    ? `<button type="button" class="btn-outline small" data-action="view-proof" data-proof="${escapeHtml(proof)}" data-proof-name="${proofName}">${proofName}</button>`
                     : '<span class="muted">No file</span>';
-                const remarks = payment.adminRemarks || payment.notes || '-';
+                const remarks = buildPaymentRemarks(payment);
+                const reviewNote = buildPaymentReviewNote(payment);
+                const followUpAction = stage === 'needs_correction' || stage === 'rejected'
+                    ? '<div class="history-followup"><button type="button" class="btn-outline small history-followup-action" data-action="fix-receipt">Replace this receipt</button><p class="history-followup-hint">Open Repayments to upload a new receipt for this month.</p></div>'
+                    : '';
                 return `
                 <tr>
                     <td>${formatMonth(padMonth(payment.month))}</td>
@@ -316,11 +893,63 @@
                     <td>${formatCurrency(payment.amount)}</td>
                     <td><span class="status-badge ${statusInfo.className}">${statusInfo.label}</span></td>
                     <td>${proofAction}</td>
-                    <td>${escapeHtml(remarks)}</td>
+                    <td><div class="history-review-note">${escapeHtml(reviewNote)}</div><div class="history-remarks-note">${escapeHtml(remarks)}</div>${followUpAction}</td>
                 </tr>`;
             })
             .join('');
-        tbody.innerHTML = rows || '<tr class="empty"><td colspan="6">No receipts yet. Log your first OR to begin.</td></tr>';
+        const cards = sorted
+            .map((payment) => {
+                const statusInfo = getPaymentStatus(payment);
+                const stage = mapPaymentStage(payment.stage);
+                const proof = payment.proof || '';
+                const proofName = payment.proofName ? escapeHtml(payment.proofName) : 'View file';
+                const proofAction = proof
+                    ? `<button type="button" class="btn-outline small" data-action="view-proof" data-proof="${escapeHtml(proof)}" data-proof-name="${proofName}">${proofName}</button>`
+                    : '<span class="muted">No file</span>';
+                const remarks = buildPaymentRemarks(payment);
+                const reviewNote = buildPaymentReviewNote(payment);
+                const followUpAction = stage === 'needs_correction' || stage === 'rejected'
+                    ? '<div class="history-card__followup"><button type="button" class="btn-outline small history-followup-action" data-action="fix-receipt">Replace this receipt</button><p class="history-followup-hint">Open Repayments to upload a new receipt for this month.</p></div>'
+                    : '';
+                return `
+                <article class="history-card">
+                    <div class="history-card__top">
+                        <div>
+                            <span class="history-card__label">Month</span>
+                            <strong class="history-card__value">${formatMonth(padMonth(payment.month))}</strong>
+                        </div>
+                        <span class="status-badge ${statusInfo.className}">${statusInfo.label}</span>
+                    </div>
+                    <div class="history-card__grid">
+                        <div>
+                            <span class="history-card__label">Paid on</span>
+                            <strong>${formatDate(payment.paymentDate)}</strong>
+                        </div>
+                        <div>
+                            <span class="history-card__label">Amount</span>
+                            <strong>${formatCurrency(payment.amount)}</strong>
+                        </div>
+                        <div class="history-card__proof">
+                            <span class="history-card__label">OR / Proof</span>
+                            ${proofAction}
+                        </div>
+                        <div class="history-card__review">
+                            <span class="history-card__label">Review</span>
+                            <p>${escapeHtml(reviewNote)}</p>
+                        </div>
+                        <div class="history-card__remarks">
+                            <span class="history-card__label">Remarks</span>
+                            <p>${escapeHtml(remarks)}</p>
+                        </div>
+                        ${followUpAction}
+                    </div>
+                </article>`;
+            })
+            .join('');
+        tbody.innerHTML = rows || '<tr class="empty"><td colspan="6">No receipts yet. Log the first OR to begin.</td></tr>';
+        if (cardList) {
+            cardList.innerHTML = cards || '<article class="history-card history-card--empty">No receipts yet. Log the first OR to begin.</article>';
+        }
         counter && (counter.textContent = `${filtered.length} ${filtered.length === 1 ? 'receipt' : 'receipts'}`);
     }
 
@@ -342,7 +971,18 @@
     function renderAudit() {
         const auditList = document.getElementById('auditList');
         if (!auditList) return;
+        const timelinePanel = auditList.closest('.activity-timeline-panel');
+        const latestCard = document.querySelector('.activity-latest-card');
         const auditEntries = buildAuditFromPayments(payments);
+        const verifiedCount = auditEntries.filter((entry) => entry.kind === 'verified').length;
+        const uploadedCount = auditEntries.filter((entry) => entry.kind === 'uploaded').length;
+        const latestEntry = auditEntries[0] || null;
+        setText('activityVerifiedCount', String(verifiedCount));
+        setText('activityUploadedCount', String(uploadedCount));
+        setText('activityLatestTitle', latestEntry ? latestEntry.title : 'No activity yet');
+        setText('activityLatestMeta', latestEntry ? formatDateTime(latestEntry.timestamp) : 'Recent beneficiary actions will appear here.');
+        timelinePanel?.classList.toggle('is-empty', !auditEntries.length);
+        latestCard?.classList.toggle('is-empty', !latestEntry);
         auditList.innerHTML = '';
         if (!auditEntries.length) {
             auditList.innerHTML = '<li class="empty">No activity yet.</li>';
@@ -350,7 +990,14 @@
         }
         auditEntries.forEach((entry) => {
             const item = document.createElement('li');
-            item.innerHTML = `<div>${entry.message}</div><span>${formatDateTime(entry.timestamp)}</span>`;
+            item.className = 'timeline-item';
+            item.innerHTML = `
+                <div class="timeline-item__head">
+                    <strong class="timeline-title">${entry.title}</strong>
+                    <span class="timeline-meta">${formatDateTime(entry.timestamp)}</span>
+                </div>
+                <p class="timeline-copy">${entry.message}</p>
+            `;
             auditList.appendChild(item);
         });
     }
@@ -390,72 +1037,263 @@
 
     function applyRouteVisibility() {
         const sidebarLinks = Array.from(document.querySelectorAll('.sidebar-link'));
+        const tabbarLinks = Array.from(document.querySelectorAll('.beneficiary-tabbar__link'));
         const sections = Array.from(document.querySelectorAll('.dash-main > section[id]'));
         const visibleLinks = sidebarLinks.filter((link) => !link.classList.contains('is-hidden'));
         const hashId = window.location.hash.replace('#', '');
-        const targetLink = visibleLinks.find((link) => (link.getAttribute('href') || '').replace('#', '') === hashId);
+        const requestedId = hashId;
         const fallbackLink = visibleLinks[0];
-        const activeLink = targetLink || fallbackLink;
-        const activeId = (activeLink?.getAttribute('href') || '').replace('#', '');
+        const requestedSection = sections.find((section) => section.id === requestedId && !section.classList.contains('is-hidden'));
+        const targetSection = requestedSection || sections.find((section) => section.id === ((fallbackLink?.getAttribute('href') || '').replace('#', '')));
+        const targetLink = visibleLinks.find((link) => (link.getAttribute('href') || '').replace('#', '') === targetSection?.id);
+        const activeLink = targetLink || null;
+        const activeId = targetSection?.id || ((fallbackLink?.getAttribute('href') || '').replace('#', ''));
         const banner = document.querySelector('.dash-banner');
 
         sidebarLinks.forEach((link) => link.classList.toggle('is-active', link === activeLink));
+        tabbarLinks.forEach((link) => {
+            const href = (link.getAttribute('href') || '').replace('#', '');
+            link.classList.toggle('is-active', href === activeId);
+        });
         sections.forEach((section) => {
-            const shouldShow = section.id === activeId && !section.classList.contains('is-hidden');
-            section.classList.toggle('is-route-hidden', !shouldShow);
+            const shouldIpakita = section.id === activeId && !section.classList.contains('is-hidden');
+            section.classList.toggle('is-route-hidden', !shouldIpakita);
         });
         if (banner) {
             banner.classList.toggle('is-route-hidden', activeId !== 'overview');
         }
 
-        if (activeLink && hashId !== activeId) {
+        updateMobileTopbarTitle(activeLink, activeId);
+        closeMobileAccountMenu();
+        if (targetSection && hashId !== activeId) {
             window.history.replaceState(null, '', `#${activeId}`);
+        }
+    }
+
+    function toggleMobileAccountMenu(event) {
+        event?.preventDefault();
+        event?.stopPropagation();
+        const menu = document.getElementById('mobileAccountMenu');
+        const toggle = document.getElementById('mobileAccountToggle');
+        if (!menu || !toggle) {
+            return;
+        }
+        const willOpen = !menu.classList.contains('is-open');
+        closeMobileAccountMenu();
+        document.dispatchEvent(new CustomEvent('smartleap:close-notifications'));
+        syncMobileAccountMenuLayer();
+        menu.classList.toggle('is-open', willOpen);
+        menu.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
+        toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+        if (willOpen) {
+            positionMobileAccountMenu();
+        }
+    }
+
+    function closeMobileAccountMenu() {
+        const menu = document.getElementById('mobileAccountMenu');
+        const toggle = document.getElementById('mobileAccountToggle');
+        menu?.classList.remove('is-open');
+        menu?.setAttribute('aria-hidden', 'true');
+        toggle?.setAttribute('aria-expanded', 'false');
+    }
+
+    function syncMobileAccountMenuLayer() {
+        const menu = document.getElementById('mobileAccountMenu');
+        const account = document.querySelector('.mobile-topbar__account');
+        if (!menu || !account) {
+            return;
+        }
+
+        if (window.matchMedia && window.matchMedia('(max-width: 720px)').matches) {
+            if (menu.parentElement !== document.body) {
+                document.body.appendChild(menu);
+            }
+            menu.classList.add('mobile-account-menu--floating');
+            positionMobileAccountMenu();
+            return;
+        }
+
+        if (menu.parentElement !== account) {
+            account.appendChild(menu);
+        }
+        menu.classList.remove('mobile-account-menu--floating');
+        menu.style.top = '';
+        menu.style.right = '';
+        menu.style.left = '';
+        menu.style.width = '';
+    }
+
+    function positionMobileAccountMenu() {
+        const menu = document.getElementById('mobileAccountMenu');
+        const toggle = document.getElementById('mobileAccountToggle');
+        if (!menu || !toggle || !(window.matchMedia && window.matchMedia('(max-width: 720px)').matches)) {
+            return;
+        }
+
+        const rect = toggle.getBoundingClientRect();
+        menu.style.top = `${Math.max(72, Math.round(rect.bottom + 10))}px`;
+        menu.style.right = '12px';
+        menu.style.left = 'auto';
+        menu.style.width = `${Math.min(220, Math.max(180, Math.round(window.innerWidth - 24)))}px`;
+    }
+
+    function updateMobileTopbarTitle(activeLink, activeId) {
+        const title = document.getElementById('mobileTopbarTitle');
+        if (!title) {
+            return;
+        }
+        const keyMap = {
+            overview: 'overview',
+            profile: 'profile',
+            repayments: 'repayments',
+            'support-feedback': 'support',
+            'activity-log': 'activity',
+        };
+        const activeKey = keyMap[activeId] || 'overview';
+        title.dataset.i18nKey = activeKey;
+        const translatedLabel = window.SMARTLEAP_I18N?.translate?.(activeKey);
+        const linkLabel = activeLink?.querySelector('span:last-child')?.textContent?.trim();
+        const fallbackMap = {
+            overview: 'Overview',
+            profile: 'Profile',
+            repayments: 'Repayments',
+            'support-feedback': 'Support',
+            'activity-log': 'Activity',
+        };
+        title.textContent = translatedLabel || linkLabel || fallbackMap[activeId] || 'Overview';
+    }
+
+    function openChangePasswordModal() {
+        closeCenteredModal();
+        const modal = document.createElement('div');
+        modal.className = 'beneficiary-centered-modal';
+        modal.dataset.centeredModal = 'true';
+        modal.innerHTML = `
+            <div class="beneficiary-centered-modal__backdrop" data-close-centered-modal></div>
+            <div class="beneficiary-centered-modal__card" role="dialog" aria-modal="true" aria-labelledby="beneficiaryPasswordTitle">
+                <button type="button" class="beneficiary-centered-modal__close" data-close-centered-modal aria-label="Close">&times;</button>
+                <div class="beneficiary-centered-modal__header">
+                    <span class="panel-eyebrow">Account Security</span>
+                    <h3 id="beneficiaryPasswordTitle">Change Password</h3>
+                    <p>Update your account password using your current password first.</p>
+                </div>
+                <form id="beneficiaryChangePasswordForm" class="beneficiary-centered-modal__form">
+                    <label class="form-field">
+                        <span>Current password</span>
+                        <input type="password" name="currentPassword" required>
+                    </label>
+                    <label class="form-field">
+                        <span>New password</span>
+                        <input type="password" name="newPassword" required minlength="8">
+                    </label>
+                    <label class="form-field">
+                        <span>Confirm new password</span>
+                        <input type="password" name="confirmPassword" required minlength="8">
+                    </label>
+                    <div class="notice error" id="beneficiaryPasswordError" hidden></div>
+                    <div class="beneficiary-centered-modal__actions">
+                        <button type="button" class="btn-outline" data-close-centered-modal>Back</button>
+                        <button type="submit" class="btn-primary">Save Password</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        modal.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close-centered-modal]')) {
+                closeCenteredModal();
+            }
+        });
+        modal.querySelector('#beneficiaryChangePasswordForm')?.addEventListener('submit', submitChangePassword);
+        document.body.appendChild(modal);
+    }
+
+    function closeCenteredModal() {
+        document.querySelector('[data-centered-modal="true"]')?.remove();
+    }
+
+    async function submitChangePassword(event) {
+        event.preventDefault();
+        const form = event.currentTarget;
+        const errorNode = document.getElementById('beneficiaryPasswordError');
+        const submitButton = form.querySelector('button[type="submit"]');
+        submitButton.disabled = true;
+        if (errorNode) {
+            errorNode.hidden = true;
+            errorNode.textContent = '';
+        }
+
+        const formData = new URLSearchParams();
+        formData.set('currentPassword', String(form.currentPassword?.value || ''));
+        formData.set('newPassword', String(form.newPassword?.value || ''));
+        formData.set('confirmPassword', String(form.confirmPassword?.value || ''));
+
+        try {
+            const response = await fetch(routeUrl('account/change-password'), {
+                method: 'POST',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                },
+                credentials: 'same-origin',
+                body: formData.toString(),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload.ok) {
+                throw new Error(payload.message || 'Unable to change password.');
+            }
+            showToast(payload.message || 'Password updated.', 'success');
+            closeCenteredModal();
+        } catch (error) {
+            if (errorNode) {
+                errorNode.hidden = false;
+                errorNode.textContent = error.message || 'Unable to change password.';
+            }
+        } finally {
+            submitButton.disabled = false;
         }
     }
 
     function renderOverview() {
         if (roleView === 'beneficiary') {
-            const nameEl = document.getElementById('overviewName');
-            const bizEl = document.getElementById('overviewBusiness');
-            const emailEl = document.getElementById('overviewEmail');
-            const outstandingEl = document.getElementById('overviewOutstanding');
-            const progressEl = document.getElementById('overviewProgress');
-            const dueEl = document.getElementById('overviewDue');
-            const rateEl = document.getElementById('overviewRate');
-            const reminderEl = document.getElementById('overviewReminder');
-            const accountAlertEl = document.getElementById('overviewAccountAlert');
-            const supportEl = document.getElementById('overviewSupport');
-            if (!nameEl || !bizEl || !emailEl || !outstandingEl || !progressEl || !dueEl || !rateEl) return;
+            const metrics = getRepaymentMetrics();
+            const attentionSummary = getBeneficiaryAttentionSummary(metrics);
+            const updates = buildOverviewUpdates(metrics);
 
-            const name = user.fullName || user.name || beneficiaryRecord?.name || 'Beneficiary';
-            const business = user.businessName || user.business || beneficiaryRecord?.businessName || beneficiaryRecord?.businessType || 'Your livelihood';
-            const email = user.email || beneficiaryRecord?.email || '--';
-            nameEl.textContent = name;
-            bizEl.textContent = business;
-            emailEl.textContent = email;
-
-            const verifiedPayments = payments.filter((p) => p.stage === 'verified');
-            const totalVerifiedAmount = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
-            const outstanding = Math.max(15000 - totalVerifiedAmount, 0);
-            const verifiedMonths = verifiedPayments.length;
-            const repaymentRate = Math.round((verifiedMonths / 24) * 100);
-            const nextPending = payments.find((p) => p.stage !== 'verified');
-            const nextDue = nextPending ? formatMonth(padMonth(nextPending.month)) : 'Completed';
-
-            outstandingEl.textContent = formatCurrency(outstanding);
-            progressEl.textContent = `${verifiedMonths}/24 months`;
-            dueEl.textContent = nextDue;
-            rateEl.textContent = `${Math.min(100, Math.max(0, repaymentRate))}%`;
-
-            if (reminderEl) {
-                reminderEl.textContent = nextPending ? `Upload OR for ${formatMonth(padMonth(nextPending.month))}` : 'No pending OR uploads.';
+            setText('overviewName', '');
+            setText('overviewBusiness', '');
+            setText('overviewEmail', '');
+            setText('overviewOutstanding', formatCurrency(metrics.outstanding));
+            setText('overviewProgress', `${metrics.verifiedMonths}/24 months`);
+            setText('overviewPendingVerification', formatCount(metrics.pendingVerificationCount, 'receipt'));
+            setText('overviewRate', `${metrics.rateDisplay}% complete`);
+            setText('heroBeneficiaryStatus', metrics.statusLabel);
+            setText('overviewActionStatus', metrics.statusLabel);
+            setText('heroBeneficiaryTitle', metrics.heroTitle);
+            setText('heroBeneficiaryCopy', metrics.heroCopy);
+            const overviewDue = document.getElementById('overviewDue');
+            if (overviewDue) {
+                const dueText = metrics.nextPending ? `Next due ${metrics.nextDue}` : '';
+                overviewDue.textContent = dueText;
+                overviewDue.classList.toggle('is-hidden', !dueText);
             }
-            if (accountAlertEl) {
-                accountAlertEl.textContent = payments.some((payment) => payment.stage === 'pending' || payment.stage === 'uploaded')
-                    ? 'Receipt verification updates will appear here.'
-                    : 'Account updates will appear here.';
+            const overviewProgressFill = document.getElementById('overviewProgressFill');
+            if (overviewProgressFill) {
+                overviewProgressFill.style.width = `${Math.min(100, metrics.percent)}%`;
+                overviewProgressFill.parentElement?.setAttribute('aria-valuenow', String(metrics.percent));
             }
-            if (supportEl) supportEl.textContent = 'Need help? Contact your PDO.';
+            setText('overviewReminder', updates.reminder);
+            setText('overviewAccountAlert', metrics.pendingVerificationCount > 0 ? updates.verification : attentionSummary.meta);
+            const assignedPdo = applicationRecord?.assignedPdo || beneficiaryRecord?.assignedPdo || {};
+            setText('overviewSupportPdo', assignedPdo.name || beneficiaryRecord?.pdoName || 'Project Officer');
+            setText('overviewSupportContact', assignedPdo.email || beneficiaryRecord?.pdoKontak || 'projectofficer@smartleap.gov.ph');
+            setText('overviewSupport', updates.support);
+            const repaymentsButton = document.getElementById('overviewRepaymentsBtn');
+            if (repaymentsButton) {
+                repaymentsButton.textContent = metrics.primaryActionLabel;
+                repaymentsButton.dataset.target = metrics.primaryActionTarget;
+            }
+
             return;
         }
 
@@ -491,7 +1329,7 @@
         const nameInput = document.getElementById('profileName');
         const emailInput = document.getElementById('profileEmail');
         const barangayInput = document.getElementById('profileBarangay');
-        const contactInput = document.getElementById('profileContact');
+        const contactInput = document.getElementById('profileKontak');
         if (!nameInput || !emailInput || !barangayInput || !contactInput) return;
 
         const fullName = user.fullName || user.name || applicationRecord?.applicantName || beneficiaryRecord?.name || '';
@@ -509,27 +1347,169 @@
         if (roleView !== 'beneficiary') return;
         const form = document.getElementById('beneficiaryProfileForm');
         if (!form) return;
+        const isCoMaker = isCoMakerPortal();
         const nameInput = document.getElementById('beneficiaryName');
         const businessInput = document.getElementById('beneficiaryBusiness');
         const emailInput = document.getElementById('beneficiaryEmail');
-        const contactInput = document.getElementById('beneficiaryContact');
+        const contactInput = document.getElementById('beneficiaryKontak');
         const barangayInput = document.getElementById('beneficiaryBarangay');
+        const birthdateInput = document.getElementById('beneficiaryBirthdate');
+        const ageInput = document.getElementById('beneficiaryEdad');
+        const genderInput = document.getElementById('beneficiaryGender');
+        const addressInput = document.getElementById('beneficiaryAddress');
+        const is4psInput = document.getElementById('beneficiary4ps');
+        const educationalAttainmentInput = document.getElementById('beneficiaryEducationalAttainment');
+        const sectorInput = document.getElementById('beneficiarySector');
+        const sectorOtherInput = document.getElementById('beneficiarySectorOtherSpecify');
+        const batchNoInput = document.getElementById('beneficiaryBatchNo');
+        const livelihoodInput = document.getElementById('beneficiaryLivelihood');
+        const relationshipField = document.getElementById('beneficiaryRelationshipField');
+        const relationshipInput = document.getElementById('beneficiaryRelationshipToPrimary');
+        const primaryBeneficiaryField = document.getElementById('beneficiaryPrimaryBeneficiaryField');
+        const primaryBeneficiaryName = document.getElementById('beneficiaryPrimaryBeneficiaryName');
+        const personalHeading = document.getElementById('beneficiaryPersonalHeading');
+        const personalSection = document.getElementById('beneficiaryPersonalSection');
+        const businessSection = document.getElementById('beneficiaryBusinessSection');
+        const contactSection = document.getElementById('beneficiaryContactSection');
+        const programSection = document.getElementById('beneficiaryProgramSection');
+        const birthdateField = document.getElementById('beneficiaryBirthdateField');
+        const ageField = document.getElementById('beneficiaryAgeField');
+        const genderField = document.getElementById('beneficiaryGenderField');
+        const addressField = addressInput?.closest('.form-field');
         const pdoName = document.getElementById('assignedPDOName');
-        const pdoContact = document.getElementById('assignedPDOContact');
+        const pdoKontak = document.getElementById('assignedPDOKontak');
         if (!nameInput || !businessInput || !emailInput || !contactInput || !barangayInput) return;
 
+        const profile = beneficiaryRecord?.profile || {};
+        const formatBatchNo = (value) => {
+            const text = String(value || '').trim();
+            if (!text) return 'Batch 1';
+            return /^\d+$/.test(text) ? `Batch ${text}` : text;
+        };
         nameInput.value = user.fullName || user.name || beneficiaryRecord?.name || '';
-        businessInput.value = user.businessName || user.business || beneficiaryRecord?.businessName || beneficiaryRecord?.businessType || '';
         emailInput.value = user.email || beneficiaryRecord?.email || '';
-        contactInput.value = user.contactNumber || user.contact || beneficiaryRecord?.contact || '';
-        barangayInput.value = user.barangay || beneficiaryRecord?.barangay || '';
+        contactInput.value = user.contactNumber || user.contact || profile.contactNumber || beneficiaryRecord?.contact || '';
 
-        if (pdoName) pdoName.textContent = beneficiaryRecord?.pdoName || 'Project Officer';
-        if (pdoContact) pdoContact.textContent = beneficiaryRecord?.pdoContact || 'projectofficer@smartleap.gov.ph';
+        if (isCoMaker) {
+            if (personalHeading) personalHeading.textContent = 'Co-maker details';
+            setBeneficiaryFieldVisibility(personalSection, true);
+            setBeneficiaryFieldVisibility(contactSection, true);
+            setBeneficiaryFieldVisibility(businessSection, false);
+            setBeneficiaryFieldVisibility(programSection, false);
+            setBeneficiaryFieldVisibility(birthdateField, false);
+            setBeneficiaryFieldVisibility(ageField, false);
+            setBeneficiaryFieldVisibility(genderField, false);
+            setBeneficiaryFieldVisibility(addressField, false);
+            setBeneficiaryFieldVisibility(relationshipField, true);
+            if (relationshipInput) {
+                relationshipInput.disabled = false;
+                relationshipInput.required = true;
+                relationshipInput.value = beneficiaryRecord?.relationshipToPrimaryBeneficiary || profile.relationshipToPrimaryBeneficiary || '';
+            }
+            if (primaryBeneficiaryField) primaryBeneficiaryField.hidden = false;
+            if (primaryBeneficiaryName) {
+                primaryBeneficiaryName.textContent = beneficiaryRecord?.primaryBeneficiaryName || 'Primary beneficiary';
+            }
+            if (addressInput) addressInput.value = '';
+            barangayInput.value = '';
+            if (birthdateInput) birthdateInput.value = '';
+            if (ageInput) ageInput.value = '';
+            if (genderInput) genderInput.value = '';
+            if (is4psInput) is4psInput.value = '';
+            if (educationalAttainmentInput) educationalAttainmentInput.value = '';
+            if (sectorInput) sectorInput.value = '';
+            if (sectorOtherInput) sectorOtherInput.value = '';
+            if (batchNoInput) batchNoInput.value = '';
+            if (livelihoodInput) livelihoodInput.value = '';
+            businessInput.value = beneficiaryRecord?.primaryBusinessName || '';
+        } else {
+            if (personalHeading) personalHeading.textContent = 'Personal details';
+            setBeneficiaryFieldVisibility(personalSection, true);
+            setBeneficiaryFieldVisibility(contactSection, true);
+            setBeneficiaryFieldVisibility(businessSection, true);
+            setBeneficiaryFieldVisibility(programSection, true);
+            setBeneficiaryFieldVisibility(birthdateField, true);
+            setBeneficiaryFieldVisibility(ageField, true);
+            setBeneficiaryFieldVisibility(genderField, true);
+            setBeneficiaryFieldVisibility(addressField, true);
+            setBeneficiaryFieldVisibility(relationshipField, false);
+            if (relationshipInput) {
+                relationshipInput.required = false;
+                relationshipInput.disabled = true;
+                relationshipInput.value = '';
+            }
+            if (primaryBeneficiaryField) primaryBeneficiaryField.hidden = true;
 
-        const emailKey = (user.email || '').toLowerCase();
-        const photo = emailKey ? profilePhotos[emailKey] : null;
-        setProfilePhotoPreview(photo);
+            businessInput.value = user.businessName || user.business || profile.businessName || beneficiaryRecord?.businessName || beneficiaryRecord?.businessType || '';
+            barangayInput.value = user.barangay || profile.barangay || beneficiaryRecord?.barangay || '';
+            if (birthdateInput) birthdateInput.value = user.birthdate || profile.birthdate || '';
+            if (ageInput) ageInput.value = user.age || profile.age || '';
+            if (genderInput) genderInput.value = user.gender || profile.gender || '';
+            if (addressInput) addressInput.value = user.address || profile.address || '';
+            if (is4psInput) is4psInput.value = user.is4ps || profile.is4ps || '';
+            if (educationalAttainmentInput) educationalAttainmentInput.value = user.educationalAttainment || profile.educationalAttainment || '';
+            if (sectorInput) sectorInput.value = user.sector || profile.sector || '';
+            if (sectorOtherInput) sectorOtherInput.value = user.sectorOtherSpecify || profile.sectorOtherSpecify || '';
+            if (batchNoInput) batchNoInput.value = formatBatchNo(user.batchNo || profile.batchNo);
+            if (livelihoodInput) livelihoodInput.value = user.livelihood || profile.livelihood || '';
+        }
+
+        const assignedPdo = applicationRecord?.assignedPdo || beneficiaryRecord?.assignedPdo || {};
+        if (pdoName) pdoName.textContent = assignedPdo.name || beneficiaryRecord?.pdoName || 'Project Officer';
+        if (pdoKontak) pdoKontak.textContent = assignedPdo.email || beneficiaryRecord?.pdoKontak || 'projectofficer@smartleap.gov.ph';
+
+        setProfilePhotoPreview(getStoredProfilePhoto(user));
+        syncBeneficiaryConditionalFields();
+        syncPortalSelects();
+        updateBeneficiarySaveButtonState();
+    }
+
+    function handleBeneficiaryProfileStateChange() {
+        syncBeneficiaryConditionalFields();
+        updateBeneficiarySaveButtonState();
+    }
+
+    function syncBeneficiaryConditionalFields() {
+        if (isCoMakerPortal()) {
+            const otherWrap = document.getElementById('beneficiarySectorOtherWrap');
+            const otherInput = document.getElementById('beneficiarySectorOtherSpecify');
+            if (otherWrap) otherWrap.hidden = true;
+            if (otherInput) {
+                otherInput.disabled = true;
+                otherInput.required = false;
+                otherInput.value = '';
+            }
+            return;
+        }
+        const sector = String(document.getElementById('beneficiarySector')?.value || '').trim().toLowerCase();
+        const otherWrap = document.getElementById('beneficiarySectorOtherWrap');
+        const otherInput = document.getElementById('beneficiarySectorOtherSpecify');
+        const showOther = sector === 'other';
+        if (otherWrap) {
+            otherWrap.hidden = !showOther;
+        }
+        if (otherInput) {
+            otherInput.disabled = !showOther;
+            otherInput.required = showOther;
+            if (!showOther) {
+                otherInput.value = '';
+            }
+        }
+    }
+
+    function updateBeneficiarySaveButtonState() {
+        syncBeneficiaryConditionalFields();
+        const button = document.querySelector('#beneficiaryProfileForm button[type="submit"]');
+        const form = document.getElementById('beneficiaryProfileForm');
+        if (!button || !form) return;
+        button.disabled = !form.checkValidity();
+    }
+
+    function handleBeneficiaryBirthdateChange(event) {
+        const ageInput = document.getElementById('beneficiaryEdad');
+        if (!ageInput) return;
+        const age = calculateEdad(event.target.value);
+        ageInput.value = age ? String(age) : '';
     }
 
     function renderRequirements() {
@@ -602,6 +1582,7 @@
             `;
             list.appendChild(li);
         });
+        markNotificationsRead(items.slice(0, 8).map((item) => item.notificationId));
     }
 
     function handleProfileSubmit(event) {
@@ -639,83 +1620,93 @@
 
         persistProfileUpdate();
         renderUser();
-        showToast('Profile updated.', 'success');
+        showToast('Na-update ang profile.', 'success');
     }
 
-    function handleBeneficiaryProfileSubmit(event) {
+    async function handleBeneficiaryProfileSubmit(event) {
         event.preventDefault();
         const form = event.target;
+        syncBeneficiaryConditionalFields();
         if (!form.reportValidity()) return;
 
-        const previousEmail = (user.email || '').toLowerCase();
-        const name = form.fullName.value.trim();
-        const businessName = form.businessName.value.trim();
-        const email = form.email.value.trim().toLowerCase();
-        const contact = form.contact.value.trim();
-        const barangay = form.barangay.value.trim();
+        const payload = isCoMakerPortal()
+            ? {
+                fullName: form.fullName.value.trim(),
+                email: form.email.value.trim().toLowerCase(),
+                contactNumber: form.contactNumber.value.trim(),
+                relationshipToPrimaryBeneficiary: form.relationshipToPrimaryBeneficiary?.value?.trim?.() || '',
+            }
+            : {
+                fullName: form.fullName.value.trim(),
+                businessName: form.businessName.value.trim(),
+                email: form.email.value.trim().toLowerCase(),
+                contactNumber: form.contactNumber.value.trim(),
+                barangay: form.barangay.value.trim(),
+                birthdate: form.birthdate.value,
+                age: form.age.value,
+                gender: form.gender.value,
+                address: form.address.value.trim(),
+                is4ps: form.is4ps.value,
+                educationalAttainment: form.educationalAttainment.value,
+                sector: form.sector.value,
+                sectorOtherSpecify: form.sectorOtherSpecify?.value?.trim?.() || '',
+                batchNo: form.batchNo.value.trim(),
+                livelihood: form.livelihood.value.trim()
+            };
 
-        user = {
-            ...user,
-            name,
-            fullName: name,
-            businessName,
-            email,
-            barangay,
-            contactNumber: contact,
-            contact
-        };
+        try {
+            const response = await fetch(routeUrl('beneficiary-dashboard/profile/save'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    Accept: 'application/json'
+                },
+                credentials: 'same-origin',
+                body: new URLSearchParams(payload)
+            });
+            const result = await response.json();
+            if (!response.ok || !result.ok) {
+                throw new Error(result.errors?.general || result.errors?.email || result.message || 'Unable to update profile.');
+            }
 
-        if (beneficiaryRecord) {
-            beneficiaryRecord.name = name;
-            beneficiaryRecord.businessName = businessName;
-            beneficiaryRecord.email = email;
-            beneficiaryRecord.contact = contact;
-            beneficiaryRecord.barangay = barangay;
+            applyBackendState(result.data || {});
+            renderAll();
+            showToast(result.message || 'Na-update ang profile.', 'success');
+        } catch (error) {
+            showToast(error.message || 'Unable to update profile.', 'warning');
         }
-
-        if (applicationRecord) {
-            applicationRecord.applicantName = name;
-            applicationRecord.businessName = businessName;
-            applicationRecord.email = email;
-            applicationRecord.barangay = barangay;
-            applicationRecord.contactNumber = contact;
-        }
-
-        persistProfileUpdate();
-        if (previousEmail && previousEmail !== email && profilePhotos[previousEmail]) {
-            profilePhotos[email] = profilePhotos[previousEmail];
-            delete profilePhotos[previousEmail];
-            persistProfilePhotos();
-        }
-        renderUser();
-        renderOverview();
-        renderBeneficiaryProfile();
-        showToast('Profile updated.', 'success');
     }
 
-    function handleProfilePhotoChange(event) {
+    async function handleProfilePhotoChange(event) {
         const file = event.target.files?.[0];
         if (!file) return;
         const isValidType = ['image/jpeg', 'image/png'].includes(file.type);
         if (!isValidType) {
-            showToast('Upload a JPG or PNG file only.', 'warning');
+            showToast('Only JPG or PNG files can be uploaded.', 'warning');
             event.target.value = '';
             return;
         }
-        if (file.size > 2 * 1024 * 1024) {
-            showToast('Photo must be 2MB or less.', 'warning');
+        if (file.size > PROFILE_PHOTO_MAX_SIZE) {
+            showToast('Photo must be 5MB or less.', 'warning');
             event.target.value = '';
             return;
         }
 
         const reader = new FileReader();
-        reader.onload = () => {
-            const emailKey = (user.email || '').toLowerCase();
-            if (!emailKey) return;
-            profilePhotos[emailKey] = reader.result;
-            persistProfilePhotos();
-            setProfilePhotoPreview(reader.result);
-            showToast('Profile photo updated.', 'success');
+        reader.onload = async () => {
+            try {
+                const result = await postJson('beneficiary-dashboard/profile/photo', {
+                    photoDataUrl: reader.result
+                });
+                applyBackendState(result.data || {});
+                setProfilePhotoPreview(getStoredProfilePhoto(user));
+                renderUser();
+                showToast(result.message || 'Na-update ang profile photo.', 'success');
+            } catch (error) {
+                showToast(error?.message || 'Unable to save profile photo right now.', 'warning');
+            } finally {
+                event.target.value = '';
+            }
         };
         reader.readAsDataURL(file);
     }
@@ -735,55 +1726,207 @@
         }
     }
 
-    function handleUploadSubmit(event) {
+    function syncRepaymentMode() {
+        const singleFields = document.getElementById('singleMonthFields');
+        const submitButton = document.querySelector('#uploadForm button[type="submit"]');
+        const month = normalizeMonthValue(document.getElementById('uploadMonth')?.value || '');
+        const scheduleItem = getRepaymentScheduleItems().find((item) => item.month === month);
+        singleFields?.classList.remove('is-hidden');
+        toggleFieldGroup(singleFields, true);
+
+        if (submitButton) {
+            submitButton.textContent = scheduleItem?.isOverdue ? 'Submit late payment' : 'Submit receipt';
+        }
+    }
+
+    function handleRepaymentDueAction(event) {
+        const button = event.target.closest('[data-repayment-due-action]');
+        if (!button) return;
+        const month = normalizeMonthValue(button.dataset.repaymentDueAction || '');
+        if (!month) return;
+        const monthInput = document.getElementById('uploadMonth');
+        const amountInput = document.getElementById('uploadAmount');
+        const dateInput = document.getElementById('uploadDate');
+        const notesInput = document.getElementById('uploadNotes');
+        if (monthInput) monthInput.value = month;
+        if (amountInput && !amountInput.value) amountInput.value = String(MONTHLY_REPAYMENT_AMOUNT);
+        if (dateInput && !dateInput.value) dateInput.value = new Date().toISOString().slice(0, 10);
+        if (notesInput && !notesInput.value && isMonthOverdue(month)) {
+            notesInput.value = `Late payment for ${formatMonth(padMonth(month))}.`;
+        }
+        syncRepaymentMode();
+        document.getElementById('uploadForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        monthInput?.focus();
+    }
+
+    function toggleFieldGroup(container, enabled) {
+        if (!container) return;
+        container.querySelectorAll('input, select, textarea, button').forEach((field) => {
+            if (field.id === 'addBatchReceipt') {
+                field.disabled = !enabled;
+                return;
+            }
+            if (field.type === 'submit') {
+                return;
+            }
+            field.disabled = !enabled;
+        });
+    }
+
+    async function handleUploadSubmit(event) {
         event.preventDefault();
         const form = event.target;
         if (!form.reportValidity()) return;
 
-        const formData = new FormData(form);
-        const month = String(formData.get('month') || '');
-        const paymentDate = String(formData.get('paymentDate') || '');
-        const amount = Number(formData.get('amount') || 0);
-        const orNumber = String(formData.get('or') || '').trim();
-        const notes = String(formData.get('notes') || '').trim();
-        const file = formData.get('file');
+        try {
+            const workingPayments = clonePaymentsState();
+            let result = { payments: [], submissions: [] };
 
-        const newPayment = {
-            month,
-            paymentDate,
-            amount,
-            stage: 'uploaded',
-            verifiedBy: '',
-            verifiedAt: '',
-            notes: notes || (file && file.name ? `Uploaded file: ${file.name}` : ''),
-            orNumber
-        };
+            const month = normalizeMonthValue(document.getElementById('uploadMonth')?.value || '');
+            const paymentDate = String(document.getElementById('uploadDate')?.value || '');
+            const amount = roundCurrency(document.getElementById('uploadAmount')?.value || 0);
+            const orNumber = sanitizeOrNumber(document.getElementById('uploadOr')?.value || '');
+            const notes = String(document.getElementById('uploadNotes')?.value || '').trim();
+            const file = document.getElementById('uploadFile')?.files?.[0];
 
-        payments = payments.filter((p) => p.month !== month).concat([newPayment]);
-        persistPayments();
-        renderSummary();
-        renderProgress();
-        renderHistory();
-        renderAudit();
-        showToast('Receipt uploaded. Pending verification.', 'info');
-        form.reset();
+            if (!month || amount <= 0 || !paymentDate || !orNumber) {
+                throw new Error('Complete the official receipt details before submitting.');
+            }
+            const existingForMonth = getPaymentsForMonth(month).find((payment) => ['uploaded', 'pending'].includes(mapPaymentStage(payment.stage)));
+            if (existingForMonth) {
+                throw new Error(`A payment for ${formatMonth(padMonth(month))} is already submitted and waiting for review.`);
+            }
+            const dateValidationMessage = validatePaymentDateAgainstMonth(paymentDate, month);
+            if (dateValidationMessage) {
+                throw new Error(dateValidationMessage);
+            }
+            const proof = await readProofFile(file);
+            result = createSingleMonthSubmission({
+                month,
+                paymentDate,
+                amount,
+                orNumber,
+                notes,
+                ...proof
+            }, { paymentList: workingPayments });
+
+            const response = await postJson('beneficiary-dashboard/repayments/submit', {
+                payments: result.payments,
+                submissions: result.submissions || [],
+            });
+            applyBackendState({ repayments: response.data || {} });
+            clearLegacyRepaymentStorage();
+            renderSummary();
+            renderProgress();
+            renderHistory();
+            renderAudit();
+            renderOverview();
+            showToast('Receipt uploaded. Pending verification.', 'info');
+            form.reset();
+            syncRepaymentMode();
+        } catch (error) {
+            showToast(error?.message || 'Unable to submit the repayment record.', 'warning');
+        }
     }
 
-    function handleFeedbackSubmit(event) {
+    async function handleFeedbackSubmit(event) {
         event.preventDefault();
         const form = event.target;
         if (!form.reportValidity()) return;
         const message = form.feedbackMessage.value.trim();
         if (!message) return;
-        const entry = {
-            message,
-            timestamp: new Date().toISOString()
-        };
-        feedbackEntries.push(entry);
-        persistFeedback();
-        renderFeedback();
-        showToast('Thanks! Feedback received.', 'success');
-        form.reset();
+
+        const submitButton = form.querySelector('button[type="submit"]');
+        if (submitButton) {
+            submitButton.disabled = true;
+        }
+
+        try {
+            const result = await postJson('beneficiary-dashboard/feedback', { message });
+            feedbackEntries = Array.isArray(result?.data?.feedback) ? result.data.feedback : feedbackEntries;
+            renderFeedback();
+            showToast(result?.message || 'Thanks! Feedback received.', 'success');
+            form.reset();
+        } catch (error) {
+            showToast(error?.message || 'Unable to send feedback right now.', 'warning');
+        } finally {
+            if (submitButton) {
+                submitButton.disabled = false;
+            }
+        }
+    }
+
+    async function loadSupportChat(silent = false) {
+        const stream = document.getElementById('supportChatMessages');
+        if (!stream) return;
+
+        try {
+            const result = await fetchJson(`api/support-chat/messages?recipient=${encodeURIComponent(supportRecipient)}`);
+            renderSupportChat(result.messages || []);
+            setSupportChatStatus('');
+        } catch (error) {
+            if (!silent) {
+                setSupportChatStatus(error?.message || 'Unable to load chat messages.');
+            }
+        }
+    }
+
+    async function handleSupportChatSubmit(event) {
+        event.preventDefault();
+        const input = document.getElementById('supportChatInput');
+        const message = String(input?.value || '').trim();
+        if (!message) return;
+
+        setSupportChatStatus('Gipadala...');
+        try {
+            const result = await postJson('api/support-chat/messages', {
+                recipient: supportRecipient,
+                message
+            });
+            if (input) input.value = '';
+            renderSupportChat(result.messages || []);
+            setSupportChatStatus('Napadala ang mensahe.');
+        } catch (error) {
+            setSupportChatStatus(error?.message || 'Unable to send your message.');
+        }
+    }
+
+    function renderSupportChat(messages) {
+        const stream = document.getElementById('supportChatMessages');
+        if (!stream) return;
+
+        if (!Array.isArray(messages) || messages.length === 0) {
+            stream.innerHTML = '<p class="support-chat__empty">Ang mga mensahe sa imong support team makita dinhi.</p>';
+            return;
+        }
+
+        stream.innerHTML = messages.map((message) => `
+            <article class="support-chat__message ${message.isOwn ? 'is-own' : ''}">
+                <strong>${escapeHtml(message.senderName || 'SMART LEAP support')}</strong>
+                <p>${escapeHtml(message.body || '')}</p>
+                <span>${escapeHtml(formatDateTime(message.createdAt))}</span>
+            </article>
+        `).join('');
+        stream.scrollTop = stream.scrollHeight;
+    }
+
+    function setSupportChatStatus(message) {
+        const status = document.getElementById('supportChatStatus');
+        if (status) {
+            status.textContent = message || '';
+        }
+    }
+
+    function startSupportChatPolling() {
+        if (supportChatTimer || !document.getElementById('supportChatMessages')) {
+            return;
+        }
+
+        supportChatTimer = window.setInterval(() => {
+            if ((window.location.hash || '').replace('#', '') === 'support-feedback') {
+                loadSupportChat(true);
+            }
+        }, 10000);
     }
 
     function showPortalLoader(copy) {
@@ -800,6 +1943,25 @@
         loaderStartedAt = Date.now();
         loader.hidden = false;
         document.body.classList.remove('portal-ready');
+    }
+
+    function routeToRepayments(target) {
+        window.location.hash = '#repayments';
+        applyRouteVisibility();
+        window.setTimeout(() => {
+            if (target === 'history') {
+                document.getElementById('historyHeading')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                document.getElementById('historyFilterStatus')?.focus();
+                return;
+            }
+            if (target === 'repayments') {
+                const repaymentTarget = document.getElementById('repaymentActionsHeading') || document.getElementById('uploadForm');
+                repaymentTarget?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                return;
+            }
+            document.getElementById('uploadForm')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            document.getElementById('uploadMonth')?.focus();
+        }, 0);
     }
 
     function hidePortalLoader() {
@@ -823,8 +1985,13 @@
         try {
             const response = await fetch(`${window.SMARTLEAP_BASE_URL || ''}/auth/logout`, {
                 method: 'POST',
-                headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
                 credentials: 'same-origin',
+                body: new URLSearchParams({ entryPoint: 'portal' }).toString()
             });
             const payload = await response.json().catch(() => ({}));
             const remaining = Math.max(0, PORTAL_LOADER_MIN_MS - (Date.now() - loaderStartedAt));
@@ -833,11 +2000,16 @@
             }, remaining);
         } catch (error) {
             hidePortalLoader();
-            showToast('Unable to log out right now.', 'warning');
+            showToast('Unable to sign out right now.', 'warning');
         }
     }
 
     function handleHistoryTableClick(event) {
+        const followUpButton = event.target.closest('button[data-action="fix-receipt"]');
+        if (followUpButton) {
+            routeToRepayments('upload');
+            return;
+        }
         const button = event.target.closest('button[data-action="view-proof"]');
         if (!button) return;
         const proof = button.getAttribute('data-proof') || '';
@@ -855,6 +2027,10 @@
         return String(value || '').toLowerCase().replace(/[^a-z]/g, '');
     }
 
+    function slugify(value) {
+        return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'pending';
+    }
+
     function calculateRequirementSummary(application, beneficiary) {
         const requirements = application?.requirements || beneficiary?.requirements || {};
         const items = [];
@@ -865,10 +2041,18 @@
         REQUIREMENT_ITEMS.forEach((req) => {
             const entry = requirements?.[req.key] || {};
             const files = Array.isArray(entry.files) ? entry.files : [];
-            const status = normalizeStatus(entry.status || '');
-            const hasFiles = files.length > 0;
-            const isComplete = hasFiles && (status === 'verified' || status === 'approved' || status === 'complete');
-            const isMissing = !hasFiles || status === 'missing';
+            const status = normalizeStatus(entry.status || entry.reviewStatus || entry.review_status || '');
+            const hasFiles = files.length > 0 || Boolean(entry.file?.path || entry.filePath || entry.url);
+            const isComplete = hasFiles && [
+                'verified',
+                'approved',
+                'complete',
+                'completed',
+                'requirementsverified',
+                'approvedbypdo',
+                'pdoapproved'
+            ].includes(status);
+            const isKulang = !hasFiles || status === 'missing';
             const isIssue = status === 'invalid' || status === 'incorrect' || status === 'rejected';
 
             let statusLabel = 'Uploaded';
@@ -877,7 +2061,7 @@
                 statusLabel = 'Complete';
                 statusClass = 'requirement-status--complete';
                 completed += 1;
-            } else if (isMissing) {
+            } else if (isKulang) {
                 statusLabel = 'Missing';
                 statusClass = 'requirement-status--missing';
                 issueCount += 1;
@@ -909,7 +2093,7 @@
         const statusMeta = applicationRecord?.reviewedAt || beneficiaryRecord?.releaseDate || '';
         items.push({
             title: 'Approval status',
-            message: `Current status: ${status}`,
+            message: `Kasamtangang status: ${status}`,
             meta: statusMeta ? formatDateTime(statusMeta) : 'Awaiting review'
         });
 
@@ -934,9 +2118,10 @@
         if (Array.isArray(notifications) && notifications.length) {
             notifications.forEach((entry) => {
                 items.push({
+                    notificationId: Number(entry.id || 0) || null,
                     title: entry.title || 'Update',
                     message: entry.message || '',
-                    meta: entry.timestamp ? formatDateTime(entry.timestamp) : 'Just now'
+                    meta: (entry.sentAt || entry.createdAt || entry.timestamp) ? formatDateTime(entry.sentAt || entry.createdAt || entry.timestamp) : 'Just now'
                 });
             });
         }
@@ -944,16 +2129,85 @@
         return items;
     }
 
+    async function markNotificationsRead(ids) {
+        const notificationIds = Array.from(new Set((Array.isArray(ids) ? ids : [])
+            .map((value) => Number(value || 0))
+            .filter((value) => value > 0)));
+        const unreadIds = notificationIds.filter((id) => {
+            const entry = notifications.find((item) => Number(item?.id || 0) === id);
+            return entry && !entry.isRead;
+        });
+
+        if (!unreadIds.length) {
+            return;
+        }
+
+        notifications = notifications.map((entry) => unreadIds.includes(Number(entry.id || 0))
+            ? { ...entry, isRead: true }
+            : entry);
+
+        try {
+            await postJson('api/notifications/read', { ids: unreadIds });
+        } catch (error) {
+            console.warn('Unable to mark notifications as read', error);
+        }
+    }
+
     function persistProfileUpdate() {
         renderUser();
         renderOverview();
     }
 
-    function persistProfilePhotos() {
-        try {
-            localStorage.setItem(STORAGE_KEYS.profilePhotos, JSON.stringify(profilePhotos));
-        } catch (err) {
-            console.warn('Unable to persist profile photos', err);
+    function calculateEdad(dateString) {
+        if (!dateString) return '';
+        const birth = new Date(dateString);
+        if (Number.isNaN(birth.getTime())) return '';
+
+        const today = new Date();
+        let age = today.getFullYear() - birth.getFullYear();
+        const monthDiff = today.getMonth() - birth.getMonth();
+        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+            age -= 1;
+        }
+        return age;
+    }
+
+    function getStoredProfilePhoto(identity) {
+        return identity?.photo || user?.photo || null;
+    }
+
+    function setAvatarNode(node, fallbackInitial, photo) {
+        if (!node) return;
+        if (photo) {
+            node.textContent = '';
+            node.style.backgroundImage = `url("${photo}")`;
+            node.classList.add('has-photo');
+            return;
+        }
+
+        node.style.backgroundImage = '';
+        node.classList.remove('has-photo');
+        node.textContent = fallbackInitial;
+    }
+
+    function setMobileAvatar(fallbackInitial, photo) {
+        const button = document.getElementById('mobileAccountToggle');
+        const badge = document.getElementById('mobileAccountAvatar');
+        if (photo) {
+            button?.classList.add('has-photo');
+            if (badge) {
+                badge.textContent = fallbackInitial;
+                badge.style.backgroundImage = `url("${photo}")`;
+                badge.classList.add('has-photo');
+            }
+            return;
+        }
+
+        button?.classList.remove('has-photo');
+        if (badge) {
+            badge.style.backgroundImage = '';
+            badge.classList.remove('has-photo');
+            badge.textContent = fallbackInitial;
         }
     }
 
@@ -965,47 +2219,578 @@
         }
     }
 
-    function persistFeedback() {
+    function persistGroupedSubmissions() {
         try {
-            localStorage.setItem(STORAGE_KEYS.feedback, JSON.stringify(feedbackEntries));
+            localStorage.setItem(STORAGE_KEYS.submissions, JSON.stringify(groupedSubmissions));
         } catch (err) {
-            console.warn('Unable to save feedback', err);
+            console.warn('Unable to save grouped submissions', err);
         }
+    }
+
+    function normalizePayments(list) {
+        return (Array.isArray(list) ? list : [])
+            .map((payment) => normalizePaymentRecord(payment))
+            .filter(Boolean);
+    }
+
+    function normalizePaymentRecord(payment) {
+        if (!payment || typeof payment !== 'object') {
+            return null;
+        }
+        const month = normalizeMonthValue(payment.month || payment.coverageMonth || '');
+        if (!month) {
+            return null;
+        }
+        return {
+            id: payment.id || createSubmissionId('PAY'),
+            month,
+            paymentDate: String(payment.paymentDate || payment.date || ''),
+            amount: roundCurrency(payment.amount || payment.allocatedAmount || 0),
+            stage: mapPaymentStage(payment.stage),
+            verifiedBy: String(payment.verifiedBy || ''),
+            verifiedAt: String(payment.verifiedAt || ''),
+            notes: String(payment.notes || payment.adminRemarks || ''),
+            adminRemarks: String(payment.adminRemarks || ''),
+            orNumber: sanitizeOrNumber(payment.orNumber || payment.or || ''),
+            proof: String(payment.proof || ''),
+            proofName: String(payment.proofName || payment.fileName || ''),
+            proofType: String(payment.proofType || payment.fileType || ''),
+            submittedAt: String(payment.submittedAt || payment.createdAt || payment.paymentDate || ''),
+            beneficiaryId: payment.beneficiaryId != null ? Number(payment.beneficiaryId) || null : null,
+            beneficiaryName: String(payment.beneficiaryName || payment.name || ''),
+            beneficiaryBusiness: String(payment.beneficiaryBusiness || payment.businessName || ''),
+            beneficiaryBarangay: String(payment.beneficiaryBarangay || payment.barangay || ''),
+            beneficiaryEmail: String(payment.beneficiaryEmail || payment.email || ''),
+            reviewedBy: String(payment.reviewedBy || payment.verifiedBy || ''),
+            reviewedByRole: String(payment.reviewedByRole || ''),
+            reviewedAt: String(payment.reviewedAt || payment.verifiedAt || ''),
+            parentSubmissionId: payment.parentSubmissionId || null,
+            coverageFrom: normalizeMonthValue(payment.coverageFrom || payment.month || ''),
+            coverageTo: normalizeMonthValue(payment.coverageTo || payment.month || ''),
+            allocatedAmount: roundCurrency(payment.allocatedAmount ?? payment.amount ?? 0),
+            creditApplied: roundCurrency(payment.creditApplied || 0),
+            remainingCredit: roundCurrency(payment.remainingCredit || 0)
+        };
+    }
+
+    function normalizeGroupedSubmissions(list) {
+        return (Array.isArray(list) ? list : [])
+            .map((submission) => {
+                if (!submission || typeof submission !== 'object') {
+                    return null;
+                }
+                return {
+                    submissionId: submission.submissionId || createSubmissionId('SUB'),
+                    submissionType: submission.submissionType || 'grouped',
+                    status: mapPaymentStage(submission.status || ''),
+                    paymentDate: String(submission.paymentDate || ''),
+                    submittedAt: String(submission.submittedAt || submission.paymentDate || ''),
+                    totalAmount: roundCurrency(submission.totalAmount || 0),
+                    orNumber: sanitizeOrNumber(submission.orNumber || ''),
+                    proof: String(submission.proof || ''),
+                    proofName: String(submission.proofName || ''),
+                    proofType: String(submission.proofType || ''),
+                    notes: String(submission.notes || ''),
+                    coveredMonths: uniqueMonths(submission.coveredMonths || []),
+                    beneficiaryId: submission.beneficiaryId != null ? Number(submission.beneficiaryId) || null : null,
+                    beneficiaryName: String(submission.beneficiaryName || submission.name || ''),
+                    beneficiaryBusiness: String(submission.beneficiaryBusiness || submission.businessName || ''),
+                    beneficiaryBarangay: String(submission.beneficiaryBarangay || submission.barangay || ''),
+                    beneficiaryEmail: String(submission.beneficiaryEmail || submission.email || ''),
+                    reviewedBy: String(submission.reviewedBy || ''),
+                    reviewedByRole: String(submission.reviewedByRole || ''),
+                    reviewedAt: String(submission.reviewedAt || ''),
+                    rows: Array.isArray(submission.rows) ? submission.rows.map((row) => ({
+                        month: normalizeMonthValue(row.month || ''),
+                        amount: roundCurrency(row.amount || 0),
+                        paymentDate: String(row.paymentDate || ''),
+                        orNumber: sanitizeOrNumber(row.orNumber || ''),
+                        proof: String(row.proof || ''),
+                        proofName: String(row.proofName || ''),
+                        proofType: String(row.proofType || ''),
+                        notes: String(row.notes || '')
+                    })) : []
+                };
+            })
+            .filter(Boolean);
+    }
+
+    function createSubmissionId(prefix = 'SUB') {
+        return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
+    }
+
+    function roundCurrency(value) {
+        const amount = Number(value || 0);
+        return Math.round(amount * 100) / 100;
+    }
+
+    function sanitizeOrNumber(value) {
+        return String(value || '').trim().replace(/\s+/g, ' ');
+    }
+
+    function normalizeOrNumber(value) {
+        return sanitizeOrNumber(value).toLowerCase();
+    }
+
+    function normalizeMonthValue(value) {
+        const text = String(value || '').trim();
+        const match = text.match(/^(\d{4})-(\d{2})/);
+        if (!match) {
+            return '';
+        }
+        return `${match[1]}-${match[2]}`;
+    }
+
+    function uniqueMonths(values) {
+        return Array.from(new Set((Array.isArray(values) ? values : []).map(normalizeMonthValue).filter(Boolean))).sort();
+    }
+
+    function enumerateMonths(fromMonth, toMonth) {
+        const start = parseMonth(fromMonth);
+        const end = parseMonth(toMonth);
+        if (!start || !end || start > end) {
+            return [];
+        }
+        const months = [];
+        const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+        while (cursor <= end) {
+            months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+        return months;
+    }
+
+    function validatePaymentDateAgainstMonth(paymentDate, referenceMonth) {
+        const date = new Date(paymentDate || '');
+        const monthDate = parseMonth(referenceMonth);
+        if (Number.isNaN(date.getTime()) || !monthDate) {
+            return 'Enter a valid payment date.';
+        }
+        const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
+        if (date < monthStart) {
+            return `The payment date cannot be earlier than ${formatMonth(padMonth(referenceMonth))}.`;
+        }
+        return '';
+    }
+
+    function repaymentStartMonth() {
+        const source = beneficiaryRecord?.approvalDate
+            || beneficiaryRecord?.approvedAt
+            || applicationRecord?.reviewedAt
+            || applicationRecord?.submittedAt
+            || '';
+        const date = new Date(source || '');
+        if (Number.isNaN(date.getTime())) {
+            const firstPayment = payments
+                .map((payment) => normalizeMonthValue(payment.month))
+                .filter(Boolean)
+                .sort()[0];
+            return firstPayment || normalizeMonthValue(new Date().toISOString().slice(0, 7));
+        }
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function addMonths(month, offset) {
+        const date = parseMonth(month);
+        if (!date) return '';
+        const next = new Date(date.getFullYear(), date.getMonth() + offset, 1);
+        return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function currentMonthValue() {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function isMonthOverdue(month) {
+        const monthDate = parseMonth(month);
+        const current = parseMonth(currentMonthValue());
+        return Boolean(monthDate && current && monthDate < current);
+    }
+
+    function isLatePayment(payment) {
+        const monthDate = parseMonth(payment?.month);
+        const paidAt = new Date(payment?.paymentDate || '');
+        if (!monthDate || Number.isNaN(paidAt.getTime())) {
+            return false;
+        }
+        const dueEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0, 23, 59, 59);
+        return paidAt > dueEnd;
+    }
+
+    function bestPaymentForMonth(month) {
+        const records = getPaymentsForMonth(month);
+        if (!records.length) return null;
+        const priority = { verified: 5, uploaded: 4, pending: 4, needs_correction: 3, rejected: 2 };
+        return records.slice().sort((left, right) => {
+            const leftScore = priority[mapPaymentStage(left.stage)] || 1;
+            const rightScore = priority[mapPaymentStage(right.stage)] || 1;
+            if (leftScore !== rightScore) return rightScore - leftScore;
+            return new Date(right.submittedAt || right.paymentDate || '').getTime() - new Date(left.submittedAt || left.paymentDate || '').getTime();
+        })[0];
+    }
+
+    function getRepaymentScheduleItems() {
+        const start = repaymentStartMonth();
+        const months = Array.from({ length: REPAYMENT_PLAN_MONTHS }, (_, index) => addMonths(start, index)).filter(Boolean);
+        return months.map((month) => {
+            const payment = bestPaymentForMonth(month);
+            const stage = payment ? mapPaymentStage(payment.stage) : 'unpaid';
+            const isOverdue = isMonthOverdue(month);
+            let state = 'upcoming';
+            if (stage === 'verified') state = 'verified';
+            else if (['uploaded', 'pending'].includes(stage)) state = 'pending_review';
+            else if (['needs_correction', 'rejected'].includes(stage)) state = 'needs_correction';
+            else if (isOverdue) state = 'overdue';
+            else if (month === currentMonthValue()) state = 'due';
+            return {
+                month,
+                payment,
+                stage,
+                state,
+                isOverdue,
+                actionable: ['overdue', 'due', 'needs_correction'].includes(state),
+            };
+        });
+    }
+
+    function repaymentScheduleStatus(item) {
+        if (item.state === 'verified') {
+            return { label: item.payment && isLatePayment(item.payment) ? 'Late Payment Accepted' : 'Paid', className: 'status-verified', helper: 'Accepted by PDO/Admin.' };
+        }
+        if (item.state === 'pending_review') {
+            return { label: item.isOverdue ? 'Late Payment Submitted' : 'Submitted', className: 'status-pending', helper: 'Waiting for PDO/Admin review.' };
+        }
+        if (item.state === 'needs_correction') {
+            return { label: item.isOverdue ? 'Late Payment Requires New Receipt' : 'Requires New Receipt', className: 'status-pending', helper: 'Upload a new receipt for this month.' };
+        }
+        if (item.state === 'overdue') {
+            return { label: 'Overdue', className: 'status-overdue', helper: 'Submit late payment proof for this month.' };
+        }
+        if (item.state === 'due') {
+            return { label: 'Due Now', className: 'status-uploaded', helper: 'Submit payment proof for this month.' };
+        }
+        return { label: 'Upcoming', className: 'status-uploaded', helper: 'No action needed yet.' };
+    }
+
+    function mapPaymentStage(stage) {
+        const normalized = normalizeStatus(stage);
+        if (!normalized) return 'uploaded';
+        if (normalized === 'verified') return 'verified';
+        if (normalized === 'uploaded') return 'uploaded';
+        if (normalized === 'pending' || normalized === 'pendingverification') return 'pending';
+        if (normalized === 'needscorrection' || normalized === 'needscorrection') return 'needs_correction';
+        if (normalized === 'rejected' || normalized === 'flagged') return 'rejected';
+        return 'uploaded';
+    }
+
+    function getPaymentsForMonth(month) {
+        const normalized = normalizeMonthValue(month);
+        return payments.filter((payment) => normalizeMonthValue(payment.month) === normalized);
+    }
+
+    function isPaymentLocked(payment) {
+        return !isPaymentEditable(payment);
+    }
+
+    function getSubmissionPayments(submissionId) {
+        return payments.filter((payment) => payment.parentSubmissionId && payment.parentSubmissionId === submissionId);
+    }
+
+    function removeSubmissionById(submissionId) {
+        if (!submissionId) return;
+        payments = payments.filter((payment) => payment.parentSubmissionId !== submissionId);
+        groupedSubmissions = groupedSubmissions.filter((submission) => submission.submissionId !== submissionId);
+    }
+
+    function planEditableMonthIlisiment(months, paymentList = payments) {
+        const targetMonths = uniqueMonths(months);
+        const sourcePayments = Array.isArray(paymentList) ? paymentList : payments;
+        const collisions = sourcePayments.filter((payment) => targetMonths.includes(normalizeMonthValue(payment.month)));
+        if (!collisions.length) {
+            return { ok: true, paymentIdsToRemove: [], parentIdsToRemove: [] };
+        }
+
+        const locked = collisions.find((payment) => isPaymentLocked(payment));
+        if (locked) {
+            return { ok: false, message: `The record for ${formatMonth(padMonth(locked.month))} is already locked after review.` };
+        }
+
+        const parentIds = Array.from(new Set(collisions.map((payment) => payment.parentSubmissionId).filter(Boolean)));
+        for (const parentId of parentIds) {
+            const groupedMonths = uniqueMonths(getSubmissionPayments(parentId).map((payment) => payment.month));
+            const everyMonthIncluded = groupedMonths.every((month) => targetMonths.includes(month));
+            if (!everyMonthIncluded) {
+                return { ok: false, message: 'A grouped catch-up receipt already covers one of the selected months. Replace the full grouped receipt instead.' };
+            }
+        }
+
+        return {
+            ok: true,
+            paymentIdsToRemove: collisions.map((payment) => payment.id),
+            parentIdsToRemove: parentIds
+        };
+    }
+
+    function applyIlisimentPlan(plan) {
+        if (!plan?.ok) {
+            return;
+        }
+        (plan.parentIdsToRemove || []).forEach(removeSubmissionById);
+        const paymentIds = new Set(plan.paymentIdsToRemove || []);
+        if (paymentIds.size) {
+            payments = payments.filter((payment) => !paymentIds.has(payment.id));
+        }
+    }
+
+    function stripIlisimentPlanFromPayments(paymentList, plan) {
+        if (!plan?.ok) {
+            return normalizePayments(paymentList);
+        }
+        const paymentIds = new Set(plan.paymentIdsToRemove || []);
+        return normalizePayments((Array.isArray(paymentList) ? paymentList : []).filter((payment) => !paymentIds.has(payment.id)));
+    }
+
+    function findDuplicateOrNumber(orNumber, options = {}) {
+        const normalized = normalizeOrNumber(orNumber);
+        if (!normalized) {
+            return null;
+        }
+        const ignoredIds = new Set(options.ignorePaymentIds || []);
+        const sourcePayments = Array.isArray(options.paymentList) ? options.paymentList : payments;
+        return sourcePayments.find((payment) => {
+            if (ignoredIds.has(payment.id)) {
+                return false;
+            }
+            return normalizeOrNumber(payment.orNumber) === normalized;
+        }) || null;
+    }
+
+    function clonePaymentsState() {
+        return normalizePayments(payments.map((payment) => ({ ...payment })));
+    }
+
+    function getCarryOverSources(paymentList, excludedPaymentIds = []) {
+        const excluded = new Set(excludedPaymentIds);
+        return paymentList
+            .filter((payment) => !excluded.has(payment.id))
+            .filter((payment) => Number(payment.remainingCredit || 0) > 0)
+            .filter((payment) => mapPaymentStage(payment.stage) !== 'rejected')
+            .sort((a, b) => {
+                const dateA = new Date(a.paymentDate || padMonth(a.month)).getTime();
+                const dateB = new Date(b.paymentDate || padMonth(b.month)).getTime();
+                return dateA - dateB;
+            });
+    }
+
+    function consumeCarryOver(paymentList, requestedAmount, excludedPaymentIds = []) {
+        let remainingRequest = roundCurrency(requestedAmount);
+        let totalApplied = 0;
+        const sources = getCarryOverSources(paymentList, excludedPaymentIds);
+        for (const source of sources) {
+            if (remainingRequest <= 0) {
+                break;
+            }
+            const available = roundCurrency(source.remainingCredit || 0);
+            if (available <= 0) {
+                continue;
+            }
+            const applied = roundCurrency(Math.min(available, remainingRequest));
+            source.remainingCredit = roundCurrency(available - applied);
+            totalApplied = roundCurrency(totalApplied + applied);
+            remainingRequest = roundCurrency(remainingRequest - applied);
+        }
+        return totalApplied;
+    }
+
+    function validateProofFile(file) {
+        if (!(file instanceof File)) {
+            return 'Please upload an OR file.';
+        }
+        const extension = String(file.name || '').split('.').pop()?.toLowerCase() || '';
+        const hasValidExtension = SUPPORTED_PROOF_EXTENSIONS.includes(extension);
+        const hasValidType = !file.type || SUPPORTED_PROOF_MIME_TYPES.includes(file.type);
+        if (!hasValidExtension || !hasValidType) {
+            return 'Upload a JPG, PNG, or PDF file only.';
+        }
+        return '';
+    }
+
+    function readProofFile(file) {
+        return new Promise((resolve, reject) => {
+            const validationMessage = validateProofFile(file);
+            if (validationMessage) {
+                reject(new Error(validationMessage));
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = () => {
+                resolve({
+                    proof: String(reader.result || ''),
+                    proofName: file.name || 'proof',
+                    proofType: file.type || ''
+                });
+            };
+            reader.onerror = () => reject(new Error('Unable to read the uploaded OR file.'));
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function getBeneficiarySubmissionMeta() {
+        return {
+            beneficiaryId,
+            beneficiaryName: user.fullName || user.name || '',
+            beneficiaryBusiness: user.businessName || beneficiaryRecord?.businessName || applicationRecord?.businessName || '',
+            beneficiaryBarangay: user.barangay || beneficiaryRecord?.profile?.barangay || applicationRecord?.barangay || '',
+            beneficiaryEmail: user.email || ''
+        };
+    }
+
+    function buildMonthlyPaymentRecord({
+        month,
+        paymentDate,
+        amount,
+        notes,
+        orNumber,
+        proof,
+        proofName,
+        proofType,
+        parentSubmissionId = null,
+        coverageFrom = null,
+        coverageTo = null,
+        allocatedAmount = 0,
+        creditApplied = 0,
+        remainingCredit = 0,
+        submittedAt = new Date().toISOString(),
+        beneficiaryId: recordBeneficiaryId = null,
+        beneficiaryName = '',
+        beneficiaryBusiness = '',
+        beneficiaryBarangay = '',
+        beneficiaryEmail = ''
+    }) {
+        const normalizedMonth = normalizeMonthValue(month);
+        return normalizePaymentRecord({
+            id: createSubmissionId('PAY'),
+            month: normalizedMonth,
+            paymentDate,
+            amount: roundCurrency(amount),
+            stage: 'uploaded',
+            verifiedBy: '',
+            verifiedAt: '',
+            notes,
+            adminRemarks: '',
+            orNumber,
+            proof,
+            proofName,
+            proofType,
+            submittedAt,
+            beneficiaryId: recordBeneficiaryId,
+            beneficiaryName,
+            beneficiaryBusiness,
+            beneficiaryBarangay,
+            beneficiaryEmail,
+            parentSubmissionId,
+            coverageFrom: coverageFrom || normalizedMonth,
+            coverageTo: coverageTo || normalizedMonth,
+            allocatedAmount,
+            creditApplied,
+            remainingCredit
+        });
+    }
+
+    function createSingleMonthSubmission(data, context = {}) {
+        const paymentList = context.paymentList || payments;
+        const meta = getBeneficiarySubmissionMeta();
+        const submittedAt = new Date().toISOString();
+        const replacement = planEditableMonthIlisiment([data.month], paymentList);
+        if (!replacement.ok) {
+            throw new Error(replacement.message);
+        }
+        const duplicateOr = findDuplicateOrNumber(data.orNumber, {
+            paymentList,
+            ignorePaymentIds: replacement.paymentIdsToRemove
+        });
+        if (duplicateOr) {
+            throw new Error('That OR number already exists in your repayment records.');
+        }
+        const creditApplied = consumeCarryOver(paymentList, MONTHLY_REPAYMENT_AMOUNT, replacement.paymentIdsToRemove);
+        const remainingCredit = roundCurrency(Math.max(0, Number(data.amount || 0) + creditApplied - MONTHLY_REPAYMENT_AMOUNT));
+        return {
+            payments: [
+                buildMonthlyPaymentRecord({
+                    month: data.month,
+                    paymentDate: data.paymentDate,
+                    amount: data.amount,
+                    notes: data.notes,
+                    orNumber: data.orNumber,
+                    proof: data.proof,
+                    proofName: data.proofName,
+                    proofType: data.proofType,
+                    submittedAt,
+                    ...meta,
+                    allocatedAmount: roundCurrency(Number(data.amount || 0) + creditApplied),
+                    creditApplied,
+                    remainingCredit
+                })
+            ],
+            submissions: [],
+            replacementPlan: replacement,
+            paymentList
+        };
     }
 
     function buildAuditFromPayments(list) {
         const verifiedAudits = list
-            .filter((p) => p.stage === 'verified')
+            .filter((p) => mapPaymentStage(p.stage) === 'verified')
             .map((p) => ({
+                title: 'Receipt verified',
+                kind: 'verified',
                 message: `${p.verifiedBy || 'Admin'} verified ${formatMonth(padMonth(p.month))} receipt (${formatCurrency(p.amount)}).`,
                 timestamp: p.verifiedAt || new Date().toISOString()
             }));
 
         const uploadedAudits = list
-            .filter((p) => p.stage === 'uploaded')
+            .filter((p) => mapPaymentStage(p.stage) === 'uploaded' || mapPaymentStage(p.stage) === 'pending')
             .map((p) => ({
-                message: `Uploaded OR ${p.orNumber || ''} for ${formatMonth(padMonth(p.month))}. Awaiting validation.`,
+                title: 'Receipt uploaded',
+                kind: 'uploaded',
+                message: `Uploaded OR ${p.orNumber || ''} for ${formatMonth(padMonth(p.month))}. Awaiting verification.`,
                 timestamp: new Date().toISOString()
             }));
 
-        return verifiedAudits.concat(uploadedAudits).slice(0, 12);
+        return verifiedAudits.concat(uploadedAudits)
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+            .slice(0, 12);
     }
 
     function getPaymentStatus(payment) {
-        const stage = (payment.stage || '').toLowerCase();
-        if (stage === 'verified') return { label: 'Verified', className: 'status-verified' };
-        if (stage === 'uploaded') return { label: 'Pending', className: 'status-uploaded' };
-        if (stage.includes('rejected') || stage.includes('flag')) return { label: 'Rejected', className: 'status-overdue' };
-        if (stage === 'pending') {
-            const due = parseMonth(payment.month);
-            const now = new Date();
-            const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-            if (due && due < startOfMonth) {
-                return { label: 'Overdue', className: 'status-overdue' };
-            }
-            return { label: 'Pending', className: 'status-pending' };
+        const stage = mapPaymentStage(payment.stage);
+        const late = isLatePayment(payment);
+        if (stage === 'verified') return { label: late ? 'Late Payment Accepted' : 'Verified', className: 'status-verified' };
+        if (stage === 'uploaded') return { label: late ? 'Late Payment Submitted' : 'Uploaded', className: 'status-uploaded' };
+        if (stage === 'pending') return { label: late ? 'Late Payment Submitted' : 'Pending verification', className: 'status-pending' };
+        if (stage === 'needs_correction') return { label: late ? 'Late Receipt Needs Update' : 'Receipt Needs Update', className: 'status-pending' };
+        if (stage === 'rejected') return { label: late ? 'Late Receipt Rejected' : 'Receipt Rejected', className: 'status-overdue' };
+        return { label: 'Uploaded', className: 'status-uploaded' };
+    }
+
+    function hasPaymentBeenNasusi(payment) {
+        const stage = normalizeStatus(payment?.stage || '');
+        if (Boolean(payment?.verifiedAt) || Boolean(payment?.verifiedBy)) {
+            return true;
         }
-        return { label: 'Pending', className: 'status-pending' };
+        return ['verified', 'rejected', 'flagged', 'needscorrection', 'checked', 'reviewed'].includes(stage);
+    }
+
+    function isPaymentEditable(payment) {
+        const stage = mapPaymentStage(payment?.stage || '');
+        if (['rejected', 'needs_correction'].includes(stage)) {
+            return true;
+        }
+        if (['uploaded', 'pending'].includes(stage)) {
+            return false;
+        }
+        return !hasPaymentBeenNasusi(payment);
     }
 
     function mapAttendanceBadge(status) {
@@ -1027,14 +2812,67 @@
     }
 
     function formatVerification(payment) {
-        if (payment.stage === 'verified') {
+        const stage = mapPaymentStage(payment.stage);
+        if (stage === 'verified') {
             const dateText = formatDate(payment.verifiedAt);
             return `${payment.verifiedBy || 'Admin'}${dateText ? ` - ${dateText}` : ''}${payment.notes ? ` - ${escapeHtml(payment.notes)}` : ''}`;
         }
-        if (payment.stage === 'uploaded') {
-            return payment.notes ? escapeHtml(payment.notes) : 'Uploaded. Bring hard copy for verification.';
+        if (stage === 'uploaded') {
+            return payment.notes ? escapeHtml(payment.notes) : 'Uploaded for verification.';
+        }
+        if (stage === 'pending') {
+            return payment.notes ? escapeHtml(payment.notes) : 'Pending verification.';
+        }
+        if (stage === 'needs_correction') {
+            return payment.notes ? escapeHtml(payment.notes) : 'This receipt needs to be replaced with a corrected upload.';
+        }
+        if (stage === 'rejected') {
+            return payment.notes ? escapeHtml(payment.notes) : 'This receipt was rejected. Upload a new receipt for this month.';
         }
         return 'For upload';
+    }
+
+    function buildPaymentRemarks(payment) {
+        const parts = [];
+        if (payment.parentSubmissionId && payment.coverageFrom && payment.coverageTo && payment.coverageFrom !== payment.coverageTo) {
+            parts.push(`Covered by grouped OR (${payment.coverageFrom} to ${payment.coverageTo})`);
+        }
+        if (Number(payment.creditApplied || 0) > 0) {
+            parts.push(`Credit applied ${formatCurrency(payment.creditApplied)}`);
+        }
+        if (Number(payment.remainingCredit || 0) > 0) {
+            parts.push(`Remaining credit ${formatCurrency(payment.remainingCredit)}`);
+        }
+        if (payment.adminRemarks) {
+            parts.push(payment.adminRemarks);
+        } else if (payment.notes) {
+            parts.push(payment.notes);
+        }
+        return parts.length ? parts.join(' | ') : '-';
+    }
+
+    function buildPaymentReviewNote(payment) {
+        const stage = mapPaymentStage(payment?.stage);
+        const reviewerName = String(payment?.reviewedBy || payment?.verifiedBy || '').trim();
+        const reviewerRole = String(payment?.reviewedByRole || '').trim().replace(/_/g, ' ');
+        const reviewedAt = String(payment?.reviewedAt || payment?.verifiedAt || '').trim();
+        const actor = reviewerName
+            || (reviewerRole ? reviewerRole.replace(/\b\w/g, (char) => char.toUpperCase()) : 'PDO/Admin');
+        const dateText = formatDate(reviewedAt);
+
+        if (stage === 'verified') {
+            return `Verified by ${actor}${dateText ? ` on ${dateText}` : ''}`;
+        }
+        if (stage === 'needs_correction') {
+            return `${actor} requested correction${dateText ? ` on ${dateText}` : ''}`;
+        }
+        if (stage === 'rejected') {
+            return `${actor} rejected this receipt${dateText ? ` on ${dateText}` : ''}`;
+        }
+        if (stage === 'pending' || stage === 'uploaded') {
+            return 'Awaiting PDO/Admin verification';
+        }
+        return actor && dateText ? `Reviewed by ${actor} on ${dateText}` : 'For review';
     }
 
     function setText(id, value) {

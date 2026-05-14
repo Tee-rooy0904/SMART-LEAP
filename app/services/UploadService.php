@@ -17,6 +17,7 @@ class UploadService
         'validId' => 'valid-id',
         'healthCertificate' => 'health-certificate',
         'cedula' => 'cedula',
+        'barangayEndorsementLetter' => 'barangay-endorsement-letter',
     ];
 
     private const POST_APPROVAL_PATHS = [
@@ -24,6 +25,18 @@ class UploadService
         'staff-signature' => 'signatures/staff',
         'supporting-upload' => 'supporting',
     ];
+
+    private const STAGE_ONE_PATHS = [
+        'businessPhoto' => 'business-photo',
+        'validIdPhoto' => 'valid-id',
+    ];
+
+    private const CO_MAKER_PATHS = [
+        'validId' => 'co-makers/valid-id',
+        'relationshipDocument' => 'co-makers/relationship-document',
+    ];
+
+    private const REPAYMENT_PATH = 'repayments';
 
     public function normalizeDocumentFiles(array $fileBag): array
     {
@@ -104,6 +117,130 @@ class UploadService
             'original_name' => (string) $file['name'],
             'mime_type' => $detectedMimeType,
             'file_size' => (int) ($file['size'] ?? 0),
+            'uploaded_at' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    public function storeStageOneAsset(string $category, ?array $file): array
+    {
+        if ($file === null || !isset(self::STAGE_ONE_PATHS[$category])) {
+            throw new \RuntimeException('Unsupported Stage 1 upload type.');
+        }
+
+        [$extension, $detectedMimeType] = $this->validateFile($file);
+        if ($category === 'businessPhoto' && !str_starts_with($detectedMimeType, 'image/')) {
+            throw new \RuntimeException('Business upload must be an image file.');
+        }
+
+        $relativeDir = 'uploads/stage-one/' . self::STAGE_ONE_PATHS[$category];
+        $absoluteDir = public_path($relativeDir);
+        if (!is_dir($absoluteDir)) {
+            mkdir($absoluteDir, 0775, true);
+        }
+
+        $targetName = $category . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(8)) . '.' . $extension;
+        $absolutePath = $absoluteDir . DIRECTORY_SEPARATOR . $targetName;
+
+        if (!move_uploaded_file((string) $file['tmp_name'], $absolutePath)) {
+            throw new \RuntimeException('Unable to move uploaded file.');
+        }
+
+        return [
+            'file_path' => $relativeDir . '/' . $targetName,
+            'original_name' => (string) ($file['name'] ?? $targetName),
+            'mime_type' => $detectedMimeType,
+            'file_size' => (int) ($file['size'] ?? 0),
+            'uploaded_at' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    public function storeCoMakerAsset(string $category, ?array $file): array
+    {
+        if ($file === null || !isset(self::CO_MAKER_PATHS[$category])) {
+            throw new \RuntimeException('Unsupported co-maker upload type.');
+        }
+
+        [$extension, $detectedMimeType] = $this->validateFile($file);
+
+        $relativeDir = 'uploads/' . self::CO_MAKER_PATHS[$category];
+        $absoluteDir = public_path($relativeDir);
+        if (!is_dir($absoluteDir)) {
+            mkdir($absoluteDir, 0775, true);
+        }
+
+        $targetName = $category . '_' . date('YmdHis') . '_' . bin2hex(random_bytes(8)) . '.' . $extension;
+        $absolutePath = $absoluteDir . DIRECTORY_SEPARATOR . $targetName;
+
+        if (!move_uploaded_file((string) $file['tmp_name'], $absolutePath)) {
+            throw new \RuntimeException('Unable to move uploaded file.');
+        }
+
+        return [
+            'file_path' => $relativeDir . '/' . $targetName,
+            'original_name' => (string) ($file['name'] ?? $targetName),
+            'mime_type' => $detectedMimeType,
+            'file_size' => (int) ($file['size'] ?? 0),
+            'uploaded_at' => date('Y-m-d H:i:s'),
+        ];
+    }
+
+    public function storeRepaymentAssetFromDataUrl(string $originalName, string $dataUrl): array
+    {
+        $dataUrl = trim($dataUrl);
+        if ($dataUrl === '' || !str_starts_with($dataUrl, 'data:') || !str_contains($dataUrl, ';base64,')) {
+            throw new \RuntimeException('Repayment proof is invalid.');
+        }
+
+        [$meta, $encoded] = explode(',', $dataUrl, 2);
+        $mimeType = $this->normalizeMimeType((string) preg_replace('/^data:([^;]+);base64$/', '$1', $meta));
+        $allowedMimeTypes = array_map([$this, 'normalizeMimeType'], config('upload.allowed_mime_types', []));
+        if ($mimeType === '' || !in_array($mimeType, $allowedMimeTypes, true)) {
+            throw new \RuntimeException('Unsupported repayment proof type.');
+        }
+
+        $binary = base64_decode($encoded, true);
+        if ($binary === false || $binary === '') {
+            throw new \RuntimeException('Repayment proof could not be decoded.');
+        }
+
+        $maxBytes = (int) config('upload.max_bytes', 0);
+        if ($maxBytes > 0 && strlen($binary) > $maxBytes) {
+            throw new \RuntimeException('Repayment proof exceeds the upload limit.');
+        }
+
+        $extension = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+        if ($extension === '') {
+            $extension = match ($mimeType) {
+                'image/jpeg' => 'jpg',
+                'image/png' => 'png',
+                'image/webp' => 'webp',
+                'application/pdf' => 'pdf',
+                default => '',
+            };
+        }
+
+        $allowedExtensions = config('upload.allowed_extensions', []);
+        if ($extension === '' || !in_array($extension, $allowedExtensions, true)) {
+            throw new \RuntimeException('Unsupported repayment proof type.');
+        }
+
+        $relativeDir = 'uploads/' . self::REPAYMENT_PATH;
+        $absoluteDir = rtrim((string) config('upload.paths.repayments'), DIRECTORY_SEPARATOR);
+        if (!is_dir($absoluteDir)) {
+            mkdir($absoluteDir, 0775, true);
+        }
+
+        $targetName = 'repayment_' . date('YmdHis') . '_' . bin2hex(random_bytes(8)) . '.' . $extension;
+        $absolutePath = $absoluteDir . DIRECTORY_SEPARATOR . $targetName;
+        if (file_put_contents($absolutePath, $binary) === false) {
+            throw new \RuntimeException('Unable to save repayment proof.');
+        }
+
+        return [
+            'file_path' => $relativeDir . '/' . $targetName,
+            'original_name' => $originalName !== '' ? $originalName : $targetName,
+            'mime_type' => $mimeType,
+            'file_size' => strlen($binary),
             'uploaded_at' => date('Y-m-d H:i:s'),
         ];
     }

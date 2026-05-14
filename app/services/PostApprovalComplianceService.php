@@ -10,20 +10,28 @@ class PostApprovalComplianceService
 {
     public function stateForApplicant(int $userId): array
     {
+        $applicationGate = (new ApplicationService())->applicationFormsGateForUser($userId);
+        if (!($applicationGate['unlocked'] ?? false)) {
+            return $this->emptyState();
+        }
+
         $context = $this->resolveApplicantContext($userId);
         if ($context === null) {
             return $this->emptyState();
         }
 
         $this->ensureRequiredTaskTypes();
-        $latestUnlockAt = $this->findLatestUnlockAt((int) $context['applicant_profile_id']);
-        $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $latestUnlockAt, $userId);
-        $this->syncFundReleaseRequirement((int) $context['beneficiary_profile_id']);
-        $tasks = $this->fetchTasks((int) $context['beneficiary_profile_id'], $context);
+        $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $applicationGate['reviewedAt'] ?? null, $userId, true);
+        $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
+        if (($seminarAccess['codes'] ?? []) === []) {
+            return $this->emptyState();
+        }
+
+        $tasks = $this->fetchTasks((int) $context['beneficiary_profile_id'], $context, $seminarAccess['codes']);
 
         return [
-            'isUnlocked' => $latestUnlockAt !== null || $tasks !== [],
-            'unlockedAt' => $latestUnlockAt,
+            'isUnlocked' => $tasks !== [],
+            'unlockedAt' => $seminarAccess['openedAt'] ?? ($applicationGate['reviewedAt'] ?? null),
             'beneficiaryProfileId' => (int) $context['beneficiary_profile_id'],
             'tasks' => $tasks,
             'summary' => $this->buildSummary($tasks),
@@ -32,18 +40,30 @@ class PostApprovalComplianceService
 
     public function taskForApplicant(int $userId, string $code): ?array
     {
+        $applicationGate = (new ApplicationService())->applicationFormsGateForUser($userId);
+        if (!($applicationGate['unlocked'] ?? false)) {
+            return null;
+        }
+
         $context = $this->resolveApplicantContext($userId);
         if ($context === null) {
             return null;
         }
 
         $this->ensureRequiredTaskTypes();
-        $latestUnlockAt = $this->findLatestUnlockAt((int) $context['applicant_profile_id']);
-        $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $latestUnlockAt, $userId);
-        $this->syncFundReleaseRequirement((int) $context['beneficiary_profile_id']);
+        $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $applicationGate['reviewedAt'] ?? null, $userId, true);
+        $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
+        if (!in_array($code, $seminarAccess['codes'] ?? [], true)) {
+            return null;
+        }
 
         $task = $this->findTaskByCode((int) $context['beneficiary_profile_id'], $code);
         if ($task === null) {
+            return null;
+        }
+
+        $definition = $this->taskDefinitions()[$code] ?? null;
+        if ($definition === null || !(bool) ($definition['interactive'] ?? false)) {
             return null;
         }
 
@@ -52,9 +72,19 @@ class PostApprovalComplianceService
 
     public function saveApplicantTask(int $userId, string $code, array $payload): array
     {
+        $applicationGate = (new ApplicationService())->applicationFormsGateForUser($userId);
+        if (!($applicationGate['unlocked'] ?? false)) {
+            return ['ok' => false, 'errors' => ['task' => 'Your required uploads must be fully verified before seminar forms can be used.']];
+        }
+
         $context = $this->resolveApplicantContext($userId);
         if ($context === null) {
             return ['ok' => false, 'errors' => ['general' => 'Applicant record not found.']];
+        }
+
+        $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
+        if (!in_array($code, $seminarAccess['codes'] ?? [], true)) {
+            return ['ok' => false, 'errors' => ['task' => 'This seminar form is not open for your assigned training session.']];
         }
 
         $task = $this->findTaskByCode((int) $context['beneficiary_profile_id'], $code);
@@ -74,7 +104,7 @@ class PostApprovalComplianceService
         if ($status === POST_APPROVAL_STATUS_LOCKED) {
             return ['ok' => false, 'errors' => ['task' => 'This final requirement is still locked until the earlier forms are verified.']];
         }
-        if (in_array($status, [POST_APPROVAL_STATUS_SUBMITTED, POST_APPROVAL_STATUS_VERIFIED], true)) {
+        if (!$this->isApplicantTaskEditable($task)) {
             return ['ok' => false, 'errors' => ['task' => 'This form cannot be edited right now.']];
         }
 
@@ -108,9 +138,19 @@ class PostApprovalComplianceService
 
     public function submitApplicantTask(int $userId, string $code, array $payload): array
     {
+        $applicationGate = (new ApplicationService())->applicationFormsGateForUser($userId);
+        if (!($applicationGate['unlocked'] ?? false)) {
+            return ['ok' => false, 'errors' => ['task' => 'Your required uploads must be fully verified before seminar forms can be used.']];
+        }
+
         $context = $this->resolveApplicantContext($userId);
         if ($context === null) {
             return ['ok' => false, 'errors' => ['general' => 'Applicant record not found.']];
+        }
+
+        $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
+        if (!in_array($code, $seminarAccess['codes'] ?? [], true)) {
+            return ['ok' => false, 'errors' => ['task' => 'This seminar form is not open for your assigned training session.']];
         }
 
         $task = $this->findTaskByCode((int) $context['beneficiary_profile_id'], $code);
@@ -133,7 +173,7 @@ class PostApprovalComplianceService
         if ($status === POST_APPROVAL_STATUS_VERIFIED) {
             return ['ok' => false, 'errors' => ['task' => 'This form has already been verified.']];
         }
-        if ($status === POST_APPROVAL_STATUS_SUBMITTED) {
+        if ($status === POST_APPROVAL_STATUS_SUBMITTED && $this->hasApplicantTaskBeenChecked($task)) {
             return ['ok' => false, 'errors' => ['task' => 'This form has already been submitted and is awaiting review.']];
         }
 
@@ -193,14 +233,26 @@ class PostApprovalComplianceService
             'post_approval'
         );
 
+        $this->notifyPostApprovalSubmission($context, $definition['title']);
+
         return ['ok' => true];
     }
 
     public function saveApplicantUpload(int $userId, string $code, string $fieldKey, array $file): array
     {
+        $applicationGate = (new ApplicationService())->applicationFormsGateForUser($userId);
+        if (!($applicationGate['unlocked'] ?? false)) {
+            return ['ok' => false, 'errors' => ['task' => 'Your required uploads must be fully verified before seminar forms can be used.']];
+        }
+
         $context = $this->resolveApplicantContext($userId);
         if ($context === null) {
             return ['ok' => false, 'errors' => ['general' => 'Applicant record not found.']];
+        }
+
+        $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
+        if (!in_array($code, $seminarAccess['codes'] ?? [], true)) {
+            return ['ok' => false, 'errors' => ['task' => 'This seminar form is not open for your assigned training session.']];
         }
 
         $task = $this->findTaskByCode((int) $context['beneficiary_profile_id'], $code);
@@ -217,17 +269,29 @@ class PostApprovalComplianceService
         if ($status === POST_APPROVAL_STATUS_LOCKED) {
             return ['ok' => false, 'errors' => ['task' => 'This final requirement is still locked until the earlier forms are verified.']];
         }
-        if (in_array($status, [POST_APPROVAL_STATUS_SUBMITTED, POST_APPROVAL_STATUS_VERIFIED], true)) {
+        if (!$this->isApplicantTaskEditable($task)) {
             return ['ok' => false, 'errors' => ['task' => 'This form cannot be edited right now.']];
         }
 
         $allowed = $this->allowedApplicantUploadFields()[$code] ?? [];
-        if (!isset($allowed[$fieldKey])) {
+        $fieldConfig = $allowed[$fieldKey] ?? null;
+        if ($fieldConfig === null) {
+            return ['ok' => false, 'errors' => ['field' => 'Unsupported upload field.']];
+        }
+
+        $bucket = is_array($fieldConfig)
+            ? (string) ($fieldConfig['bucket'] ?? '')
+            : (string) $fieldConfig;
+        $persistPath = is_array($fieldConfig)
+            ? (string) ($fieldConfig['persistPath'] ?? $fieldKey)
+            : $fieldKey;
+
+        if ($bucket === '') {
             return ['ok' => false, 'errors' => ['field' => 'Unsupported upload field.']];
         }
 
         try {
-            $metadata = (new UploadService())->storePostApprovalAsset((string) $allowed[$fieldKey], $file);
+            $metadata = (new UploadService())->storePostApprovalAsset($bucket, $file);
         } catch (\Throwable $exception) {
             log_database_query_failure('post_approval.upload', $exception, ['task_code' => $code, 'field_key' => $fieldKey]);
             return ['ok' => false, 'errors' => ['general' => $exception->getMessage() ?: 'Unable to upload file.']];
@@ -235,7 +299,7 @@ class PostApprovalComplianceService
 
         $persistedPayload = $this->mergePersistedPayload(
             $task,
-            $this->payloadWithFieldValue($fieldKey, $metadata)
+            $this->payloadWithFieldValue($persistPath, $metadata)
         );
 
         try {
@@ -259,8 +323,37 @@ class PostApprovalComplianceService
         return ['ok' => true, 'upload' => $metadata];
     }
 
+    private function isApplicantTaskEditable(array $task): bool
+    {
+        $status = $this->normalizeStatus((string) ($task['status'] ?? ''));
+        if ($status === POST_APPROVAL_STATUS_LOCKED || $status === POST_APPROVAL_STATUS_VERIFIED) {
+            return false;
+        }
+
+        if (in_array($status, [POST_APPROVAL_STATUS_NEEDS_CORRECTION, POST_APPROVAL_STATUS_REJECTED, POST_APPROVAL_STATUS_IN_PROGRESS, POST_APPROVAL_STATUS_UNLOCKED], true)) {
+            return true;
+        }
+
+        if ($status === POST_APPROVAL_STATUS_SUBMITTED) {
+            return !$this->hasApplicantTaskBeenChecked($task);
+        }
+
+        return true;
+    }
+
+    private function hasApplicantTaskBeenChecked(array $task): bool
+    {
+        if (!empty($task['reviewed_at'] ?? null) || !empty($task['reviewedAt'] ?? null)) {
+            return true;
+        }
+
+        $status = $this->normalizeStatus((string) ($task['status'] ?? ''));
+        return in_array($status, [POST_APPROVAL_STATUS_NEEDS_CORRECTION, POST_APPROVAL_STATUS_REJECTED, POST_APPROVAL_STATUS_VERIFIED], true);
+    }
+
     private function resolveApplicantContext(int $userId): ?array
     {
+        $this->ensureStaffProfileSignatureColumns();
         $statement = db()->prepare(
             'SELECT
                 users.id AS user_id,
@@ -275,22 +368,265 @@ class PostApprovalComplianceService
                 applicant_profiles.livelihood_type,
                 applicant_profiles.is_4ps,
                 barangays.name AS barangay_name,
-                beneficiary_profiles.id AS beneficiary_profile_id
+                beneficiary_profiles.id AS beneficiary_profile_id,
+                assigned_staff.id AS assigned_staff_profile_id,
+                assigned_staff.position_title AS assigned_pdo_title,
+                assigned_staff.signature_file_path AS assigned_pdo_signature_file_path,
+                assigned_staff.signature_original_name AS assigned_pdo_signature_original_name,
+                assigned_staff.signature_mime_type AS assigned_pdo_signature_mime_type,
+                assigned_staff.signature_file_size AS assigned_pdo_signature_file_size,
+                assigned_staff.signature_uploaded_at AS assigned_pdo_signature_uploaded_at,
+                assigned_pdo_users.full_name AS assigned_pdo_name
              FROM users
              INNER JOIN applicant_profiles ON applicant_profiles.user_id = users.id
              LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
              LEFT JOIN beneficiary_profiles ON beneficiary_profiles.applicant_profile_id = applicant_profiles.id
+             LEFT JOIN applications ON applications.applicant_profile_id = applicant_profiles.id
+             LEFT JOIN staff_profiles AS assigned_staff
+                ON assigned_staff.id = COALESCE(beneficiary_profiles.assigned_staff_profile_id, applications.assigned_staff_profile_id)
+             LEFT JOIN users AS assigned_pdo_users ON assigned_pdo_users.id = assigned_staff.user_id
              WHERE users.id = :user_id
              LIMIT 1'
         );
         $statement->execute(['user_id' => $userId]);
         $row = $statement->fetch(PDO::FETCH_ASSOC);
 
-        if (!is_array($row) || $row['beneficiary_profile_id'] === null) {
+        if (!is_array($row)) {
             return null;
         }
 
+        if ($row['beneficiary_profile_id'] === null) {
+            $beneficiaryProfileId = (new ApplicationService())->ensureApplicationFormsForUser($userId, $userId);
+            if ($beneficiaryProfileId === null) {
+                return null;
+            }
+            $row['beneficiary_profile_id'] = $beneficiaryProfileId;
+        }
+
         return $row;
+    }
+
+    private function notifyPostApprovalSubmission(array $context, string $formTitle): void
+    {
+        $notificationService = new NotificationService();
+
+        $recipientIds = $notificationService->activeUserIdsForRoles([ROLE_ADMIN]);
+        $assignedStaffProfileId = (int) ($context['assigned_staff_profile_id'] ?? 0);
+        $assignedUserId = $notificationService->userIdForStaffProfileId($assignedStaffProfileId);
+        if ($assignedUserId !== null) {
+            $recipientIds[] = $assignedUserId;
+        }
+
+        $applicantName = trim((string) ($context['full_name'] ?? ''));
+        $businessName = trim((string) ($context['business_name'] ?? ''));
+        $barangayName = trim((string) ($context['barangay_name'] ?? ''));
+
+        $recipientIds = array_values(array_unique(array_filter($recipientIds, static fn (int $value): bool => $value > 0)));
+        if ($recipientIds === []) {
+            return;
+        }
+
+        $subject = trim($formTitle) !== '' ? $formTitle : 'Post-approval form';
+        $recipientLabelParts = [];
+        if ($applicantName !== '') {
+            $recipientLabelParts[] = $applicantName;
+        }
+        if ($businessName !== '') {
+            $recipientLabelParts[] = 'from ' . $businessName;
+        }
+        if ($barangayName !== '') {
+            $recipientLabelParts[] = 'in ' . $barangayName;
+        }
+        $recipientLabel = $recipientLabelParts !== [] ? implode(' ', $recipientLabelParts) : 'A beneficiary';
+
+        $notificationService->createInAppForUsers(
+            $recipientIds,
+            'Post-approval submission received',
+            sprintf('%s submitted %s and it is awaiting review.', $recipientLabel, $subject),
+            'post_approval'
+        );
+    }
+
+    private function ensureStaffProfileSignatureColumns(): void
+    {
+        static $ensured = false;
+        if ($ensured) {
+            return;
+        }
+
+        $columns = [
+            'signature_file_path' => 'ALTER TABLE staff_profiles ADD COLUMN signature_file_path VARCHAR(255) NULL AFTER position_title',
+            'signature_original_name' => 'ALTER TABLE staff_profiles ADD COLUMN signature_original_name VARCHAR(255) NULL AFTER signature_file_path',
+            'signature_mime_type' => 'ALTER TABLE staff_profiles ADD COLUMN signature_mime_type VARCHAR(120) NULL AFTER signature_original_name',
+            'signature_file_size' => 'ALTER TABLE staff_profiles ADD COLUMN signature_file_size BIGINT UNSIGNED NULL AFTER signature_mime_type',
+            'signature_uploaded_at' => 'ALTER TABLE staff_profiles ADD COLUMN signature_uploaded_at DATETIME NULL AFTER signature_file_size',
+        ];
+
+        foreach ($columns as $column => $sql) {
+            $statement = db()->prepare(
+                'SELECT COUNT(*) FROM information_schema.columns
+                 WHERE table_schema = DATABASE()
+                   AND table_name = :table_name
+                   AND column_name = :column_name'
+            );
+            $statement->execute([
+                'table_name' => 'staff_profiles',
+                'column_name' => $column,
+            ]);
+            if ((int) $statement->fetchColumn() > 0) {
+                continue;
+            }
+
+            db()->exec($sql);
+        }
+
+        $ensured = true;
+    }
+
+    private function assignedPdoName(array $context): string
+    {
+        return trim((string) ($context['assigned_pdo_name'] ?? ''));
+    }
+
+    private function assignedPdoTitle(array $context): string
+    {
+        $title = trim((string) ($context['assigned_pdo_title'] ?? ''));
+        return $title !== '' ? $title : 'Project Officer';
+    }
+
+    private function assignedPdoSignature(array $context, ?array $fallback = null): ?array
+    {
+        $filePath = trim((string) ($context['assigned_pdo_signature_file_path'] ?? ''));
+        if ($filePath !== '') {
+            return [
+                'file_path' => $filePath,
+                'original_name' => trim((string) ($context['assigned_pdo_signature_original_name'] ?? basename($filePath))),
+                'mime_type' => trim((string) ($context['assigned_pdo_signature_mime_type'] ?? '')),
+                'file_size' => (int) ($context['assigned_pdo_signature_file_size'] ?? 0),
+                'uploaded_at' => trim((string) ($context['assigned_pdo_signature_uploaded_at'] ?? '')),
+            ];
+        }
+
+        return $fallback;
+    }
+
+    private function assignedPdoSignedDate(array $signoff, ?string $reviewedAt = null): string
+    {
+        $existing = trim((string) ($signoff['signedDate'] ?? $signoff['approvedDate'] ?? $signoff['reviewerDate'] ?? ''));
+        if ($existing !== '') {
+            return $existing;
+        }
+
+        if ($reviewedAt !== null && trim($reviewedAt) !== '') {
+            $timestamp = strtotime($reviewedAt);
+            if ($timestamp !== false) {
+                return date('Y-m-d', $timestamp);
+            }
+        }
+
+        return '';
+    }
+
+    private function applyAssignedPdoSignoffDefaults(string $code, array $payload, array $context, ?string $reviewedAt = null): array
+    {
+        $assignedName = $this->assignedPdoName($context);
+        if ($assignedName === '') {
+            return $payload;
+        }
+
+        $assignedTitle = $this->assignedPdoTitle($context);
+
+        if ($code === POST_APPROVAL_TASK_AVAILMENT_FORM) {
+            $payload['staffReview'] = $payload['staffReview'] ?? [];
+
+            $pageOne = $payload['staffReview']['pageOneCertification'] ?? [];
+            $payload['staffReview']['pageOneCertification'] = array_replace($pageOne, [
+                'directWorkerName' => $assignedName,
+                'directWorkerTitle' => $assignedTitle,
+                'signedDate' => $this->assignedPdoSignedDate($pageOne, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $pageOne['signatureUpload'] ?? null),
+            ]);
+
+            $food = $payload['staffReview']['physicalRequirements']['foodRelatedCertification'] ?? [];
+            $payload['staffReview']['physicalRequirements']['foodRelatedCertification'] = array_replace($food, [
+                'certifyingOfficerName' => $assignedName,
+                'certifyingOfficerTitle' => $assignedTitle,
+                'signedDate' => $this->assignedPdoSignedDate($food, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $food['signatureUpload'] ?? null),
+            ]);
+
+            $residency = $payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter'] ?? [];
+            $payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter'] = array_replace($residency, [
+                'certifyingOfficerName' => $assignedName,
+                'certifyingOfficerTitle' => $assignedTitle,
+                'signedDate' => $this->assignedPdoSignedDate($residency, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $residency['signatureUpload'] ?? null),
+            ]);
+
+            $relationships = $payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration'] ?? [];
+            $payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration'] = array_replace($relationships, [
+                'directWorkerName' => $assignedName,
+                'directWorkerTitle' => $assignedTitle,
+                'signedDate' => $this->assignedPdoSignedDate($relationships, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $relationships['signatureUpload'] ?? null),
+            ]);
+
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_VALIDATION_FORM) {
+            $payload['staffReview'] = $payload['staffReview'] ?? [];
+            $identity = $payload['staffReview']['validatorIdentity'] ?? [];
+            $payload['staffReview']['validatorIdentity'] = array_replace($identity, [
+                'validatorName' => $assignedName,
+                'validatorTitle' => $assignedTitle,
+                'signedDate' => $this->assignedPdoSignedDate($identity, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $identity['signatureUpload'] ?? null),
+            ]);
+
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO) {
+            $payload['staffReview'] = $payload['staffReview'] ?? [];
+            $recommendation = $payload['staffReview']['recommendation'] ?? [];
+            $payload['staffReview']['recommendation'] = array_replace($recommendation, [
+                'approverName' => $assignedName,
+                'approverTitle' => $assignedTitle,
+                'approvedDate' => $this->assignedPdoSignedDate($recommendation, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $recommendation['signatureUpload'] ?? null),
+            ]);
+
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_BUSINESS_PLAN) {
+            $payload['staffReview'] = $payload['staffReview'] ?? [];
+            $approval = $payload['staffReview']['approval'] ?? [];
+            $payload['staffReview']['approval'] = array_replace($approval, [
+                'approverName' => $assignedName,
+                'approverTitle' => $assignedTitle,
+                'approvedDate' => $this->assignedPdoSignedDate($approval, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $approval['signatureUpload'] ?? null),
+            ]);
+
+            return $payload;
+        }
+
+        if ($code === POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA) {
+            $payload['staffReview'] = $payload['staffReview'] ?? [];
+            $verification = $payload['staffReview']['verification'] ?? [];
+            $payload['staffReview']['verification'] = array_replace($verification, [
+                'reviewerName' => $assignedName,
+                'reviewerTitle' => $assignedTitle,
+                'reviewerDate' => $this->assignedPdoSignedDate($verification, $reviewedAt),
+                'signatureUpload' => $this->assignedPdoSignature($context, $verification['signatureUpload'] ?? null),
+            ]);
+
+            return $payload;
+        }
+
+        return $payload;
     }
 
     private function ensureRequiredTaskTypes(): void
@@ -326,9 +662,67 @@ class PostApprovalComplianceService
         return is_string($value) && trim($value) !== '' ? $value : null;
     }
 
-    private function ensureUnlockedTaskSet(int $beneficiaryProfileId, ?string $unlockedAt, int $actorUserId): void
+    private function openedSeminarAccessForApplicant(int $applicantProfileId): array
     {
-        if ($unlockedAt === null) {
+        if ($applicantProfileId <= 0) {
+            return ['codes' => [], 'openedAt' => null, 'programs' => []];
+        }
+
+        $statement = db()->prepare(
+            'SELECT
+                training_programs.id AS training_program_id,
+                training_programs.title,
+                training_programs.starts_at,
+                training_programs.updated_at,
+                training_programs.created_at,
+                training_programs.seminar_form_codes,
+                training_invitees.invite_status
+             FROM training_invitees
+             INNER JOIN training_programs ON training_programs.id = training_invitees.training_program_id
+             WHERE training_invitees.applicant_profile_id = :applicant_profile_id
+               AND training_invitees.invite_status NOT IN ("Excused", "Missed")
+             ORDER BY training_programs.starts_at ASC, training_invitees.id ASC'
+        );
+        $statement->execute(['applicant_profile_id' => $applicantProfileId]);
+        $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+
+        $codes = [];
+        $openedAt = null;
+        $programs = [];
+
+        foreach ($rows as $row) {
+            $programCodes = $this->sanitizeSeminarFormCodes($this->decodeJsonArray($row['seminar_form_codes'] ?? null));
+            if ($programCodes === []) {
+                continue;
+            }
+
+            foreach ($programCodes as $code) {
+                $codes[$code] = true;
+            }
+
+            $candidateOpenedAt = trim((string) ($row['updated_at'] ?? $row['created_at'] ?? $row['starts_at'] ?? ''));
+            if ($candidateOpenedAt !== '' && ($openedAt === null || strtotime($candidateOpenedAt) > strtotime($openedAt))) {
+                $openedAt = $candidateOpenedAt;
+            }
+
+            $programs[] = [
+                'id' => (int) ($row['training_program_id'] ?? 0),
+                'title' => (string) ($row['title'] ?? ''),
+                'startsAt' => (string) ($row['starts_at'] ?? ''),
+                'codes' => $programCodes,
+            ];
+        }
+
+        return [
+            'codes' => array_keys($codes),
+            'openedAt' => $openedAt,
+            'programs' => $programs,
+        ];
+    }
+
+    private function ensureUnlockedTaskSet(int $beneficiaryProfileId, ?string $unlockedAt, int $actorUserId, bool $forceForApplication = false): void
+    {
+        if ($unlockedAt === null && !$forceForApplication) {
             return;
         }
 
@@ -343,9 +737,9 @@ class PostApprovalComplianceService
              WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
                AND LOWER(post_approval_tasks.status) = "pending"'
         )->execute([
+            'final_code' => POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
             'status' => POST_APPROVAL_STATUS_UNLOCKED,
             'locked_status' => POST_APPROVAL_STATUS_LOCKED,
-            'final_code' => POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
             'beneficiary_profile_id' => $beneficiaryProfileId,
         ]);
 
@@ -365,78 +759,10 @@ class PostApprovalComplianceService
             $statement->execute([
                 'beneficiary_profile_id' => $beneficiaryProfileId,
                 'task_type_id' => $typeMap[$code],
-                'status' => $code === POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE
-                    ? POST_APPROVAL_STATUS_LOCKED
-                    : POST_APPROVAL_STATUS_UNLOCKED,
+                'status' => POST_APPROVAL_STATUS_UNLOCKED,
                 'assigned_by_user_id' => $actorUserId,
             ]);
         }
-
-        $this->syncFundReleaseRequirement($beneficiaryProfileId);
-    }
-
-    public function syncFundReleaseRequirement(int $beneficiaryProfileId): void
-    {
-        if ($beneficiaryProfileId <= 0) {
-            return;
-        }
-
-        $prerequisiteCodes = [
-            POST_APPROVAL_TASK_AVAILMENT_FORM,
-            POST_APPROVAL_TASK_VALIDATION_FORM,
-            POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO,
-            POST_APPROVAL_TASK_BUSINESS_PLAN,
-            POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA,
-        ];
-
-        $placeholders = implode(',', array_fill(0, count($prerequisiteCodes), '?'));
-        $statement = db()->prepare(
-            "SELECT post_approval_task_types.code, post_approval_tasks.status
-             FROM post_approval_tasks
-             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
-             WHERE post_approval_tasks.beneficiary_profile_id = ?
-               AND post_approval_task_types.code IN ($placeholders)"
-        );
-        $statement->bindValue(1, $beneficiaryProfileId, PDO::PARAM_INT);
-        foreach ($prerequisiteCodes as $index => $code) {
-            $statement->bindValue($index + 2, $code, PDO::PARAM_STR);
-        }
-        $statement->execute();
-        $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
-        $statuses = [];
-        foreach ($rows as $row) {
-            $statuses[(string) $row['code']] = $this->normalizeStatus((string) ($row['status'] ?? ''));
-        }
-
-        $allVerified = count($statuses) === count($prerequisiteCodes);
-        if ($allVerified) {
-            foreach ($prerequisiteCodes as $code) {
-                if (($statuses[$code] ?? null) !== POST_APPROVAL_STATUS_VERIFIED) {
-                    $allVerified = false;
-                    break;
-                }
-            }
-        }
-
-        db()->prepare(
-            'UPDATE post_approval_tasks
-             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
-             SET post_approval_tasks.status = CASE
-                    WHEN :all_verified = 1 AND post_approval_tasks.status = :locked_status THEN :unlocked_status
-                    WHEN :all_verified = 0 AND LOWER(post_approval_tasks.status) = "pending" THEN :locked_status
-                    ELSE post_approval_tasks.status
-                 END,
-                 post_approval_tasks.updated_at = CURRENT_TIMESTAMP
-             WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
-               AND post_approval_task_types.code = :final_code'
-        )->execute([
-            'all_verified' => $allVerified ? 1 : 0,
-            'locked_status' => POST_APPROVAL_STATUS_LOCKED,
-            'unlocked_status' => POST_APPROVAL_STATUS_UNLOCKED,
-            'beneficiary_profile_id' => $beneficiaryProfileId,
-            'final_code' => POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
-        ]);
     }
 
     private function taskTypeIdMap(): array
@@ -450,7 +776,7 @@ class PostApprovalComplianceService
         return $map;
     }
 
-    private function fetchTasks(int $beneficiaryProfileId, array $context): array
+    private function fetchTasks(int $beneficiaryProfileId, array $context, array $allowedCodes): array
     {
         $statement = db()->prepare(
             'SELECT
@@ -474,12 +800,13 @@ class PostApprovalComplianceService
                   "validation_form",
                   "mungkahing_proyekto",
                   "business_plan",
-                  "buhat_sa_pagpanumpa",
-                  "fund_release_evidence"
+                  "buhat_sa_pagpanumpa"
               ), post_approval_tasks.id ASC'
         );
         $statement->execute(['beneficiary_profile_id' => $beneficiaryProfileId]);
         $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        $allowedMap = array_fill_keys($allowedCodes, true);
+        $rows = array_values(array_filter($rows, static fn (array $row): bool => isset($allowedMap[(string) ($row['code'] ?? '')])));
 
         return array_map(fn (array $row): array => $this->mapTask($row, $context), $rows);
     }
@@ -526,6 +853,15 @@ class PostApprovalComplianceService
         ];
 
         $payload = $this->decodePayload($row['form_payload'] ?? null) ?? $this->defaultPayload($code, $context);
+        if ($code === POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO) {
+            $payload['sectoralClassification'] = $this->normalizeMungkahingSectoralClassification($payload['sectoralClassification'] ?? []);
+        }
+        $payload = $this->applyAssignedPdoSignoffDefaults(
+            $code,
+            $payload,
+            $context,
+            is_string($row['reviewed_at'] ?? null) ? (string) $row['reviewed_at'] : null
+        );
         $status = $this->normalizeStatus((string) ($row['status'] ?? POST_APPROVAL_STATUS_UNLOCKED));
 
         return [
@@ -544,6 +880,13 @@ class PostApprovalComplianceService
             'reviewerRemarks' => $row['reviewer_remarks'],
             'applicantSections' => $definition['applicantSections'],
             'staffSections' => $definition['staffSections'],
+            'assignedPdo' => [
+                'name' => $this->assignedPdoName($context),
+                'title' => $this->assignedPdoTitle($context),
+                'signatureUpload' => $this->assignedPdoSignature($context),
+                'hasSavedSignature' => $this->assignedPdoSignature($context) !== null,
+            ],
+            'file' => $this->normalizeUploadMetadata($payload['staffReview']['reviewAttachment'] ?? null),
             'payload' => $payload,
             'completion' => $this->completionForTask($code, $payload),
         ];
@@ -589,7 +932,7 @@ class PostApprovalComplianceService
 
     private function validatePayload(string $code, array $payload, array $context, bool $strict): array
     {
-        return match ($code) {
+        $result = match ($code) {
             POST_APPROVAL_TASK_AVAILMENT_FORM => $this->validateAvailmentPayload($payload, $context, $strict),
             POST_APPROVAL_TASK_VALIDATION_FORM => $this->validateValidationPayload($payload, $context, $strict),
             POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => $this->validateMungkahingPayload($payload, $context, $strict),
@@ -598,6 +941,12 @@ class PostApprovalComplianceService
             POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => $this->validateFundReleaseEvidencePayload($payload, $context, $strict),
             default => ['payload' => $payload, 'errors' => ['task' => 'Unsupported digital form.']],
         };
+
+        if (isset($result['payload']) && is_array($result['payload'])) {
+            $result['payload'] = $this->applyAssignedPdoSignoffDefaults($code, $result['payload'], $context);
+        }
+
+        return $result;
     }
 
     private function validateAvailmentPayload(array $payload, array $context, bool $strict): array
@@ -636,6 +985,25 @@ class PostApprovalComplianceService
             ];
         }
 
+        $healthRows = [];
+        foreach (($payload['staffReview']['physicalRequirements']['healthAgeRows'] ?? []) as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $requirement = trim((string) ($row['requirement'] ?? ''));
+            $age = trim((string) ($row['age'] ?? ''));
+            $healthStatus = trim((string) ($row['healthStatus'] ?? ''));
+            if ($requirement === '' && $age === '' && $healthStatus === '') {
+                continue;
+            }
+            $healthRows[] = [
+                'requirement' => $requirement,
+                'age' => $age,
+                'healthStatus' => $healthStatus,
+            ];
+        }
+
+        $approval = $payload['staffReview']['approval'] ?? [];
         $clean = [
             'clientIdentifyingData' => [
                 'name' => trim((string) ($payload['clientIdentifyingData']['name'] ?? ($context['full_name'] ?? ''))),
@@ -656,15 +1024,70 @@ class PostApprovalComplianceService
                 'totalFamilyIncome' => trim((string) ($payload['incomeEligibility']['totalFamilyIncome'] ?? '')),
             ],
             'clientCommitment' => [
-                'agreedToPolicies' => !empty($payload['clientCommitment']['agreedToPolicies'] ?? false),
-                'agreedToRollBackSchedule' => !empty($payload['clientCommitment']['agreedToRollBackSchedule'] ?? ($payload['clientCommitment']['agreedToSavingsCommitment'] ?? false)),
-                'agreedToWeeklySavings' => !empty($payload['clientCommitment']['agreedToWeeklySavings'] ?? ($payload['clientCommitment']['agreedToSavingsCommitment'] ?? false)),
-                'notes' => trim((string) ($payload['clientCommitment']['notes'] ?? '')),
+                // Preserve the payload shape for existing records, but the applicant
+                // now reviews this as a paper-faithful certification statement instead
+                // of three separate checkboxes and a notes field.
+                'agreedToPolicies' => true,
+                'agreedToRollBackSchedule' => true,
+                'agreedToWeeklySavings' => true,
+                'notes' => '',
             ],
             'applicantSignature' => [
                 'signedName' => trim((string) ($payload['applicantSignature']['signedName'] ?? ($context['full_name'] ?? ''))),
                 'signedDate' => trim((string) ($payload['applicantSignature']['signedDate'] ?? date('Y-m-d'))),
                 'signatureUpload' => $this->normalizeUploadMetadata($payload['applicantSignature']['signatureUpload'] ?? null),
+            ],
+            'staffReview' => [
+                'pageOneCertification' => [
+                    'eligibilityStatementName' => trim((string) ($payload['staffReview']['pageOneCertification']['eligibilityStatementName'] ?? ($context['full_name'] ?? ''))),
+                    'directWorkerName' => trim((string) ($payload['staffReview']['pageOneCertification']['directWorkerName'] ?? '')),
+                    'directWorkerTitle' => trim((string) ($payload['staffReview']['pageOneCertification']['directWorkerTitle'] ?? '')),
+                    'signedDate' => trim((string) ($payload['staffReview']['pageOneCertification']['signedDate'] ?? '')),
+                    'signatureUpload' => $this->normalizeUploadMetadata($payload['staffReview']['pageOneCertification']['signatureUpload'] ?? null),
+                ],
+                'physicalRequirements' => [
+                    'healthAgeRows' => $healthRows,
+                    'foodRelatedCertification' => [
+                        'applicantName' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['applicantName'] ?? ($context['full_name'] ?? ''))),
+                        'requiresMedicalClearance' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['requiresMedicalClearance'] ?? '')),
+                        'medicalCheckupCompleted' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['medicalCheckupCompleted'] ?? '')),
+                        'medicallyFit' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['medicallyFit'] ?? '')),
+                        'certifyingOfficerName' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['certifyingOfficerName'] ?? '')),
+                        'certifyingOfficerTitle' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['certifyingOfficerTitle'] ?? '')),
+                        'signedDate' => trim((string) ($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['signedDate'] ?? '')),
+                        'signatureUpload' => $this->normalizeUploadMetadata($payload['staffReview']['physicalRequirements']['foodRelatedCertification']['signatureUpload'] ?? null),
+                    ],
+                ],
+                'psychoSocialRequirements' => [
+                    'residencyAndCharacter' => [
+                        'residentName' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['residentName'] ?? ($context['full_name'] ?? ''))),
+                        'barangay' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['barangay'] ?? ($context['barangay_name'] ?? ''))),
+                        'isBonaFideResident' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['isBonaFideResident'] ?? '')),
+                        'goodMoralCharacter' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['goodMoralCharacter'] ?? '')),
+                        'hasNoAdverseReputation' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['hasNoAdverseReputation'] ?? '')),
+                        'certifyingOfficerName' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['certifyingOfficerName'] ?? '')),
+                        'certifyingOfficerTitle' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['certifyingOfficerTitle'] ?? '')),
+                        'signedDate' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['signedDate'] ?? '')),
+                        'signatureUpload' => $this->normalizeUploadMetadata($payload['staffReview']['psychoSocialRequirements']['residencyAndCharacter']['signatureUpload'] ?? null),
+                    ],
+                    'familyRelationshipsWorkHabitsAspiration' => [
+                        'applicantName' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['applicantName'] ?? ($context['full_name'] ?? ''))),
+                        'positiveRelationships' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['positiveRelationships'] ?? '')),
+                        'goodWorkHabitsAndAttitude' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['goodWorkHabitsAndAttitude'] ?? '')),
+                        'adequateEconomicAspiration' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['adequateEconomicAspiration'] ?? '')),
+                        'findingText' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['findingText'] ?? '')),
+                        'directWorkerName' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['directWorkerName'] ?? '')),
+                        'directWorkerTitle' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['directWorkerTitle'] ?? '')),
+                        'signedDate' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['signedDate'] ?? '')),
+                        'signatureUpload' => $this->normalizeUploadMetadata($payload['staffReview']['psychoSocialRequirements']['familyRelationshipsWorkHabitsAspiration']['signatureUpload'] ?? null),
+                    ],
+                    'socialResponsibility' => [
+                        'abidePolicies' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['socialResponsibility']['abidePolicies'] ?? '')),
+                        'payRollBackOnTime' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['socialResponsibility']['payRollBackOnTime'] ?? '')),
+                        'generateWeeklySavings' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['socialResponsibility']['generateWeeklySavings'] ?? '')),
+                        'acknowledgementText' => trim((string) ($payload['staffReview']['psychoSocialRequirements']['socialResponsibility']['acknowledgementText'] ?? '')),
+                    ],
+                ],
             ],
         ];
 
@@ -688,15 +1111,6 @@ class PostApprovalComplianceService
             if ($clean['incomeEligibility']['rows'] === []) {
                 $errors['incomeEligibility.rows'] = 'Add at least one family income row.';
             }
-            if (!$clean['clientCommitment']['agreedToPolicies']) {
-                $errors['clientCommitment.agreedToPolicies'] = 'You must acknowledge the SMART LEAP policies.';
-            }
-            if (!$clean['clientCommitment']['agreedToRollBackSchedule']) {
-                $errors['clientCommitment.agreedToRollBackSchedule'] = 'You must acknowledge the roll-back schedule commitment.';
-            }
-            if (!$clean['clientCommitment']['agreedToWeeklySavings']) {
-                $errors['clientCommitment.agreedToWeeklySavings'] = 'You must acknowledge the weekly savings commitment.';
-            }
             if ($clean['applicantSignature']['signedName'] === '') {
                 $errors['applicantSignature.signedName'] = 'Type the applicant name for the signature block.';
             }
@@ -714,6 +1128,8 @@ class PostApprovalComplianceService
     private function validateValidationPayload(array $payload, array $context, bool $strict): array
     {
         $name = $this->splitName((string) ($context['full_name'] ?? ''));
+        $validatorIdentity = $payload['staffReview']['validatorIdentity'] ?? [];
+        $eligibility = $payload['staffReview']['eligibilityAssessment'] ?? [];
         $clean = [
             'applicantDetails' => [
                 'validationDate' => trim((string) ($payload['applicantDetails']['validationDate'] ?? date('Y-m-d'))),
@@ -736,6 +1152,23 @@ class PostApprovalComplianceService
                 'signedName' => trim((string) ($payload['participantSignature']['signedName'] ?? ($context['full_name'] ?? ''))),
                 'signedDate' => trim((string) ($payload['participantSignature']['signedDate'] ?? date('Y-m-d'))),
                 'signatureUpload' => $this->normalizeUploadMetadata($payload['participantSignature']['signatureUpload'] ?? null),
+            ],
+            'staffReview' => [
+                'validatorRecommendation' => trim((string) ($payload['staffReview']['validatorRecommendation'] ?? '')),
+                'eligibilityAssessment' => [
+                    'residentName' => trim((string) ($eligibility['residentName'] ?? ($context['full_name'] ?? ''))),
+                    'age' => trim((string) ($eligibility['age'] ?? ($context['age'] ?? ''))),
+                    'barangay' => trim((string) ($eligibility['barangay'] ?? ($context['barangay_name'] ?? ''))),
+                    'understandsAssistanceProcess' => $this->normalizeYesNo((string) ($eligibility['understandsAssistanceProcess'] ?? '')),
+                    'assistanceProcessUnderstanding' => trim((string) ($eligibility['assistanceProcessUnderstanding'] ?? '')),
+                    'eligibilityDecision' => trim((string) ($eligibility['eligibilityDecision'] ?? '')),
+                ],
+                'validatorIdentity' => [
+                    'validatorName' => trim((string) ($validatorIdentity['validatorName'] ?? '')),
+                    'validatorTitle' => trim((string) ($validatorIdentity['validatorTitle'] ?? '')),
+                    'signedDate' => trim((string) ($validatorIdentity['signedDate'] ?? '')),
+                    'signatureUpload' => $this->normalizeUploadMetadata($validatorIdentity['signatureUpload'] ?? null),
+                ],
             ],
         ];
 
@@ -786,6 +1219,8 @@ class PostApprovalComplianceService
         }
 
         $materialsRows = [];
+        $materialsTotalCost = 0.0;
+        $hasComputedMaterialsTotal = false;
         foreach (($payload['businessOperation']['materials']['rows'] ?? []) as $row) {
             if (!is_array($row)) {
                 continue;
@@ -795,7 +1230,7 @@ class PostApprovalComplianceService
             $unit = trim((string) ($row['unit'] ?? ''));
             $unitPrice = trim((string) ($row['unitPrice'] ?? ''));
             $cycles = trim((string) ($row['cyclesPerProduction'] ?? ''));
-            $projectedCost = trim((string) ($row['projectedCost'] ?? ''));
+            $projectedCost = $this->computeMungkahingMaterialProjectedCost($quality, $unitPrice, $cycles);
             if ($material === '' && $quality === '' && $unit === '' && $unitPrice === '' && $cycles === '' && $projectedCost === '') {
                 continue;
             }
@@ -807,6 +1242,11 @@ class PostApprovalComplianceService
                 'cyclesPerProduction' => $cycles,
                 'projectedCost' => $projectedCost,
             ];
+            $parsedProjectedCost = $this->parseMungkahingFormulaNumber($projectedCost);
+            if ($parsedProjectedCost !== null) {
+                $materialsTotalCost += $parsedProjectedCost;
+                $hasComputedMaterialsTotal = true;
+            }
         }
 
         $laborRows = [];
@@ -828,6 +1268,8 @@ class PostApprovalComplianceService
         }
 
         $equipmentRows = [];
+        $equipmentTotalCost = 0.0;
+        $hasComputedEquipmentTotal = false;
         foreach (($payload['businessOperation']['toolsEquipment']['rows'] ?? []) as $row) {
             if (!is_array($row)) {
                 continue;
@@ -836,10 +1278,10 @@ class PostApprovalComplianceService
             $capacity = trim((string) ($row['capacity'] ?? ''));
             $unit = trim((string) ($row['unit'] ?? ''));
             $quantityOrPrice = trim((string) ($row['quantityOrPrice'] ?? ''));
-            $projectedAmount = trim((string) ($row['projectedAmount'] ?? ''));
+            $projectedAmount = $this->computeMungkahingToolsProjectedAmount($capacity, $quantityOrPrice);
             $usefulLifeDays = trim((string) ($row['usefulLifeDays'] ?? ''));
             $productionCycle = trim((string) ($row['productionCycle'] ?? ''));
-            $depreciationCost = trim((string) ($row['depreciationCost'] ?? ''));
+            $depreciationCost = $this->computeMungkahingToolsDepreciationCost($projectedAmount, $usefulLifeDays, $productionCycle);
             if ($equipment === '' && $capacity === '' && $unit === '' && $quantityOrPrice === '' && $projectedAmount === '' && $usefulLifeDays === '' && $productionCycle === '' && $depreciationCost === '') {
                 continue;
             }
@@ -853,20 +1295,35 @@ class PostApprovalComplianceService
                 'productionCycle' => $productionCycle,
                 'depreciationCost' => $depreciationCost,
             ];
+            $parsedProjectedAmount = $this->parseMungkahingFormulaNumber($projectedAmount);
+            if ($parsedProjectedAmount !== null) {
+                $equipmentTotalCost += $parsedProjectedAmount;
+                $hasComputedEquipmentTotal = true;
+            }
         }
 
         $rawExpenseRows = $payload['businessOperation']['operatingExpenses']['rows'] ?? [];
         $expenseRows = [];
+        $expenseGrandTotal = 0.0;
+        $hasExpenseGrandTotal = false;
         foreach ($this->defaultMungkahingExpenseRows() as $index => $defaultExpense) {
             $row = is_array($rawExpenseRows[$index] ?? null) ? $rawExpenseRows[$index] : [];
+            $projectedCost = trim((string) ($row['projectedCost'] ?? ''));
             $expenseRows[] = [
                 'expenseName' => $defaultExpense['expenseName'],
                 'paymentFrequency' => trim((string) ($row['paymentFrequency'] ?? '')),
-                'projectedCost' => trim((string) ($row['projectedCost'] ?? '')),
+                'projectedCost' => $projectedCost,
             ];
+            $parsedProjectedCost = $this->parseMungkahingFormulaNumber($projectedCost);
+            if ($parsedProjectedCost !== null) {
+                $expenseGrandTotal += $parsedProjectedCost;
+                $hasExpenseGrandTotal = true;
+            }
         }
 
         $salesRows = [];
+        $grossSalesTotal = 0.0;
+        $hasGrossSalesTotal = false;
         foreach (($payload['businessOperation']['salesProjection']['rows'] ?? []) as $row) {
             if (!is_array($row)) {
                 continue;
@@ -875,7 +1332,7 @@ class PostApprovalComplianceService
             $capacity = trim((string) ($row['capacity'] ?? ''));
             $unit = trim((string) ($row['unit'] ?? ''));
             $sellingPrice = trim((string) ($row['sellingPrice'] ?? ''));
-            $projectedSales = trim((string) ($row['projectedSales'] ?? ''));
+            $projectedSales = $this->computeMungkahingSalesProjectedSales($capacity, $sellingPrice);
             if ($product === '' && $capacity === '' && $unit === '' && $sellingPrice === '' && $projectedSales === '') {
                 continue;
             }
@@ -886,6 +1343,11 @@ class PostApprovalComplianceService
                 'sellingPrice' => $sellingPrice,
                 'projectedSales' => $projectedSales,
             ];
+            $parsedProjectedSales = $this->parseMungkahingFormulaNumber($projectedSales);
+            if ($parsedProjectedSales !== null) {
+                $grossSalesTotal += $parsedProjectedSales;
+                $hasGrossSalesTotal = true;
+            }
         }
 
         $spendingRows = [];
@@ -908,6 +1370,7 @@ class PostApprovalComplianceService
 
         $projectTitle = trim((string) ($payload['projectInformation']['projectTitle'] ?? ($context['business_name'] ?? '')));
         $projectedAmount = trim((string) ($payload['projectInformation']['projectedAmount'] ?? ''));
+        $recommendation = $payload['staffReview']['recommendation'] ?? [];
 
         $clean = [
             'projectInformation' => [
@@ -920,32 +1383,7 @@ class PostApprovalComplianceService
                 'otherFundingSource' => trim((string) ($payload['projectInformation']['otherFundingSource'] ?? '')),
                 'savingsAccountNumber' => trim((string) ($payload['projectInformation']['savingsAccountNumber'] ?? 'NONE')),
             ],
-            'sectoralClassification' => [
-                'pantawid' => [
-                    'sexFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['sexFemale'] ?? false),
-                    'sexMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['sexMale'] ?? false),
-                    'seniorFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['seniorFemale'] ?? false),
-                    'seniorMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['seniorMale'] ?? false),
-                    'pwdFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['pwdFemale'] ?? false),
-                    'pwdMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['pwdMale'] ?? false),
-                    'ipFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['ipFemale'] ?? false),
-                    'ipMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['ipMale'] ?? false),
-                    'soloParentFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['soloParentFemale'] ?? false),
-                    'soloParentMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['pantawid']['soloParentMale'] ?? false),
-                ],
-                'nonPantawid' => [
-                    'sexFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['sexFemale'] ?? false),
-                    'sexMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['sexMale'] ?? false),
-                    'seniorFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['seniorFemale'] ?? false),
-                    'seniorMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['seniorMale'] ?? false),
-                    'pwdFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['pwdFemale'] ?? false),
-                    'pwdMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['pwdMale'] ?? false),
-                    'ipFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['ipFemale'] ?? false),
-                    'ipMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['ipMale'] ?? false),
-                    'soloParentFemale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['soloParentFemale'] ?? false),
-                    'soloParentMale' => $this->normalizeBooleanFlag($payload['sectoralClassification']['nonPantawid']['soloParentMale'] ?? false),
-                ],
-            ],
+            'sectoralClassification' => $this->normalizeMungkahingSectoralClassification($payload['sectoralClassification'] ?? []),
             'rationale' => trim((string) ($payload['rationale'] ?? '')),
             'modalityApplications' => [
                 'rows' => $modalityRows,
@@ -953,7 +1391,7 @@ class PostApprovalComplianceService
             'businessOperation' => [
                 'materials' => [
                     'rows' => $materialsRows,
-                    'totalCost' => trim((string) ($payload['businessOperation']['materials']['totalCost'] ?? '')),
+                    'totalCost' => $hasComputedMaterialsTotal ? $this->formatMungkahingComputedNumber($materialsTotalCost) : '',
                 ],
                 'labor' => [
                     'rows' => $laborRows,
@@ -962,15 +1400,15 @@ class PostApprovalComplianceService
                 ],
                 'toolsEquipment' => [
                     'rows' => $equipmentRows,
-                    'totalCost' => trim((string) ($payload['businessOperation']['toolsEquipment']['totalCost'] ?? '')),
+                    'totalCost' => $hasComputedEquipmentTotal ? $this->formatMungkahingComputedNumber($equipmentTotalCost) : '',
                 ],
                 'operatingExpenses' => [
                     'rows' => $expenseRows,
-                    'grandTotal' => trim((string) ($payload['businessOperation']['operatingExpenses']['grandTotal'] ?? '')),
+                    'grandTotal' => $hasExpenseGrandTotal ? $this->formatMungkahingComputedNumber($expenseGrandTotal) : '',
                 ],
                 'salesProjection' => [
                     'rows' => $salesRows,
-                    'grossSales' => trim((string) ($payload['businessOperation']['salesProjection']['grossSales'] ?? '')),
+                    'grossSales' => $hasGrossSalesTotal ? $this->formatMungkahingComputedNumber($grossSalesTotal) : '',
                 ],
                 'incomeComputation' => [
                     'projectedIncomePerCycle' => trim((string) ($payload['businessOperation']['incomeComputation']['projectedIncomePerCycle'] ?? '')),
@@ -991,6 +1429,17 @@ class PostApprovalComplianceService
                 'signedDate' => trim((string) ($payload['applicantSignature']['signedDate'] ?? date('Y-m-d'))),
                 'signatureUpload' => $this->normalizeUploadMetadata($payload['applicantSignature']['signatureUpload'] ?? null),
             ],
+            'staffReview' => [
+                'recommendation' => [
+                    'projectName' => trim((string) ($recommendation['projectName'] ?? $projectTitle)),
+                    'recommendedAmount' => trim((string) ($recommendation['recommendedAmount'] ?? '')),
+                    'recommendationText' => trim((string) ($recommendation['recommendationText'] ?? '')),
+                    'approverName' => trim((string) ($recommendation['approverName'] ?? '')),
+                    'approverTitle' => trim((string) ($recommendation['approverTitle'] ?? '')),
+                    'approvedDate' => trim((string) ($recommendation['approvedDate'] ?? '')),
+                    'signatureUpload' => $this->normalizeUploadMetadata($recommendation['signatureUpload'] ?? null),
+                ],
+            ],
         ];
 
         $errors = [];
@@ -1008,6 +1457,12 @@ class PostApprovalComplianceService
             }
             if ($clean['rationale'] === '') {
                 $errors['rationale'] = 'Project rationale is required.';
+            }
+            if (($clean['sectoralClassification']['membershipType'] ?? '') === '') {
+                $errors['sectoralClassification.membershipType'] = 'Select Pantawid or Non-Pantawid.';
+            }
+            if (($clean['sectoralClassification']['sex'] ?? '') === '') {
+                $errors['sectoralClassification.sex'] = 'Select Babae or Lalake.';
             }
             if ($clean['modalityApplications']['rows'] === []) {
                 $errors['modalityApplications.rows'] = 'Add at least one partner or participant contribution row.';
@@ -1031,119 +1486,141 @@ class PostApprovalComplianceService
 
     private function validateBusinessPlanPayload(array $payload, array $context, bool $strict): array
     {
-        $products = [];
+        $approval = $payload['staffReview']['approval'] ?? [];
+        $executiveSummaryInput = is_array($payload['executiveSummary'] ?? null) ? $payload['executiveSummary'] : [];
+        $marketingPlanInput = is_array($payload['marketingPlan'] ?? null) ? $payload['marketingPlan'] : [];
+        $productionPlanInput = is_array($payload['productionPlan'] ?? null) ? $payload['productionPlan'] : [];
+        $organizationInput = is_array($payload['organizationAndManagementPlan'] ?? null) ? $payload['organizationAndManagementPlan'] : [];
+        $financialPlanInput = is_array($payload['financialPlan'] ?? null) ? $payload['financialPlan'] : [];
+        $applicantSignatureInput = is_array($payload['applicantSignature'] ?? null) ? $payload['applicantSignature'] : [];
+        $overviewInput = is_array($payload['overview'] ?? null) ? $payload['overview'] : [];
+        $marketStrategyInput = is_array($payload['marketStrategy'] ?? null) ? $payload['marketStrategy'] : [];
+        $operationsPlanInput = is_array($payload['operationsPlan'] ?? null) ? $payload['operationsPlan'] : [];
+        $riskManagementInput = is_array($payload['riskManagement'] ?? null) ? $payload['riskManagement'] : [];
+        $legacyProducts = [];
         foreach (($payload['productsServices']['rows'] ?? []) as $row) {
             if (!is_array($row)) {
                 continue;
             }
-            $name = trim((string) ($row['name'] ?? ''));
-            $description = trim((string) ($row['description'] ?? ''));
-            $price = trim((string) ($row['price'] ?? ''));
-            $targetMarket = trim((string) ($row['targetMarket'] ?? ''));
-            if ($name === '' && $description === '' && $price === '' && $targetMarket === '') {
-                continue;
+            $parts = array_filter([
+                $this->normalizeOptionalString($row['name'] ?? ''),
+                $this->normalizeOptionalString($row['description'] ?? ''),
+                $this->normalizeOptionalString($row['price'] ?? ''),
+                $this->normalizeOptionalString($row['targetMarket'] ?? ''),
+            ], static fn ($value): bool => $value !== '');
+            if ($parts !== []) {
+                $legacyProducts[] = implode(' | ', $parts);
             }
-            $products[] = [
-                'name' => $name,
-                'description' => $description,
-                'price' => $price,
-                'targetMarket' => $targetMarket,
-            ];
         }
 
-        $scheduleRows = [];
+        $legacySchedule = [];
         foreach (($payload['implementationSchedule']['rows'] ?? []) as $row) {
             if (!is_array($row)) {
                 continue;
             }
-            $activity = trim((string) ($row['activity'] ?? ''));
-            $targetDate = trim((string) ($row['targetDate'] ?? ''));
-            $responsiblePerson = trim((string) ($row['responsiblePerson'] ?? ''));
-            if ($activity === '' && $targetDate === '' && $responsiblePerson === '') {
-                continue;
+            $parts = array_filter([
+                $this->normalizeOptionalString($row['activity'] ?? ''),
+                $this->normalizeOptionalString($row['targetDate'] ?? ''),
+                $this->normalizeOptionalString($row['responsiblePerson'] ?? ''),
+            ], static fn ($value): bool => $value !== '');
+            if ($parts !== []) {
+                $legacySchedule[] = implode(' | ', $parts);
             }
-            $scheduleRows[] = [
-                'activity' => $activity,
-                'targetDate' => $targetDate,
-                'responsiblePerson' => $responsiblePerson,
-            ];
         }
 
+        $legacyExecutiveSummary = $this->normalizeOptionalString($payload['executiveSummary'] ?? '');
+
         $clean = [
-            'overview' => [
-                'businessName' => trim((string) ($payload['overview']['businessName'] ?? ($context['business_name'] ?? ''))),
-                'ownerName' => trim((string) ($payload['overview']['ownerName'] ?? ($context['full_name'] ?? ''))),
-                'businessAddress' => trim((string) ($payload['overview']['businessAddress'] ?? $this->buildDefaultAddress($context))),
-                'contactNumber' => trim((string) ($payload['overview']['contactNumber'] ?? ($context['contact_number'] ?? ''))),
-                'businessGoal' => trim((string) ($payload['overview']['businessGoal'] ?? '')),
+            'executiveSummary' => [
+                'briefDescriptionOfBusinessProject' => $this->normalizeOptionalString($executiveSummaryInput['briefDescriptionOfBusinessProject'] ?? $legacyExecutiveSummary),
+                'briefProfileOfEntrepreneur' => $this->normalizeOptionalString($executiveSummaryInput['briefProfileOfEntrepreneur'] ?? ($overviewInput['businessGoal'] ?? '')),
+                'projectContributionsToEconomy' => $this->normalizeOptionalString($executiveSummaryInput['projectContributionsToEconomy'] ?? ($riskManagementInput['mitigation'] ?? '')),
             ],
-            'executiveSummary' => trim((string) ($payload['executiveSummary'] ?? '')),
-            'productsServices' => [
-                'rows' => $products,
+            'marketingPlan' => [
+                'descriptionOfProduct' => $this->normalizeOptionalString($marketingPlanInput['descriptionOfProduct'] ?? implode(PHP_EOL, $legacyProducts)),
+                'comparisonWithCompetitors' => $this->normalizeOptionalString($marketingPlanInput['comparisonWithCompetitors'] ?? ($marketStrategyInput['competitors'] ?? '')),
+                'location' => $this->normalizeOptionalString($marketingPlanInput['location'] ?? ($operationsPlanInput['businessLocation'] ?? '')),
+                'marketArea' => $this->normalizeOptionalString($marketingPlanInput['marketArea'] ?? ($marketStrategyInput['salesChannel'] ?? '')),
+                'mainCustomers' => $this->normalizeOptionalString($marketingPlanInput['mainCustomers'] ?? ($marketStrategyInput['customerProfile'] ?? '')),
+                'totalDemand' => $this->normalizeOptionalString($marketingPlanInput['totalDemand'] ?? ($financialPlanInput['monthlySalesProjection'] ?? '')),
+                'sellingPrice' => $this->normalizeOptionalString($marketingPlanInput['sellingPrice'] ?? ($financialPlanInput['projectedNetIncome'] ?? '')),
+                'promotionalMeasures' => $this->normalizeOptionalString($marketingPlanInput['promotionalMeasures'] ?? ($marketStrategyInput['marketingApproach'] ?? '')),
+                'marketingStrategy' => $this->normalizeOptionalString($marketingPlanInput['marketingStrategy'] ?? ($marketStrategyInput['salesChannel'] ?? '')),
+                'marketingBudget' => $this->normalizeOptionalString($marketingPlanInput['marketingBudget'] ?? ($financialPlanInput['monthlyExpenseProjection'] ?? '')),
             ],
-            'marketStrategy' => [
-                'customerProfile' => trim((string) ($payload['marketStrategy']['customerProfile'] ?? '')),
-                'competitors' => trim((string) ($payload['marketStrategy']['competitors'] ?? '')),
-                'marketingApproach' => trim((string) ($payload['marketStrategy']['marketingApproach'] ?? '')),
-                'salesChannel' => trim((string) ($payload['marketStrategy']['salesChannel'] ?? '')),
+            'productionPlan' => [
+                'productionServiceProcess' => $this->normalizeOptionalString($productionPlanInput['productionServiceProcess'] ?? ($operationsPlanInput['productionProcess'] ?? '')),
+                'fixedCapital' => $this->normalizeOptionalString($productionPlanInput['fixedCapital'] ?? ($operationsPlanInput['equipmentNeeded'] ?? '')),
+                'lifeOfFixedCapital' => $this->normalizeOptionalString($productionPlanInput['lifeOfFixedCapital'] ?? ($financialPlanInput['breakEvenNotes'] ?? '')),
+                'sourcesOfEquipment' => $this->normalizeOptionalString($productionPlanInput['sourcesOfEquipment'] ?? ($operationsPlanInput['equipmentNeeded'] ?? '')),
+                'plannedCapacity' => $this->normalizeOptionalString($productionPlanInput['plannedCapacity'] ?? ($financialPlanInput['breakEvenNotes'] ?? '')),
+                'futureCapacity' => $this->normalizeOptionalString($productionPlanInput['futureCapacity'] ?? ($financialPlanInput['breakEvenNotes'] ?? '')),
+                'rawMaterials' => $this->normalizeOptionalString($productionPlanInput['rawMaterials'] ?? ($operationsPlanInput['productionProcess'] ?? '')),
+                'costOfRawMaterials' => $this->normalizeOptionalString($productionPlanInput['costOfRawMaterials'] ?? ($financialPlanInput['projectedNetIncome'] ?? '')),
+                'rawMaterialsAvailability' => $this->normalizeOptionalString($productionPlanInput['rawMaterialsAvailability'] ?? ($riskManagementInput['risks'] ?? '')),
+                'labor' => $this->normalizeOptionalString($productionPlanInput['labor'] ?? ($operationsPlanInput['staffingPlan'] ?? '')),
+                'costOfLabor' => $this->normalizeOptionalString($productionPlanInput['costOfLabor'] ?? ($financialPlanInput['monthlyExpenseProjection'] ?? '')),
+                'laborAvailability' => $this->normalizeOptionalString($productionPlanInput['laborAvailability'] ?? ($operationsPlanInput['staffingPlan'] ?? '')),
             ],
-            'operationsPlan' => [
-                'businessLocation' => trim((string) ($payload['operationsPlan']['businessLocation'] ?? '')),
-                'productionProcess' => trim((string) ($payload['operationsPlan']['productionProcess'] ?? '')),
-                'equipmentNeeded' => trim((string) ($payload['operationsPlan']['equipmentNeeded'] ?? '')),
-                'staffingPlan' => trim((string) ($payload['operationsPlan']['staffingPlan'] ?? '')),
+            'organizationAndManagementPlan' => [
+                'preOperatingActivities' => $this->normalizeOptionalString($organizationInput['preOperatingActivities'] ?? implode(PHP_EOL, $legacySchedule)),
+                'preOperatingExpenses' => $this->normalizeOptionalString($organizationInput['preOperatingExpenses'] ?? ($financialPlanInput['monthlyExpenseProjection'] ?? '')),
             ],
             'financialPlan' => [
-                'startupCapital' => trim((string) ($payload['financialPlan']['startupCapital'] ?? '')),
-                'monthlySalesProjection' => trim((string) ($payload['financialPlan']['monthlySalesProjection'] ?? '')),
-                'monthlyExpenseProjection' => trim((string) ($payload['financialPlan']['monthlyExpenseProjection'] ?? '')),
-                'projectedNetIncome' => trim((string) ($payload['financialPlan']['projectedNetIncome'] ?? '')),
-                'breakEvenNotes' => trim((string) ($payload['financialPlan']['breakEvenNotes'] ?? '')),
-            ],
-            'riskManagement' => [
-                'risks' => trim((string) ($payload['riskManagement']['risks'] ?? '')),
-                'mitigation' => trim((string) ($payload['riskManagement']['mitigation'] ?? '')),
-            ],
-            'implementationSchedule' => [
-                'rows' => $scheduleRows,
+                'projectCost' => $this->normalizeOptionalString($financialPlanInput['projectCost'] ?? ($financialPlanInput['startupCapital'] ?? '')),
             ],
             'applicantSignature' => [
-                'signedName' => trim((string) ($payload['applicantSignature']['signedName'] ?? ($context['full_name'] ?? ''))),
-                'signedDate' => trim((string) ($payload['applicantSignature']['signedDate'] ?? date('Y-m-d'))),
-                'signatureUpload' => $this->normalizeUploadMetadata($payload['applicantSignature']['signatureUpload'] ?? null),
+                'signedName' => $this->normalizeOptionalString($applicantSignatureInput['signedName'] ?? ($context['full_name'] ?? '')),
+                'signedDate' => $this->normalizeOptionalString($applicantSignatureInput['signedDate'] ?? date('Y-m-d')),
+                'signatureUpload' => $this->normalizeUploadMetadata($applicantSignatureInput['signatureUpload'] ?? null),
+            ],
+            'staffReview' => [
+                'approval' => [
+                    'reviewSummary' => $this->normalizeOptionalString($approval['reviewSummary'] ?? ''),
+                    'recommendedAction' => $this->normalizeOptionalString($approval['recommendedAction'] ?? ''),
+                    'approverName' => $this->normalizeOptionalString($approval['approverName'] ?? ''),
+                    'approverTitle' => $this->normalizeOptionalString($approval['approverTitle'] ?? ''),
+                    'approvedDate' => $this->normalizeOptionalString($approval['approvedDate'] ?? ''),
+                    'signatureUpload' => $this->normalizeUploadMetadata($approval['signatureUpload'] ?? null),
+                ],
             ],
         ];
 
         $errors = [];
         if ($strict) {
             foreach ([
-                'businessName' => 'Business name is required.',
-                'ownerName' => 'Owner name is required.',
-                'businessAddress' => 'Business address is required.',
-                'contactNumber' => 'Contact number is required.',
-                'businessGoal' => 'Business goal is required.',
+                'executiveSummary.briefDescriptionOfBusinessProject' => 'Brief description of the business/project is required.',
+                'executiveSummary.briefProfileOfEntrepreneur' => 'Brief profile of the entrepreneur is required.',
+                'executiveSummary.projectContributionsToEconomy' => 'Project contributions to the economy are required.',
+                'marketingPlan.descriptionOfProduct' => 'Description of the product is required.',
+                'marketingPlan.comparisonWithCompetitors' => 'Comparison with competitors is required.',
+                'marketingPlan.location' => 'Location is required.',
+                'marketingPlan.marketArea' => 'Market area is required.',
+                'marketingPlan.mainCustomers' => 'Main customers are required.',
+                'marketingPlan.totalDemand' => 'Total demand is required.',
+                'marketingPlan.sellingPrice' => 'Selling price is required.',
+                'marketingPlan.promotionalMeasures' => 'Promotional measures are required.',
+                'marketingPlan.marketingStrategy' => 'Marketing strategy is required.',
+                'marketingPlan.marketingBudget' => 'Marketing budget is required.',
+                'productionPlan.productionServiceProcess' => 'Production/service process is required.',
+                'productionPlan.fixedCapital' => 'Fixed capital is required.',
+                'productionPlan.lifeOfFixedCapital' => 'Life of fixed capital is required.',
+                'productionPlan.sourcesOfEquipment' => 'Sources of equipment are required.',
+                'productionPlan.plannedCapacity' => 'Planned capacity is required.',
+                'productionPlan.futureCapacity' => 'Future capacity is required.',
+                'productionPlan.rawMaterials' => 'Raw materials are required.',
+                'productionPlan.costOfRawMaterials' => 'Cost of raw materials is required.',
+                'productionPlan.rawMaterialsAvailability' => 'Raw materials availability is required.',
+                'productionPlan.labor' => 'Labor information is required.',
+                'productionPlan.costOfLabor' => 'Cost of labor is required.',
+                'productionPlan.laborAvailability' => 'Labor availability is required.',
+                'organizationAndManagementPlan.preOperatingActivities' => 'Pre-operating activities are required.',
+                'organizationAndManagementPlan.preOperatingExpenses' => 'Pre-operating expenses are required.',
+                'financialPlan.projectCost' => 'Project cost is required.',
             ] as $field => $message) {
-                if ($clean['overview'][$field] === '') {
-                    $errors['overview.' . $field] = $message;
+                if ($this->arrayGet($clean, $field) === '') {
+                    $errors[$field] = $message;
                 }
-            }
-            if ($clean['executiveSummary'] === '') {
-                $errors['executiveSummary'] = 'Executive summary is required.';
-            }
-            if ($clean['productsServices']['rows'] === []) {
-                $errors['productsServices.rows'] = 'Add at least one product or service row.';
-            }
-            if ($clean['marketStrategy']['customerProfile'] === '') {
-                $errors['marketStrategy.customerProfile'] = 'Customer profile is required.';
-            }
-            if ($clean['operationsPlan']['productionProcess'] === '') {
-                $errors['operationsPlan.productionProcess'] = 'Production or service process is required.';
-            }
-            if ($clean['financialPlan']['startupCapital'] === '') {
-                $errors['financialPlan.startupCapital'] = 'Startup capital is required.';
-            }
-            if ($clean['implementationSchedule']['rows'] === []) {
-                $errors['implementationSchedule.rows'] = 'Add at least one implementation schedule row.';
             }
             if ($clean['applicantSignature']['signedName'] === '') {
                 $errors['applicantSignature.signedName'] = 'Type the applicant name for the signature block.';
@@ -1167,21 +1644,21 @@ class PostApprovalComplianceService
         $coMakerAddress = trim((string) ($payload['coMaker']['addressLine'] ?? ''));
         $coMakerBarangay = trim((string) ($payload['coMaker']['barangay'] ?? ''));
         $coMakerCity = trim((string) ($payload['coMaker']['city'] ?? ''));
-        $agreementDate = trim((string) ($payload['agreement']['dateSigned'] ?? date('Y-m-d')));
-        $agreementYear = trim((string) ($payload['agreement']['yearSigned'] ?? date('Y')));
+        $agreementDateWords = $this->resolveBuhatDateWords($payload['agreement'] ?? []);
+        $verification = $payload['staffReview']['verification'] ?? [];
 
         $clean = [
             'beneficiary' => [
                 'fullName' => trim((string) ($payload['beneficiary']['fullName'] ?? ($context['full_name'] ?? ''))),
-                'age' => trim((string) ($payload['beneficiary']['age'] ?? ($context['age'] ?? ''))),
                 'addressLine' => $beneficiaryAddress,
                 'barangay' => $beneficiaryBarangay,
                 'city' => $beneficiaryCity,
             ],
             'project' => [
-                'programName' => trim((string) ($payload['project']['programName'] ?? 'SMART LEAP')),
-                'projectName' => trim((string) ($payload['project']['projectName'] ?? ($context['business_name'] ?? ''))),
-                'amountReceived' => trim((string) ($payload['project']['amountReceived'] ?? '')),
+                'programStatement' => $this->buhatProgramStatement(),
+                'programShortName' => $this->buhatProgramShortName(),
+                'amountInWords' => $this->buhatAmountInWords(),
+                'amountNumeric' => $this->buhatAmountNumeric(),
             ],
             'coMaker' => [
                 'fullName' => trim((string) ($payload['coMaker']['fullName'] ?? '')),
@@ -1190,8 +1667,7 @@ class PostApprovalComplianceService
                 'city' => $coMakerCity,
             ],
             'agreement' => [
-                'dateSigned' => $agreementDate,
-                'yearSigned' => $agreementYear,
+                'currentDateWords' => $agreementDateWords,
             ],
             'applicantSignature' => [
                 'signedName' => trim((string) ($payload['applicantSignature']['signedName'] ?? ($context['full_name'] ?? ''))),
@@ -1201,20 +1677,23 @@ class PostApprovalComplianceService
                 'signedName' => trim((string) ($payload['coMakerSignature']['signedName'] ?? '')),
                 'signatureUpload' => $this->normalizeUploadMetadata($payload['coMakerSignature']['signatureUpload'] ?? null),
             ],
+            'staffReview' => [
+                'verification' => [
+                    'reviewerName' => trim((string) ($verification['reviewerName'] ?? '')),
+                    'reviewerTitle' => trim((string) ($verification['reviewerTitle'] ?? '')),
+                    'reviewerDate' => trim((string) ($verification['reviewerDate'] ?? '')),
+                    'remarks' => trim((string) ($verification['remarks'] ?? '')),
+                    'signatureUpload' => $this->normalizeUploadMetadata($verification['signatureUpload'] ?? null),
+                ],
+            ],
         ];
 
         $errors = [];
         if ($strict) {
             foreach ([
                 'beneficiary.fullName' => 'Beneficiary name is required.',
-                'beneficiary.age' => 'Beneficiary age is required.',
                 'beneficiary.addressLine' => 'Beneficiary address is required.',
-                'project.programName' => 'Program name is required.',
-                'project.projectName' => 'Project name is required.',
-                'project.amountReceived' => 'Amount received is required.',
                 'coMaker.fullName' => 'Co-maker name is required.',
-                'agreement.dateSigned' => 'Date signed is required.',
-                'agreement.yearSigned' => 'Year signed is required.',
                 'applicantSignature.signedName' => 'Beneficiary signature name is required.',
                 'coMakerSignature.signedName' => 'Co-maker signature name is required.',
             ] as $field => $message) {
@@ -1297,7 +1776,11 @@ class PostApprovalComplianceService
                         'signatureUpload' => null,
                     ],
                     'physicalRequirements' => [
-                        'healthAgeRows' => [['requirement' => '', 'age' => '', 'healthStatus' => '']],
+                        'healthAgeRows' => [[
+                            'requirement' => 'Health Certificate / Medical Check-up',
+                            'age' => $context['age'] !== null ? (string) $context['age'] : '',
+                            'healthStatus' => 'See submitted health certificate',
+                        ]],
                         'foodRelatedCertification' => [
                             'applicantName' => $context['full_name'] ?? '',
                             'requiresMedicalClearance' => '',
@@ -1394,30 +1877,12 @@ class PostApprovalComplianceService
                     'savingsAccountNumber' => 'NONE',
                 ],
                 'sectoralClassification' => [
-                    'pantawid' => [
-                        'sexFemale' => false,
-                        'sexMale' => false,
-                        'seniorFemale' => false,
-                        'seniorMale' => false,
-                        'pwdFemale' => false,
-                        'pwdMale' => false,
-                        'ipFemale' => false,
-                        'ipMale' => false,
-                        'soloParentFemale' => false,
-                        'soloParentMale' => false,
-                    ],
-                    'nonPantawid' => [
-                        'sexFemale' => false,
-                        'sexMale' => false,
-                        'seniorFemale' => false,
-                        'seniorMale' => false,
-                        'pwdFemale' => false,
-                        'pwdMale' => false,
-                        'ipFemale' => false,
-                        'ipMale' => false,
-                        'soloParentFemale' => false,
-                        'soloParentMale' => false,
-                    ],
+                    'membershipType' => '',
+                    'sex' => '',
+                    'seniorCitizen' => false,
+                    'pwd' => false,
+                    'ip' => false,
+                    'soloParent' => false,
                 ],
                 'rationale' => '',
                 'modalityApplications' => [
@@ -1489,51 +1954,43 @@ class PostApprovalComplianceService
                 ],
             ],
             POST_APPROVAL_TASK_BUSINESS_PLAN => [
-                'overview' => [
-                    'businessName' => $context['business_name'] ?? '',
-                    'ownerName' => $context['full_name'] ?? '',
-                    'businessAddress' => $this->buildDefaultAddress($context),
-                    'contactNumber' => $context['contact_number'] ?? '',
-                    'businessGoal' => '',
+                'executiveSummary' => [
+                    'briefDescriptionOfBusinessProject' => '',
+                    'briefProfileOfEntrepreneur' => '',
+                    'projectContributionsToEconomy' => '',
                 ],
-                'executiveSummary' => '',
-                'productsServices' => [
-                    'rows' => [[
-                        'name' => '',
-                        'description' => '',
-                        'price' => '',
-                        'targetMarket' => '',
-                    ]],
+                'marketingPlan' => [
+                    'descriptionOfProduct' => '',
+                    'comparisonWithCompetitors' => '',
+                    'location' => '',
+                    'marketArea' => '',
+                    'mainCustomers' => '',
+                    'totalDemand' => '',
+                    'sellingPrice' => '',
+                    'promotionalMeasures' => '',
+                    'marketingStrategy' => '',
+                    'marketingBudget' => '',
                 ],
-                'marketStrategy' => [
-                    'customerProfile' => '',
-                    'competitors' => '',
-                    'marketingApproach' => '',
-                    'salesChannel' => '',
+                'productionPlan' => [
+                    'productionServiceProcess' => '',
+                    'fixedCapital' => '',
+                    'lifeOfFixedCapital' => '',
+                    'sourcesOfEquipment' => '',
+                    'plannedCapacity' => '',
+                    'futureCapacity' => '',
+                    'rawMaterials' => '',
+                    'costOfRawMaterials' => '',
+                    'rawMaterialsAvailability' => '',
+                    'labor' => '',
+                    'costOfLabor' => '',
+                    'laborAvailability' => '',
                 ],
-                'operationsPlan' => [
-                    'businessLocation' => '',
-                    'productionProcess' => '',
-                    'equipmentNeeded' => '',
-                    'staffingPlan' => '',
+                'organizationAndManagementPlan' => [
+                    'preOperatingActivities' => '',
+                    'preOperatingExpenses' => '',
                 ],
                 'financialPlan' => [
-                    'startupCapital' => '',
-                    'monthlySalesProjection' => '',
-                    'monthlyExpenseProjection' => '',
-                    'projectedNetIncome' => '',
-                    'breakEvenNotes' => '',
-                ],
-                'riskManagement' => [
-                    'risks' => '',
-                    'mitigation' => '',
-                ],
-                'implementationSchedule' => [
-                    'rows' => [[
-                        'activity' => '',
-                        'targetDate' => '',
-                        'responsiblePerson' => '',
-                    ]],
+                    'projectCost' => '',
                 ],
                 'applicantSignature' => [
                     'signedName' => $context['full_name'] ?? '',
@@ -1554,15 +2011,15 @@ class PostApprovalComplianceService
             POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => [
                 'beneficiary' => [
                     'fullName' => $context['full_name'] ?? '',
-                    'age' => $context['age'] !== null ? (string) $context['age'] : '',
                     'addressLine' => trim((string) ($context['address_line'] ?? '')),
                     'barangay' => trim((string) ($context['barangay_name'] ?? '')),
                     'city' => 'Butuan City',
                 ],
                 'project' => [
-                    'programName' => 'SMART LEAP',
-                    'projectName' => $context['business_name'] ?? '',
-                    'amountReceived' => '',
+                    'programStatement' => $this->buhatProgramStatement(),
+                    'programShortName' => $this->buhatProgramShortName(),
+                    'amountInWords' => $this->buhatAmountInWords(),
+                    'amountNumeric' => $this->buhatAmountNumeric(),
                 ],
                 'coMaker' => [
                     'fullName' => '',
@@ -1571,8 +2028,7 @@ class PostApprovalComplianceService
                     'city' => '',
                 ],
                 'agreement' => [
-                    'dateSigned' => date('Y-m-d'),
-                    'yearSigned' => date('Y'),
+                    'currentDateWords' => $this->formatBuhatDateWords(),
                 ],
                 'applicantSignature' => [
                     'signedName' => $context['full_name'] ?? '',
@@ -1612,9 +2068,6 @@ class PostApprovalComplianceService
                 'clientIdentifyingData.address',
                 'individualAssistance.clienteleCategory',
                 'individualAssistance.natureOfDifficultCircumstances',
-                'clientCommitment.agreedToPolicies',
-                'clientCommitment.agreedToRollBackSchedule',
-                'clientCommitment.agreedToWeeklySavings',
                 'applicantSignature.signedName',
                 'applicantSignature.signedDate',
             ],
@@ -1641,28 +2094,41 @@ class PostApprovalComplianceService
                 'applicantSignature.signedDate',
             ],
             POST_APPROVAL_TASK_BUSINESS_PLAN => [
-                'overview.businessName',
-                'overview.ownerName',
-                'overview.businessAddress',
-                'overview.contactNumber',
-                'overview.businessGoal',
-                'executiveSummary',
-                'marketStrategy.customerProfile',
-                'operationsPlan.productionProcess',
-                'financialPlan.startupCapital',
+                'executiveSummary.briefDescriptionOfBusinessProject',
+                'executiveSummary.briefProfileOfEntrepreneur',
+                'executiveSummary.projectContributionsToEconomy',
+                'marketingPlan.descriptionOfProduct',
+                'marketingPlan.comparisonWithCompetitors',
+                'marketingPlan.location',
+                'marketingPlan.marketArea',
+                'marketingPlan.mainCustomers',
+                'marketingPlan.totalDemand',
+                'marketingPlan.sellingPrice',
+                'marketingPlan.promotionalMeasures',
+                'marketingPlan.marketingStrategy',
+                'marketingPlan.marketingBudget',
+                'productionPlan.productionServiceProcess',
+                'productionPlan.fixedCapital',
+                'productionPlan.lifeOfFixedCapital',
+                'productionPlan.sourcesOfEquipment',
+                'productionPlan.plannedCapacity',
+                'productionPlan.futureCapacity',
+                'productionPlan.rawMaterials',
+                'productionPlan.costOfRawMaterials',
+                'productionPlan.rawMaterialsAvailability',
+                'productionPlan.labor',
+                'productionPlan.costOfLabor',
+                'productionPlan.laborAvailability',
+                'organizationAndManagementPlan.preOperatingActivities',
+                'organizationAndManagementPlan.preOperatingExpenses',
+                'financialPlan.projectCost',
                 'applicantSignature.signedName',
                 'applicantSignature.signedDate',
             ],
             POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => [
                 'beneficiary.fullName',
-                'beneficiary.age',
                 'beneficiary.addressLine',
-                'project.programName',
-                'project.projectName',
-                'project.amountReceived',
                 'coMaker.fullName',
-                'agreement.dateSigned',
-                'agreement.yearSigned',
                 'applicantSignature.signedName',
                 'coMakerSignature.signedName',
             ],
@@ -1800,6 +2266,12 @@ class PostApprovalComplianceService
             'mime_type' => trim((string) ($value['mime_type'] ?? '')),
             'file_size' => (int) ($value['file_size'] ?? 0),
             'uploaded_at' => trim((string) ($value['uploaded_at'] ?? '')),
+            'path' => $filePath,
+            'name' => trim((string) ($value['original_name'] ?? basename($filePath))),
+            'type' => trim((string) ($value['mime_type'] ?? '')),
+            'size' => (int) ($value['file_size'] ?? 0),
+            'uploadedAt' => trim((string) ($value['uploaded_at'] ?? '')),
+            'url' => upload_url($filePath),
         ];
     }
 
@@ -1834,6 +2306,204 @@ class PostApprovalComplianceService
         return in_array($normalized, ['1', 'true', 'yes', 'on', 'checked'], true);
     }
 
+    private function normalizeNonNegativeWholeCount(mixed $value): int
+    {
+        if (is_bool($value)) {
+            return $value ? 1 : 0;
+        }
+
+        if (is_int($value)) {
+            return max(0, $value);
+        }
+
+        if (is_float($value)) {
+            if (!is_finite($value)) {
+                return 0;
+            }
+
+            return max(0, (int) floor($value));
+        }
+
+        $normalized = trim((string) $value);
+        if ($normalized === '') {
+            return 0;
+        }
+
+        if ($this->normalizeBooleanFlag($normalized)) {
+            return 1;
+        }
+
+        if (!preg_match('/^\d+$/', $normalized)) {
+            return 0;
+        }
+
+        return (int) $normalized;
+    }
+
+    private function normalizeMungkahingMembershipType(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+        return match ($normalized) {
+            'pantawid' => 'pantawid',
+            'non_pantawid', 'non-pantawid', 'non pantawid', 'nonpantawid' => 'non_pantawid',
+            default => '',
+        };
+    }
+
+    private function normalizeOptionalString(mixed $value): string
+    {
+        if (is_array($value) || is_object($value)) {
+            return '';
+        }
+
+        return trim((string) $value);
+    }
+
+    private function parseMungkahingFormulaNumber(mixed $value): ?float
+    {
+        $normalized = str_replace(',', '', trim((string) $value));
+        if ($normalized === '' || !is_numeric($normalized)) {
+            return null;
+        }
+
+        $parsed = (float) $normalized;
+        return is_finite($parsed) ? $parsed : null;
+    }
+
+    private function formatMungkahingComputedNumber(float $value): string
+    {
+        $formatted = number_format($value, 2, '.', '');
+        $formatted = rtrim(rtrim($formatted, '0'), '.');
+        return $formatted === '-0' ? '0' : $formatted;
+    }
+
+    private function computeMungkahingMaterialProjectedCost(mixed $quantityValue, mixed $unitPriceValue, mixed $cycleValue): string
+    {
+        $quantity = $this->parseMungkahingFormulaNumber($quantityValue);
+        $unitPrice = $this->parseMungkahingFormulaNumber($unitPriceValue);
+        $cycle = $this->parseMungkahingFormulaNumber($cycleValue);
+        if ($quantity === null || $unitPrice === null || $cycle === null) {
+            return '';
+        }
+
+        return $this->formatMungkahingComputedNumber($quantity * $unitPrice * $cycle);
+    }
+
+    private function computeMungkahingToolsProjectedAmount(mixed $quantityValue, mixed $unitPriceValue): string
+    {
+        $quantity = $this->parseMungkahingFormulaNumber($quantityValue);
+        $unitPrice = $this->parseMungkahingFormulaNumber($unitPriceValue);
+        if ($quantity === null || $unitPrice === null) {
+            return '';
+        }
+
+        return $this->formatMungkahingComputedNumber($quantity * $unitPrice);
+    }
+
+    private function computeMungkahingToolsDepreciationCost(mixed $projectedAmountValue, mixed $usefulLifeValue, mixed $productionCycleValue): string
+    {
+        $projectedAmount = $this->parseMungkahingFormulaNumber($projectedAmountValue);
+        $usefulLife = $this->parseMungkahingFormulaNumber($usefulLifeValue);
+        $productionCycle = $this->parseMungkahingFormulaNumber($productionCycleValue);
+        if ($projectedAmount === null || $usefulLife === null || $productionCycle === null || $usefulLife <= 0) {
+            return '';
+        }
+
+        return $this->formatMungkahingComputedNumber(($projectedAmount / $usefulLife) * $productionCycle);
+    }
+
+    private function computeMungkahingSalesProjectedSales(mixed $quantityValue, mixed $sellingPriceValue): string
+    {
+        $quantity = $this->parseMungkahingFormulaNumber($quantityValue);
+        $sellingPrice = $this->parseMungkahingFormulaNumber($sellingPriceValue);
+        if ($quantity === null || $sellingPrice === null) {
+            return '';
+        }
+
+        return $this->formatMungkahingComputedNumber($quantity * $sellingPrice);
+    }
+
+    private function normalizeMungkahingSex(mixed $value): string
+    {
+        $normalized = strtolower(trim((string) $value));
+        return match ($normalized) {
+            'female', 'babaye', 'babae' => 'female',
+            'male', 'lalake', 'lalaki' => 'male',
+            default => '',
+        };
+    }
+
+    private function hasLegacyMungkahingSectoralValue(array $group, string $key): bool
+    {
+        return $this->normalizeNonNegativeWholeCount($group[$key] ?? 0) > 0;
+    }
+
+    private function normalizeMungkahingSectoralClassification(array $sectoral): array
+    {
+        $membershipType = $this->normalizeMungkahingMembershipType($sectoral['membershipType'] ?? '');
+        $sex = $this->normalizeMungkahingSex($sectoral['sex'] ?? '');
+
+        if ($membershipType !== '' || $sex !== '' || array_key_exists('seniorCitizen', $sectoral) || array_key_exists('pwd', $sectoral) || array_key_exists('ip', $sectoral) || array_key_exists('soloParent', $sectoral)) {
+            return [
+                'membershipType' => $membershipType,
+                'sex' => $sex,
+                'seniorCitizen' => $this->normalizeBooleanFlag($sectoral['seniorCitizen'] ?? false),
+                'pwd' => $this->normalizeBooleanFlag($sectoral['pwd'] ?? false),
+                'ip' => $this->normalizeBooleanFlag($sectoral['ip'] ?? false),
+                'soloParent' => $this->normalizeBooleanFlag($sectoral['soloParent'] ?? false),
+            ];
+        }
+
+        $pantawid = is_array($sectoral['pantawid'] ?? null) ? $sectoral['pantawid'] : [];
+        $nonPantawid = is_array($sectoral['nonPantawid'] ?? null) ? $sectoral['nonPantawid'] : [];
+
+        $pantawidSelected = array_reduce(['sexFemale', 'sexMale', 'seniorFemale', 'seniorMale', 'pwdFemale', 'pwdMale', 'ipFemale', 'ipMale', 'soloParentFemale', 'soloParentMale'], fn ($carry, $key) => $carry || $this->hasLegacyMungkahingSectoralValue($pantawid, $key), false);
+        $nonPantawidSelected = array_reduce(['sexFemale', 'sexMale', 'seniorFemale', 'seniorMale', 'pwdFemale', 'pwdMale', 'ipFemale', 'ipMale', 'soloParentFemale', 'soloParentMale'], fn ($carry, $key) => $carry || $this->hasLegacyMungkahingSectoralValue($nonPantawid, $key), false);
+
+        $femaleSelected = $this->hasLegacyMungkahingSectoralValue($pantawid, 'sexFemale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'seniorFemale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'pwdFemale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'ipFemale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'soloParentFemale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'sexFemale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'seniorFemale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'pwdFemale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'ipFemale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'soloParentFemale');
+
+        $maleSelected = $this->hasLegacyMungkahingSectoralValue($pantawid, 'sexMale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'seniorMale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'pwdMale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'ipMale')
+            || $this->hasLegacyMungkahingSectoralValue($pantawid, 'soloParentMale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'sexMale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'seniorMale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'pwdMale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'ipMale')
+            || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'soloParentMale');
+
+        return [
+            'membershipType' => $pantawidSelected ? 'pantawid' : ($nonPantawidSelected ? 'non_pantawid' : ''),
+            'sex' => $femaleSelected ? 'female' : ($maleSelected ? 'male' : ''),
+            'seniorCitizen' => $this->hasLegacyMungkahingSectoralValue($pantawid, 'seniorFemale')
+                || $this->hasLegacyMungkahingSectoralValue($pantawid, 'seniorMale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'seniorFemale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'seniorMale'),
+            'pwd' => $this->hasLegacyMungkahingSectoralValue($pantawid, 'pwdFemale')
+                || $this->hasLegacyMungkahingSectoralValue($pantawid, 'pwdMale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'pwdFemale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'pwdMale'),
+            'ip' => $this->hasLegacyMungkahingSectoralValue($pantawid, 'ipFemale')
+                || $this->hasLegacyMungkahingSectoralValue($pantawid, 'ipMale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'ipFemale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'ipMale'),
+            'soloParent' => $this->hasLegacyMungkahingSectoralValue($pantawid, 'soloParentFemale')
+                || $this->hasLegacyMungkahingSectoralValue($pantawid, 'soloParentMale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'soloParentFemale')
+                || $this->hasLegacyMungkahingSectoralValue($nonPantawid, 'soloParentMale'),
+        ];
+    }
+
     private function defaultMungkahingExpenseRows(): array
     {
         return [
@@ -1846,29 +2516,149 @@ class PostApprovalComplianceService
         ];
     }
 
+    private function buhatProgramStatement(): string
+    {
+        return 'Sustainable Market and Technology Driven Livelihood and Employment Program';
+    }
+
+    private function buhatProgramShortName(): string
+    {
+        return 'SMART LEAP';
+    }
+
+    private function buhatAmountInWords(): string
+    {
+        return 'Fifteen Thousand Pesos';
+    }
+
+    private function buhatAmountNumeric(): string
+    {
+        return 'Php 15,000.00';
+    }
+
+    private function formatBuhatDateWords(?string $dateValue = null): string
+    {
+        if ($dateValue) {
+            $timestamp = strtotime($dateValue);
+            if ($timestamp !== false) {
+                return date('F j', $timestamp);
+            }
+        }
+
+        return date('F j');
+    }
+
+    private function resolveBuhatDateWords(array $agreement): string
+    {
+        $stored = trim((string) ($agreement['currentDateWords'] ?? ''));
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        $legacyDate = trim((string) ($agreement['dateSigned'] ?? ''));
+        return $this->formatBuhatDateWords($legacyDate !== '' ? $legacyDate : null);
+    }
+
     private function allowedApplicantUploadFields(): array
     {
         return [
             POST_APPROVAL_TASK_AVAILMENT_FORM => [
-                'applicantSignature.signatureUpload' => 'applicant-signature',
+                'applicantSignature.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'applicantSignature.signatureUpload',
+                ],
+                'pageOneCertification.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.pageOneCertification.signatureUpload',
+                ],
+                'staffReview.pageOneCertification.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.pageOneCertification.signatureUpload',
+                ],
+                'physicalRequirements.foodRelatedCertification.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.physicalRequirements.foodRelatedCertification.signatureUpload',
+                ],
+                'staffReview.physicalRequirements.foodRelatedCertification.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.physicalRequirements.foodRelatedCertification.signatureUpload',
+                ],
+                'psychoSocialRequirements.residencyAndCharacter.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.psychoSocialRequirements.residencyAndCharacter.signatureUpload',
+                ],
+                'staffReview.psychoSocialRequirements.residencyAndCharacter.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.psychoSocialRequirements.residencyAndCharacter.signatureUpload',
+                ],
+                'psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload',
+                ],
+                'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'staffReview.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload',
+                ],
             ],
             POST_APPROVAL_TASK_VALIDATION_FORM => [
-                'participantSignature.signatureUpload' => 'applicant-signature',
+                'participantSignature.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'participantSignature.signatureUpload',
+                ],
             ],
             POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => [
-                'applicantSignature.signatureUpload' => 'applicant-signature',
+                'applicantSignature.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'applicantSignature.signatureUpload',
+                ],
             ],
             POST_APPROVAL_TASK_BUSINESS_PLAN => [
-                'applicantSignature.signatureUpload' => 'applicant-signature',
+                'applicantSignature.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'applicantSignature.signatureUpload',
+                ],
             ],
             POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => [
-                'applicantSignature.signatureUpload' => 'applicant-signature',
-                'coMakerSignature.signatureUpload' => 'applicant-signature',
+                'applicantSignature.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'applicantSignature.signatureUpload',
+                ],
+                'coMakerSignature.signatureUpload' => [
+                    'bucket' => 'applicant-signature',
+                    'persistPath' => 'coMakerSignature.signatureUpload',
+                ],
             ],
             POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => [
-                'fundReleaseEvidence.releaseAttachment' => 'supporting-upload',
+                'fundReleaseEvidence.releaseAttachment' => [
+                    'bucket' => 'supporting-upload',
+                    'persistPath' => 'fundReleaseEvidence.releaseAttachment',
+                ],
             ],
         ];
+    }
+
+    private function decodeJsonArray(mixed $value): array
+    {
+        if (!is_string($value) || trim($value) === '') {
+            return [];
+        }
+
+        $decoded = json_decode($value, true);
+        return is_array($decoded) ? $decoded : [];
+    }
+
+    private function sanitizeSeminarFormCodes(array $codes): array
+    {
+        $normalized = [];
+        foreach ($codes as $code) {
+            $candidate = trim((string) $code);
+            if ($candidate === '' || !in_array($candidate, TRAINING_SEMINAR_FORM_CODES, true)) {
+                continue;
+            }
+            $normalized[] = $candidate;
+        }
+
+        return array_values(array_unique($normalized));
     }
 
     private function emptyState(): array
@@ -2019,60 +2809,45 @@ class PostApprovalComplianceService
             ],
             POST_APPROVAL_TASK_BUSINESS_PLAN => [
                 'title' => 'Business Plan',
-                'summary' => 'Business plan narrative and operating tables based on the provided CSWDD business plan copy.',
-                'helpText' => 'Complete the business plan narrative, operations, financial, and schedule sections first. Approval remains reserved for staff review.',
+                'summary' => 'Paper-faithful business plan narrative sections based on the confirmed hardcopy headings.',
+                'helpText' => 'Complete the hardcopy business plan headings exactly as written. Reviewed by and Noted by remain reserved for staff review.',
                 'interactive' => true,
                 'applicantSections' => [
                     [
-                        'id' => 'overview',
-                        'title' => 'Business Profile',
-                        'description' => 'Business name, owner details, address, contact number, and goal of the plan.',
-                    ],
-                    [
                         'id' => 'executiveSummary',
-                        'title' => 'Executive Summary',
-                        'description' => 'Provide the short narrative summary of the proposed business direction.',
-                    ],
-                    [
-                        'id' => 'productsServices',
-                        'title' => 'Products and Services',
-                        'description' => 'List what the business will offer, the description, price point, and target market.',
+                        'title' => 'EXECUTIVE SUMMARY (PAGLALARAWAN NG NEGOSYO)',
+                        'description' => 'Complete the three opening narrative headings exactly as shown in the hardcopy.',
                     ],
                     [
                         'id' => 'marketStrategy',
-                        'title' => 'Market Strategy',
-                        'description' => 'Describe customer profile, competitors, marketing approach, and sales channel.',
+                        'title' => 'Section 1: MARKETING PLAN',
+                        'description' => 'Complete the numbered marketing plan headings exactly as shown in the hardcopy.',
                     ],
                     [
-                        'id' => 'operationsPlan',
-                        'title' => 'Operations Plan',
-                        'description' => 'State the location, process, equipment needed, and staffing plan.',
+                        'id' => 'productionPlan',
+                        'title' => 'Section 2: PRODUCTION PLAN',
+                        'description' => 'Complete the numbered production plan headings exactly as shown in the hardcopy.',
+                    ],
+                    [
+                        'id' => 'organizationAndManagementPlan',
+                        'title' => 'Section 3: ORGANIZATION AND MANAGEMENT PLAN',
+                        'description' => 'Complete the pre-operating activity and expense headings exactly as shown in the hardcopy.',
                     ],
                     [
                         'id' => 'financialPlan',
-                        'title' => 'Financial Plan',
-                        'description' => 'Provide startup capital, sales projection, expense projection, projected income, and break-even notes.',
-                    ],
-                    [
-                        'id' => 'riskManagement',
-                        'title' => 'Risk Management',
-                        'description' => 'Identify risks and the mitigation strategy for the business.',
-                    ],
-                    [
-                        'id' => 'implementationSchedule',
-                        'title' => 'Implementation Schedule',
-                        'description' => 'List key activities, target dates, and responsible persons.',
+                        'title' => 'Section 4: FINANCIAL PLAN',
+                        'description' => 'Complete the 4.1 Project Cost heading exactly as shown in the hardcopy.',
                     ],
                     [
                         'id' => 'applicantSignature',
-                        'title' => 'Applicant Sign-off',
-                        'description' => 'Attach the applicant signature for the business plan submission.',
+                        'title' => 'Prepared by',
+                        'description' => 'Type the applicant name, date signed, and upload the applicant signature.',
                     ],
                 ],
                 'staffSections' => [
                     [
-                        'title' => 'Business Plan Approval',
-                        'description' => 'Review summary, recommended action, and PDO/Admin approval sign-off remain staff-only.',
+                        'title' => 'Reviewed by / Noted by',
+                        'description' => 'Reviewed by and Noted by sign-off blocks remain staff-only. The fixed Noted by text stays paper-faithful.',
                     ],
                 ],
             ],
@@ -2117,25 +2892,6 @@ class PostApprovalComplianceService
                     [
                         'title' => 'Verification',
                         'description' => 'Reviewer verification name, title, date, remarks, and signature remain staff-only in the review workflow.',
-                    ],
-                ],
-            ],
-            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => [
-                'title' => 'Proof of Fund Release',
-                'summary' => 'Upload any attachment that proves the SMART LEAP fund was released. This is the final requirement before beneficiary activation.',
-                'helpText' => 'You remain an applicant until CSWDD verifies the uploaded proof of fund release. Upload the best available supporting attachment, then submit it for review.',
-                'interactive' => true,
-                'applicantSections' => [
-                    [
-                        'id' => 'fundReleaseEvidence',
-                        'title' => 'Proof of Fund Release',
-                        'description' => 'Upload any attachment that proves the SMART LEAP fund was released. This serves as the final requirement before beneficiary activation.',
-                    ],
-                ],
-                'staffSections' => [
-                    [
-                        'title' => 'Final beneficiary activation check',
-                        'description' => 'Project Officers and Administrators verify this attachment last. The applicant remains in applicant status until this requirement is verified.',
                     ],
                 ],
             ],

@@ -9,6 +9,7 @@ function ensure_session_started(): void
     }
 
     $session = config('session');
+    ini_set('session.gc_maxlifetime', (string) ($session['lifetime'] ?? 86400));
     session_name($session['name']);
     session_set_cookie_params([
         'lifetime' => $session['lifetime'],
@@ -38,4 +39,12 @@ function session_forget(string $key): void
 {
     ensure_session_started();
     unset($_SESSION[$key]);
+}
+
+function session_pull(string $key, mixed $default = null): mixed
+{
+    ensure_session_started();
+    $value = $_SESSION[$key] ?? $default;
+    unset($_SESSION[$key]);
+    return $value;
 }

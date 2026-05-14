@@ -14,7 +14,7 @@ class BarangayAssignmentService
         }
 
         if ((string) $staff['role_name'] !== ROLE_PROJECT_OFFICER) {
-            return ['ok' => false, 'errors' => ['staffId' => 'Only project officers can receive barangay assignments.']];
+            return ['ok' => false, 'errors' => ['staffId' => 'Only project officers can receive district assignments.']];
         }
 
         $cleanBarangayIds = array_values(array_unique(array_filter(array_map(static fn ($id): int => (int) $id, $barangayIds))));
@@ -76,7 +76,7 @@ class BarangayAssignmentService
                 'barangay_ids' => $validBarangayIds,
             ]);
 
-            return ['ok' => false, 'errors' => ['general' => 'Unable to update barangay assignments right now.']];
+            return ['ok' => false, 'errors' => ['general' => 'Unable to update district assignments right now.']];
         }
 
         (new AuditLogService())->record(
@@ -103,7 +103,7 @@ class BarangayAssignmentService
         }
 
         $statement = db()->prepare(
-            'SELECT barangays.id, barangays.name
+            'SELECT barangays.id, barangays.name, barangays.district
              FROM staff_barangay_assignments
              INNER JOIN barangays ON barangays.id = staff_barangay_assignments.barangay_id
              WHERE staff_barangay_assignments.staff_profile_id = :staff_profile_id
@@ -114,7 +114,11 @@ class BarangayAssignmentService
         $rows = $statement->fetchAll(\PDO::FETCH_ASSOC) ?: [];
 
         return array_map(
-            static fn (array $row): array => ['id' => (int) $row['id'], 'name' => $row['name']],
+            static fn (array $row): array => [
+                'id' => (int) $row['id'],
+                'name' => (string) $row['name'],
+                'district' => (string) ($row['district'] ?? ''),
+            ],
             $rows
         );
     }

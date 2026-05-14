@@ -1,15 +1,20 @@
 (function () {
     const state = {
         baseUrl: window.SMARTLEAP_BASE_URL || '',
+        authUser: window.SMARTLEAP_AUTH_USER || null,
+        fullQueue: [],
         queue: [],
         activeTask: null,
         initialTaskId: Number(window.SMARTLEAP_REVIEW_TASK_ID || 0),
         embedded: Boolean(window.SMARTLEAP_REVIEW_EMBEDDED),
+        focusedApplicantUserId: null,
+        focusedTaskMode: Number(window.SMARTLEAP_REVIEW_TASK_ID || 0) > 0,
     };
 
     document.addEventListener('DOMContentLoaded', init);
 
     async function init() {
+        document.body.classList.toggle('review-body--focused-task', state.focusedTaskMode);
         document.getElementById('refreshReviewQueue')?.addEventListener('click', loadQueue);
         document.getElementById('reviewTaskList')?.addEventListener('click', handleQueueClick);
         if (!state.embedded) {
@@ -22,15 +27,17 @@
     async function loadQueue() {
         try {
             const payload = await fetchJson('api/post-approval-review');
-            state.queue = payload.tasks || [];
+            state.fullQueue = payload.tasks || [];
             renderSummary(payload.summary || {});
-            renderQueue();
             if (state.initialTaskId > 0) {
                 const taskId = state.initialTaskId;
                 state.initialTaskId = 0;
                 await loadTask(taskId);
             } else if (state.activeTask) {
                 await loadTask(state.activeTask.id);
+            } else {
+                state.queue = filterQueueForFocusedApplicant(state.fullQueue);
+                renderQueue();
             }
         } catch (error) {
             renderQueue(error.message || 'Unable to load the review queue.');
@@ -91,11 +98,22 @@
         try {
             const payload = await fetchJson(`api/post-approval-review/task?task_id=${taskId}`);
             state.activeTask = payload.task || null;
+            state.focusedApplicantUserId = state.activeTask?.applicant?.userId || null;
+            state.queue = filterQueueForFocusedApplicant(state.fullQueue);
             renderQueue();
             renderWorkspace();
         } catch (error) {
             showToast(error.message || 'Unable to load that review task.', 'warning');
         }
+    }
+
+    function filterQueueForFocusedApplicant(tasks) {
+        const list = Array.isArray(tasks) ? tasks : [];
+        if (!state.focusedApplicantUserId) {
+            return list;
+        }
+        const filtered = list.filter((task) => Number(task?.applicant?.userId || 0) === Number(state.focusedApplicantUserId));
+        return filtered.length ? filtered : list;
     }
 
     function renderWorkspace() {
@@ -150,23 +168,22 @@
                     ? renderApplicantBusinessPlan(task.payload || {})
                 : task.code === 'mungkahing_proyekto'
                     ? renderApplicantMungkahingPaper(task.payload || {})
-                    : task.code === 'fund_release_evidence'
-                        ? renderApplicantFundReleaseEvidence(task.payload || {})
                     : renderApplicantValidation(task.payload || {});
         }
 
         if (staffSections) {
-            staffSections.innerHTML = task.code === 'availment_form'
-                ? renderStaffAvailment(task.payload?.staffReview || {})
-                : task.code === 'buhat_sa_pagpanumpa'
-                    ? renderStaffBuhatSaPagpanumpa(task.payload?.staffReview || {})
-                : task.code === 'business_plan'
-                    ? renderStaffBusinessPlan(task.payload?.staffReview || {})
-                : task.code === 'mungkahing_proyekto'
-                    ? renderStaffMungkahingPaper(task.payload?.staffReview || {}, task.payload || {})
-                    : task.code === 'fund_release_evidence'
-                        ? renderStaffFundReleaseEvidence(task.payload || {})
-                    : renderStaffValidation(task.payload?.staffReview || {});
+            staffSections.innerHTML = renderStaffReviewSections(task);
+            const staffColumn = staffSections.closest('.workspace-column');
+            if (staffColumn) {
+                staffColumn.classList.toggle('is-hidden', staffSections.innerHTML.trim() === '');
+            }
+        }
+
+        if (applicantSections) {
+            const applicantColumn = applicantSections.closest('.workspace-column');
+            if (applicantColumn) {
+                applicantColumn.classList.remove('is-hidden');
+            }
         }
 
         if (history) {
@@ -238,12 +255,6 @@
                 ${renderReviewPaperPage(2, `
                     <section class="review-paper-section">
                         ${renderReviewPaperSectionTitle('V.', 'SOCIAL RESPONSIBILITY AND WILLINGNESS TO SAVE (CLIENT)')}
-                        <div class="review-paper-paragraph">
-                            ${payload.clientCommitment?.agreedToPolicies ? 'Will abide by SMART LEAP policies' : 'Did not confirm SMART LEAP policies'}.
-                            ${agreedToRollBackSchedule ? ' Will pay roll-back on time.' : ' Did not confirm roll-back schedule.'}
-                            ${agreedToWeeklySavings ? ' Will generate weekly savings.' : ' Did not confirm weekly savings.'}
-                            ${payload.clientCommitment?.notes ? ` Notes: ${escapeHtml(payload.clientCommitment.notes)}` : ''}
-                        </div>
                     </section>
                     <section class="review-paper-section">
                         <div class="review-paper-signoff">
@@ -259,29 +270,108 @@
     }
 
     function renderApplicantValidation(payload) {
+        const details = payload.applicantDetails || {};
+        const checklist = payload.membershipChecklist || {};
+        const staffReview = payload.staffReview || {};
+        const eligibility = staffReview.eligibilityAssessment || {};
+        const validatorIdentity = staffReview.validatorIdentity || {};
+        const participantSignature = payload.participantSignature || {};
+        const eligibilityResidentName = eligibility.residentName || participantSignature.signedName || [details.firstName, details.middleName, details.lastName].filter(Boolean).join(' ').trim();
+        const eligibilityAge = eligibility.age || details.age || '--';
+        const eligibilityBarangay = eligibility.barangay || details.barangay || '--';
         return `
-            ${renderReadOnlySection('Applicant Details', [
-                ['Date of validation', payload.applicantDetails?.validationDate],
-                ['Last name', payload.applicantDetails?.lastName],
-                ['First name', payload.applicantDetails?.firstName],
-                ['Middle name', payload.applicantDetails?.middleName],
-                ['Purok', payload.applicantDetails?.purok],
-                ['Barangay', payload.applicantDetails?.barangay],
-                ['Birthdate', payload.applicantDetails?.birthdate],
-                ['Educational attainment', payload.applicantDetails?.educationalAttainment],
-                ['Contact number', payload.applicantDetails?.contactNumber],
-            ])}
-            ${renderReadOnlySection('Checklist', [
-                ['Pantawid Member', payload.membershipChecklist?.pantawidMember],
-                ['Pantawid specify', payload.membershipChecklist?.pantawidSpecify],
-                ['SLPA Member', payload.membershipChecklist?.slpaMember],
-                ['SLPA specify', payload.membershipChecklist?.slpaSpecify],
-            ])}
-            ${renderReadOnlySection('Participant Signature', [
-                ['Signed name', payload.participantSignature?.signedName],
-                ['Date signed', payload.participantSignature?.signedDate],
-            ], [renderReadOnlyUpload('Signature upload', payload.participantSignature?.signatureUpload)])}
+            <div class="review-paper-document">
+                ${renderReviewPaperPage(1, `
+                    <section class="review-paper-section">
+                        <div class="review-paper-page__subtitle">Sustainable Market and Technology and Employment Assistance Program</div>
+                        <div class="review-paper-page__subtitle review-paper-page__subtitle--acronym">(SMART LEAP)</div>
+                        <div class="review-paper-page__title">VALIDATION FORM</div>
+                        <div class="review-paper-line-grid review-paper-line-grid--two">
+                            ${renderReviewPaperLineField('Date of Validation', details.validationDate)}
+                            ${renderReviewPaperLineField('Last Name', details.lastName)}
+                            ${renderReviewPaperLineField('First Name', details.firstName)}
+                            ${renderReviewPaperLineField('Middle Name', details.middleName)}
+                            ${renderReviewPaperLineField('Address / Purok', details.purok)}
+                            ${renderReviewPaperLineField('Barangay', details.barangay)}
+                            ${renderReviewPaperLineField('Birthday', details.birthdate)}
+                            ${renderReviewPaperLineField('Educational Attainment', details.educationalAttainment)}
+                            ${renderReviewPaperLineField('Contact number', details.contactNumber)}
+                        </div>
+                    </section>
+                    <section class="review-paper-section">
+                        <div class="review-paper-subtitle">CHECKLIST</div>
+                        ${renderReviewPaperTable(`
+                            <tr><th>Is He/She</th><th>Yes</th><th>No</th><th>Specify</th></tr>
+                        `, `
+                            <tr>
+                                <td>Pantawid Member</td>
+                                <td>${escapeHtml(checklist.pantawidMember === 'Yes' ? 'Yes' : '')}</td>
+                                <td>${escapeHtml(checklist.pantawidMember === 'No' ? 'No' : '')}</td>
+                                <td>${escapeHtml(checklist.pantawidSpecify || '--')}</td>
+                            </tr>
+                            <tr>
+                                <td>SLPA Member</td>
+                                <td>${escapeHtml(checklist.slpaMember === 'Yes' ? 'Yes' : '')}</td>
+                                <td>${escapeHtml(checklist.slpaMember === 'No' ? 'No' : '')}</td>
+                                <td>${escapeHtml(checklist.slpaSpecify || '--')}</td>
+                            </tr>
+                        `)}
+                    </section>
+                    <section class="review-paper-section">
+                        <div class="review-paper-subtitle">Validator's Recommendation</div>
+                        <div class="review-paper-paragraph">${escapeHtml(staffReview.validatorRecommendation || '--')}</div>
+                    </section>
+                    <section class="review-paper-section">
+                        <div class="review-paper-paragraph">
+                            Ako si <strong>${escapeHtml(eligibilityResidentName || '--')}</strong>,
+                            <strong>${escapeHtml(eligibilityAge || '--')}</strong> anyos, lumulupyo sa Barangay
+                            <strong>${escapeHtml(eligibilityBarangay || '--')}</strong>, Butuan City, Agusan Del Norte.
+                            Ako nakasabot sa tumong ug proseso niining Livelihood Assistance kung diin ako
+                            <strong>${escapeHtml(eligibility.eligibilityDecision || '--')}</strong>
+                            (ANGAYAN/DILI ANGAYAN) mamahimong benepisyo sa among program nga gidumala sa SMART LEAP ng City Social Welfare and Development Department (CSWDD).
+                        </div>
+                    </section>
+                    <section class="review-paper-section">
+                        <div class="review-paper-signoff">
+                            <div class="review-paper-signoff__label">Ngalan/Perma sa Partisipante</div>
+                            <div class="review-paper-signoff__line">${escapeHtml(payload.participantSignature?.signedName || '--')}</div>
+                            <div class="review-paper-signoff__meta">Petsa: ${escapeHtml(payload.participantSignature?.signedDate || '--')}</div>
+                            ${renderReadOnlyUpload('Participant signature upload', payload.participantSignature?.signatureUpload)}
+                        </div>
+                        <div class="review-paper-signoff">
+                        <div class="review-paper-signoff__label">Ngalan/Perma sa Validator</div>
+                        <div class="review-paper-signoff__line">${escapeHtml(validatorIdentity.validatorName || '--')}</div>
+                        <div class="review-paper-signoff__meta">Petsa: ${escapeHtml(validatorIdentity.signedDate || '--')}</div>
+                        ${renderReadOnlyUpload('Validator signature upload', validatorIdentity.signatureUpload)}
+                    </div>
+                    </section>
+                `)}
+            </div>
         `;
+    }
+
+    function renderStaffReviewSections(task) {
+        const staffReview = task?.payload?.staffReview || {};
+        if (!task) {
+            return '';
+        }
+
+        if (task.code === 'availment_form') {
+            return renderStaffAvailment(staffReview);
+        }
+        if (task.code === 'validation_form') {
+            return renderStaffValidation(staffReview);
+        }
+        if (task.code === 'mungkahing_proyekto') {
+            return renderStaffMungkahingPaper(staffReview, task.payload || {});
+        }
+        if (task.code === 'business_plan') {
+            return renderStaffBusinessPlan(staffReview);
+        }
+        if (task.code === 'buhat_sa_pagpanumpa') {
+            return '';
+        }
+        return '';
     }
 
     function renderApplicantFundReleaseEvidence(payload) {
@@ -294,29 +384,153 @@
         `;
     }
 
+    function parseMungkahingReviewFormulaNumber(value) {
+        const normalized = String(value ?? '').trim().replace(/,/g, '');
+        if (normalized === '' || !/^-?\d+(\.\d+)?$/.test(normalized)) {
+            return null;
+        }
+
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+
+    function formatMungkahingReviewComputedNumber(value) {
+        if (!Number.isFinite(value)) {
+            return '';
+        }
+
+        return String(Number(value.toFixed(2)));
+    }
+
+    function computeReviewMungkahingMaterialsProjectedCost(row) {
+        const quantity = parseMungkahingReviewFormulaNumber(row?.quality);
+        const unitPrice = parseMungkahingReviewFormulaNumber(row?.unitPrice);
+        const cycles = parseMungkahingReviewFormulaNumber(row?.cyclesPerProduction);
+        if (quantity === null || unitPrice === null || cycles === null) {
+            return String(row?.projectedCost || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(quantity * unitPrice * cycles);
+    }
+
+    function computeReviewMungkahingMaterialsTotal(rows, storedValue) {
+        let total = 0;
+        let hasComputedRow = false;
+
+        (rows || []).forEach((row) => {
+            const computed = computeReviewMungkahingMaterialsProjectedCost(row);
+            const parsed = parseMungkahingReviewFormulaNumber(computed);
+            if (parsed === null) {
+                return;
+            }
+
+            total += parsed;
+            hasComputedRow = true;
+        });
+
+        if (!hasComputedRow) {
+            return String(storedValue || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(total);
+    }
+
+    function computeReviewMungkahingToolsProjectedAmount(row) {
+        const quantity = parseMungkahingReviewFormulaNumber(row?.capacity);
+        const unitPrice = parseMungkahingReviewFormulaNumber(row?.quantityOrPrice);
+        if (quantity === null || unitPrice === null) {
+            return String(row?.projectedAmount || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(quantity * unitPrice);
+    }
+
+    function computeReviewMungkahingToolsDepreciationCost(row) {
+        const projectedAmount = parseMungkahingReviewFormulaNumber(computeReviewMungkahingToolsProjectedAmount(row));
+        const usefulLife = parseMungkahingReviewFormulaNumber(row?.usefulLifeDays);
+        const productionCycle = parseMungkahingReviewFormulaNumber(row?.productionCycle);
+        if (projectedAmount === null || usefulLife === null || productionCycle === null || usefulLife <= 0) {
+            return String(row?.depreciationCost || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber((projectedAmount / usefulLife) * productionCycle);
+    }
+
+    function computeReviewMungkahingToolsTotal(rows, storedValue) {
+        let total = 0;
+        let hasComputedRow = false;
+
+        (rows || []).forEach((row) => {
+            const projectedAmount = parseMungkahingReviewFormulaNumber(computeReviewMungkahingToolsProjectedAmount(row));
+            if (projectedAmount === null) {
+                return;
+            }
+
+            total += projectedAmount;
+            hasComputedRow = true;
+        });
+
+        if (!hasComputedRow) {
+            return String(storedValue || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(total);
+    }
+
+    function computeReviewMungkahingExpenseGrandTotal(rows, storedValue) {
+        let total = 0;
+        let hasAmount = false;
+
+        (rows || []).forEach((row) => {
+            const amount = parseMungkahingReviewFormulaNumber(row?.projectedCost);
+            if (amount === null) {
+                return;
+            }
+
+            total += amount;
+            hasAmount = true;
+        });
+
+        if (!hasAmount) {
+            return String(storedValue || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(total);
+    }
+
+    function computeReviewMungkahingSalesProjectedSales(row) {
+        const quantity = parseMungkahingReviewFormulaNumber(row?.capacity);
+        const sellingPrice = parseMungkahingReviewFormulaNumber(row?.sellingPrice);
+        if (quantity === null || sellingPrice === null) {
+            return String(row?.projectedSales || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(quantity * sellingPrice);
+    }
+
+    function computeReviewMungkahingGrossSales(rows, storedValue) {
+        let total = 0;
+        let hasComputedRow = false;
+
+        (rows || []).forEach((row) => {
+            const projectedSales = parseMungkahingReviewFormulaNumber(computeReviewMungkahingSalesProjectedSales(row));
+            if (projectedSales === null) {
+                return;
+            }
+
+            total += projectedSales;
+            hasComputedRow = true;
+        });
+
+        if (!hasComputedRow) {
+            return String(storedValue || '').trim();
+        }
+
+        return formatMungkahingReviewComputedNumber(total);
+    }
+
     function renderApplicantMungkahing(payload) {
-        const sectoralRows = [
-            ['Pantawid Babaye', payload.sectoralClassification?.pantawid?.sexFemale ? 'Checked' : ''],
-            ['Pantawid Lalake', payload.sectoralClassification?.pantawid?.sexMale ? 'Checked' : ''],
-            ['Pantawid Senior Citizens Babaye', payload.sectoralClassification?.pantawid?.seniorFemale ? 'Checked' : ''],
-            ['Pantawid Senior Citizens Lalake', payload.sectoralClassification?.pantawid?.seniorMale ? 'Checked' : ''],
-            ['Pantawid PWD Babaye', payload.sectoralClassification?.pantawid?.pwdFemale ? 'Checked' : ''],
-            ['Pantawid PWD Lalake', payload.sectoralClassification?.pantawid?.pwdMale ? 'Checked' : ''],
-            ['Pantawid IP Babaye', payload.sectoralClassification?.pantawid?.ipFemale ? 'Checked' : ''],
-            ['Pantawid IP Lalake', payload.sectoralClassification?.pantawid?.ipMale ? 'Checked' : ''],
-            ['Pantawid Solo Parent Babaye', payload.sectoralClassification?.pantawid?.soloParentFemale ? 'Checked' : ''],
-            ['Pantawid Solo Parent Lalake', payload.sectoralClassification?.pantawid?.soloParentMale ? 'Checked' : ''],
-            ['Non-Pantawid Babaye', payload.sectoralClassification?.nonPantawid?.sexFemale ? 'Checked' : ''],
-            ['Non-Pantawid Lalake', payload.sectoralClassification?.nonPantawid?.sexMale ? 'Checked' : ''],
-            ['Non-Pantawid Senior Citizens Babaye', payload.sectoralClassification?.nonPantawid?.seniorFemale ? 'Checked' : ''],
-            ['Non-Pantawid Senior Citizens Lalake', payload.sectoralClassification?.nonPantawid?.seniorMale ? 'Checked' : ''],
-            ['Non-Pantawid PWD Babaye', payload.sectoralClassification?.nonPantawid?.pwdFemale ? 'Checked' : ''],
-            ['Non-Pantawid PWD Lalake', payload.sectoralClassification?.nonPantawid?.pwdMale ? 'Checked' : ''],
-            ['Non-Pantawid IP Babaye', payload.sectoralClassification?.nonPantawid?.ipFemale ? 'Checked' : ''],
-            ['Non-Pantawid IP Lalake', payload.sectoralClassification?.nonPantawid?.ipMale ? 'Checked' : ''],
-            ['Non-Pantawid Solo Parent Babaye', payload.sectoralClassification?.nonPantawid?.soloParentFemale ? 'Checked' : ''],
-            ['Non-Pantawid Solo Parent Lalake', payload.sectoralClassification?.nonPantawid?.soloParentMale ? 'Checked' : ''],
-        ];
+        const sectoral = payload.sectoralClassification || {};
         const contributions = payload.modalityApplications?.rows || [];
         const materials = payload.businessOperation?.materials?.rows || [];
         const labor = payload.businessOperation?.labor?.rows || [];
@@ -337,31 +551,31 @@
                 ['Laing kakuhaon sa pondo', payload.projectInformation?.otherFundingSource],
                 ['Savings Account No.', payload.projectInformation?.savingsAccountNumber],
             ])}
-            ${renderSimpleTable('Sectoral Classification', ['Classification', 'Value'], sectoralRows)}
+            ${renderReviewMungkahingSectorMatrix(sectoral)}
             ${renderReadOnlySection('Rationale of the Proposed Project', [
                 ['Rason sa proyekto', payload.rationale],
             ])}
             ${renderSimpleTable('Detalye sa Modality Application/s', ['Kakuhuan sa Pondo', 'Gi-ambag', 'Kantidad'], contributions.map((row) => [row.fundSource, row.contributionType, row.amount]))}
-            ${renderSimpleTable('Mga gikinahanglan nga Materyales', ['Material', 'Kadaghanon', 'Yunit', 'Unit Price', 'Siklo sa Produksyon', 'Kinatibuk-ang kantidad'], materials.map((row) => [row.material, row.quality, row.unit, row.unitPrice, row.cyclesPerProduction, row.projectedCost]))}
+            ${renderSimpleTable('Mga gikinahanglan nga Materyales', ['Material', 'Kadaghanon', 'Yunit', 'Unit Price', 'Siklo sa Produksyon', 'Kinatibuk-ang kantidad'], materials.map((row) => [row.material, row.quality, row.unit, row.unitPrice, row.cyclesPerProduction, computeReviewMungkahingMaterialsProjectedCost(row)]))}
             ${renderReadOnlySection('IV.a Kinatibuk-ang Total', [
-                ['Kinatibuk-ang Total', payload.businessOperation?.materials?.totalCost],
+                ['Kinatibuk-ang Total', computeReviewMungkahingMaterialsTotal(materials, payload.businessOperation?.materials?.totalCost)],
             ])}
             ${renderSimpleTable('Mga gikinahanglan na Trabahante', ['Ngalan sa Magtrabaho sa Negosyo', 'Posisyon sa Trabaho', 'Inadlaw na Suweldo'], labor.map((row) => [row.workerName, row.position, row.dailyWage]))}
             ${renderReadOnlySection('IV.b Mga kinatibuk-ang suweldo', [
                 ['Kinatibuk-an na inadlaw na suweldo', payload.businessOperation?.labor?.totalDailyWage],
                 ['Kinatibuk-an na suweldo base sa siglo sa produksyon', payload.businessOperation?.labor?.totalProductionCycleWage],
             ])}
-            ${renderSimpleTable('IV.c Mga Gikinahanglan nga Kagamitan', ['Kagamitan', 'Kadaghanon', 'Yunit', 'Kantidad o presyo sa matag usa', 'Kinatibuk-an nga kantidad o presyo', 'Gitas-on sa kinabuhi sa mga himan/kagamitan', 'Siklo sa Produksyon', 'Depreciation Cost'], equipment.map((row) => [row.equipment, row.capacity, row.unit, row.quantityOrPrice, row.projectedAmount, row.usefulLifeDays, row.productionCycle, row.depreciationCost]))}
+            ${renderSimpleTable('IV.c Mga Gikinahanglan nga Kagamitan', ['Kagamitan', 'Kadaghanon', 'Yunit', 'Kantidad o presyo sa matag usa', 'Kinatibuk-an nga kantidad o presyo', 'Gitas-on sa kinabuhi sa mga himan/kagamitan', 'Siklo sa Produksyon', 'Depreciation Cost'], equipment.map((row) => [row.equipment, row.capacity, row.unit, row.quantityOrPrice, computeReviewMungkahingToolsProjectedAmount(row), row.usefulLifeDays, row.productionCycle, computeReviewMungkahingToolsDepreciationCost(row)]))}
             ${renderReadOnlySection('IV.c Kinatibuk-ang Total', [
-                ['Kinatibuk-ang Total', payload.businessOperation?.toolsEquipment?.totalCost],
+                ['Kinatibuk-ang Total', computeReviewMungkahingToolsTotal(equipment, payload.businessOperation?.toolsEquipment?.totalCost)],
             ])}
             ${renderSimpleTable('IV.d Uban pang mga gastohanan', ['Regular na ginagastuhan', 'Dalas ng pagbayad', 'Kinatibuk-an na kantidad o presyo base sa siglo sa produksyon'], expenses.map((row) => [row.expenseName, row.paymentFrequency, row.projectedCost]))}
             ${renderReadOnlySection('IV.d Grand Total', [
-                ['Grand Total', payload.businessOperation?.operatingExpenses?.grandTotal],
+                ['Grand Total', computeReviewMungkahingExpenseGrandTotal(expenses, payload.businessOperation?.operatingExpenses?.grandTotal)],
             ])}
-            ${renderSimpleTable('IV.e Pangunahing kita gikan sa puhunan alang sa mga sangkap', ['Produkto', 'Kadaghanon', 'Yunit', 'Kantidad sa pagpamaligya matag piraso', 'Kinatibuk-an na kantidad sa pagpamaligya base sa siglo sa produksyon'], sales.map((row) => [row.product, row.capacity, row.unit, row.sellingPrice, row.projectedSales]))}
+            ${renderSimpleTable('IV.e Pangunahing kita gikan sa puhunan alang sa mga sangkap', ['Produkto', 'Kadaghanon', 'Yunit', 'Kantidad sa pagpamaligya matag piraso', 'Kinatibuk-an na kantidad sa pagpamaligya base sa siglo sa produksyon'], sales.map((row) => [row.product, row.capacity, row.unit, row.sellingPrice, computeReviewMungkahingSalesProjectedSales(row)]))}
             ${renderReadOnlySection('IV.e Gross Sales', [
-                ['Gross Sales', payload.businessOperation?.salesProjection?.grossSales],
+                ['Gross Sales', computeReviewMungkahingGrossSales(sales, payload.businessOperation?.salesProjection?.grossSales)],
             ])}
             ${renderReadOnlySection('IV.f Kinatibuk-ang kita sa matag produkto o paghimo sa serbisyo', [
                 ['Gilauman nga kita alang sa usa ka "siklo sa produksyon"', income.projectedIncomePerCycle],
@@ -389,7 +603,6 @@
         const psycho = staffReview.psychoSocialRequirements || {};
         const residency = psycho.residencyAndCharacter || {};
         const relationships = psycho.familyRelationshipsWorkHabitsAspiration || {};
-        const social = staffReview.psychoSocialRequirements?.socialResponsibility || {};
 
         return `
             <div class="review-paper-document">
@@ -401,8 +614,6 @@
                     renderReviewSignatureArea('Direct Worker', `
                         <div class="row-grid">
                             ${renderInput('Direct worker name', 'staff.pageOneCertification.directWorkerName', pageOne.directWorkerName || '')}
-                            ${renderInput('Direct worker title', 'staff.pageOneCertification.directWorkerTitle', pageOne.directWorkerTitle || '')}
-                            ${renderInput('Date signed', 'staff.pageOneCertification.signedDate', pageOne.signedDate || '', 'date')}
                             ${renderUploadField('Direct worker signature upload', 'pageOneCertification.signatureUpload', pageOne.signatureUpload || null)}
                         </div>
                     `)
@@ -415,13 +626,7 @@
                             I certify that <strong>${escapeHtml(food.applicantName || '________________')}</strong> has undergone medical check-up and is physically fit to run a food related projects.
                         `)}
                         <div class="row-grid">
-                            ${renderSelect('Requires medical clearance', 'staff.physicalRequirements.foodRelatedCertification.requiresMedicalClearance', food.requiresMedicalClearance || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Medical check-up completed', 'staff.physicalRequirements.foodRelatedCertification.medicalCheckupCompleted', food.medicalCheckupCompleted || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Medically fit', 'staff.physicalRequirements.foodRelatedCertification.medicallyFit', food.medicallyFit || '', ['', 'Yes', 'No'])}
-                            ${renderInput('Applicant name', 'staff.physicalRequirements.foodRelatedCertification.applicantName', food.applicantName || '')}
                             ${renderInput('Certifying officer name', 'staff.physicalRequirements.foodRelatedCertification.certifyingOfficerName', food.certifyingOfficerName || '')}
-                            ${renderInput('Certifying officer title', 'staff.physicalRequirements.foodRelatedCertification.certifyingOfficerTitle', food.certifyingOfficerTitle || '')}
-                            ${renderInput('Date signed', 'staff.physicalRequirements.foodRelatedCertification.signedDate', food.signedDate || '', 'date')}
                             ${renderUploadField('Certifying officer signature upload', 'physicalRequirements.foodRelatedCertification.signatureUpload', food.signatureUpload || null)}
                         </div>
                     `
@@ -432,14 +637,7 @@
                         I certify that <strong>${escapeHtml(residency.residentName || '________________')}</strong> a bona fide resident of the barangay and is of good moral character and has no adverse reputation.
                     `) + `
                         <div class="row-grid">
-                            ${renderInput('Resident name', 'staff.psychoSocialRequirements.residencyAndCharacter.residentName', residency.residentName || '')}
-                            ${renderInput('Barangay', 'staff.psychoSocialRequirements.residencyAndCharacter.barangay', residency.barangay || '')}
-                            ${renderSelect('Bona fide resident', 'staff.psychoSocialRequirements.residencyAndCharacter.isBonaFideResident', residency.isBonaFideResident || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Good moral character', 'staff.psychoSocialRequirements.residencyAndCharacter.goodMoralCharacter', residency.goodMoralCharacter || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('No adverse reputation', 'staff.psychoSocialRequirements.residencyAndCharacter.hasNoAdverseReputation', residency.hasNoAdverseReputation || '', ['', 'Yes', 'No'])}
                             ${renderInput('Certifying officer name', 'staff.psychoSocialRequirements.residencyAndCharacter.certifyingOfficerName', residency.certifyingOfficerName || '')}
-                            ${renderInput('Certifying officer title', 'staff.psychoSocialRequirements.residencyAndCharacter.certifyingOfficerTitle', residency.certifyingOfficerTitle || '')}
-                            ${renderInput('Date signed', 'staff.psychoSocialRequirements.residencyAndCharacter.signedDate', residency.signedDate || '', 'date')}
                             ${renderUploadField('Certifying officer signature upload', 'psychoSocialRequirements.residencyAndCharacter.signatureUpload', residency.signatureUpload || null)}
                         </div>
                     `
@@ -450,29 +648,9 @@
                         I certify that through personal interview, home visit and collateral interview I have verified that <strong>${escapeHtml(relationships.applicantName || '________________')}</strong> manifest positive relationships, good work habits and attitude as well as demonstrated capacity and adequate level of economic aspiration.
                     `) + `
                         <div class="row-grid">
-                            ${renderInput('Applicant name', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.applicantName', relationships.applicantName || '')}
-                            ${renderSelect('Positive relationships', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.positiveRelationships', relationships.positiveRelationships || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Good work habits and attitude', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.goodWorkHabitsAndAttitude', relationships.goodWorkHabitsAndAttitude || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Adequate economic aspiration', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.adequateEconomicAspiration', relationships.adequateEconomicAspiration || '', ['', 'Yes', 'No'])}
-                            ${renderTextarea('Finding / verification note', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.findingText', relationships.findingText || '')}
                             ${renderInput('Direct worker name', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.directWorkerName', relationships.directWorkerName || '')}
-                            ${renderInput('Direct worker title', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.directWorkerTitle', relationships.directWorkerTitle || '')}
-                            ${renderInput('Date signed', 'staff.psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signedDate', relationships.signedDate || '', 'date')}
                             ${renderUploadField('Direct worker signature upload', 'psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload', relationships.signatureUpload || null)}
                         </div>
-                    `
-                )}
-                ${renderReviewStatementBlock(
-                    'V.C Social Responsibility and Willingness to Save (Client)',
-                    renderReviewCertificationSentence(`
-                        I will abide by the policies and guidelines set by CSWDD for the SMART LEAP and I promise to pay the roll-back at the time stipulated and to generate weekly savings to meet emergencies that may affect my family.
-                    `) + `
-                        <div class="row-grid">
-                            ${renderSelect('Will abide by policies', 'staff.psychoSocialRequirements.socialResponsibility.abidePolicies', social.abidePolicies || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Will pay roll-back on time', 'staff.psychoSocialRequirements.socialResponsibility.payRollBackOnTime', social.payRollBackOnTime || '', ['', 'Yes', 'No'])}
-                            ${renderSelect('Will generate weekly savings', 'staff.psychoSocialRequirements.socialResponsibility.generateWeeklySavings', social.generateWeeklySavings || '', ['', 'Yes', 'No'])}
-                        </div>
-                        ${renderTextarea('Staff note', 'staff.psychoSocialRequirements.socialResponsibility.acknowledgementText', social.acknowledgementText || '')}
                     `
                 )}
             </div>
@@ -480,7 +658,6 @@
     }
 
     function renderStaffValidation(staffReview) {
-        const eligibility = staffReview.eligibilityAssessment || {};
         const identity = staffReview.validatorIdentity || {};
         return `
             ${renderReviewStatementBlock(
@@ -488,34 +665,10 @@
                 renderReviewCertificationSentence(`
                     Validator's Recommendation:
                 `) + renderTextarea('Recommendation', 'staff.validatorRecommendation', staffReview.validatorRecommendation || '')
-            )}
-            ${renderReviewStatementBlock(
-                'Eligibility Assessment',
-                `
-                    <div class="row-grid">
-                        ${renderInput('Resident name', 'staff.eligibilityAssessment.residentName', eligibility.residentName || '')}
-                        ${renderInput('Age', 'staff.eligibilityAssessment.age', eligibility.age || '')}
-                        ${renderInput('Barangay', 'staff.eligibilityAssessment.barangay', eligibility.barangay || '')}
-                    </div>
-                    ${renderReviewCertificationSentence(`
-                        Ako si <strong>${escapeHtml(eligibility.residentName || '________________')}</strong>,
-                        <strong>${escapeHtml(eligibility.age || '____')}</strong> anyos, lumulupyo sa Barangay
-                        <strong>${escapeHtml(eligibility.barangay || '________________')}</strong>, Butuan City, Agusan Del Norte.
-                        Ako nakasabot sa tumong ug proseso niining Livelihood Assistance kung diin ako
-                        <strong>${escapeHtml(eligibility.assistanceProcessUnderstanding || '________________')}</strong>
-                        (${escapeHtml(eligibility.eligibilityDecision || 'ANGAYAN/DILI ANGAYAN')}) mahimong benepisyo sa among program nga gidumala sa
-                        SMART LEAP ng City Social Welfare and Development Department (CSWDD).
-                    `)}
-                    <div class="row-grid">
-                        ${renderSelect('Understands assistance process', 'staff.eligibilityAssessment.understandsAssistanceProcess', eligibility.understandsAssistanceProcess || '', ['', 'Yes', 'No'])}
-                        ${renderSelect('Eligibility decision', 'staff.eligibilityAssessment.eligibilityDecision', eligibility.eligibilityDecision || '', ['', 'ANGAYAN', 'DILI ANGAYAN'])}
-                    </div>
-                    ${renderTextarea('Assistance process understanding', 'staff.eligibilityAssessment.assistanceProcessUnderstanding', eligibility.assistanceProcessUnderstanding || '')}
-                `,
+                ,
                 renderReviewSignatureArea('Ngalan/Perma sa Validator', `
                     <div class="row-grid">
                         ${renderInput('Validator name', 'staff.validatorIdentity.validatorName', identity.validatorName || '')}
-                        ${renderInput('Validator title', 'staff.validatorIdentity.validatorTitle', identity.validatorTitle || '')}
                         ${renderInput('Date signed', 'staff.validatorIdentity.signedDate', identity.signedDate || '', 'date')}
                         ${renderUploadField('Validator signature upload', 'validatorIdentity.signatureUpload', identity.signatureUpload || null)}
                     </div>
@@ -551,10 +704,8 @@
                         ${renderInput('Project name', 'staff.recommendation.projectName', recommendation.projectName || '')}
                         ${renderInput('Recommended amount', 'staff.recommendation.recommendedAmount', recommendation.recommendedAmount || '', 'number')}
                         ${renderInput('Approver name', 'staff.recommendation.approverName', recommendation.approverName || '')}
-                        ${renderInput('Approver title', 'staff.recommendation.approverTitle', recommendation.approverTitle || '')}
                         ${renderInput('Approved date', 'staff.recommendation.approvedDate', recommendation.approvedDate || '', 'date')}
                     </div>
-                    ${renderTextarea('Recommendation text', 'staff.recommendation.recommendationText', recommendation.recommendationText || '')}
                     ${renderUploadField('Approval signature upload', 'recommendation.signatureUpload', recommendation.signatureUpload || null)}
                 `
             )}
@@ -563,9 +714,8 @@
 
     function renderApplicantMungkahingPaper(payload) {
         const project = payload.projectInformation || {};
+        const recommendation = payload.staffReview?.recommendation || {};
         const sectoral = payload.sectoralClassification || {};
-        const pantawid = sectoral.pantawid || {};
-        const nonPantawid = sectoral.nonPantawid || {};
         const contributions = payload.modalityApplications?.rows || [];
         const materials = payload.businessOperation?.materials?.rows || [];
         const labor = payload.businessOperation?.labor?.rows || [];
@@ -590,7 +740,7 @@
                             ${renderReviewPaperLineField('Kantidad gikan sa CSWDD', project.cswddAmount)}
                             ${renderReviewPaperLineField('Lain kakuhan sa pondo', project.otherFundingSource)}
                         </div>
-                        ${renderReviewMungkahingSectorMatrix(pantawid, nonPantawid)}
+                        ${renderReviewMungkahingSectorMatrix(sectoral)}
                     </section>
                     <section class="review-paper-section">
                         ${renderReviewPaperSectionTitle('II.', 'RATIONALE OF THE PROPOSED PROJECT')}
@@ -622,9 +772,9 @@
                                 <td>${escapeHtml(row.unit || '--')}</td>
                                 <td>${escapeHtml(row.unitPrice || '--')}</td>
                                 <td>${escapeHtml(row.cyclesPerProduction || '--')}</td>
-                                <td>${escapeHtml(row.projectedCost || '--')}</td>
+                                <td>${escapeHtml(computeReviewMungkahingMaterialsProjectedCost(row) || '--')}</td>
                             </tr>
-                        `).join(''), `<tr><td colspan="5" class="review-paper-table__total-label">Kinatibuk-ang Total</td><td>${escapeHtml(payload.businessOperation?.materials?.totalCost || '--')}</td></tr>`)}
+                        `).join(''), `<tr><td colspan="5" class="review-paper-table__total-label">Kinatibuk-ang Total</td><td>${escapeHtml(computeReviewMungkahingMaterialsTotal(materials, payload.businessOperation?.materials?.totalCost) || '--')}</td></tr>`)}
                         <div class="review-paper-subtitle">b.) Mga Gikinahanglan na Trabahante</div>
                         ${renderReviewPaperTable(`
                             <tr><th>Ngalan sa Magtrabaho sa Negosyo</th><th>Posisyon sa Trabaho</th><th>Inadlaw na Sweldo</th></tr>
@@ -651,12 +801,12 @@
                                 <td>${escapeHtml(row.capacity || '--')}</td>
                                 <td>${escapeHtml(row.unit || '--')}</td>
                                 <td>${escapeHtml(row.quantityOrPrice || '--')}</td>
-                                <td>${escapeHtml(row.projectedAmount || '--')}</td>
+                                <td>${escapeHtml(computeReviewMungkahingToolsProjectedAmount(row) || '--')}</td>
                                 <td>${escapeHtml(row.usefulLifeDays || '--')}</td>
                                 <td>${escapeHtml(row.productionCycle || '--')}</td>
-                                <td>${escapeHtml(row.depreciationCost || '--')}</td>
+                                <td>${escapeHtml(computeReviewMungkahingToolsDepreciationCost(row) || '--')}</td>
                             </tr>
-                        `).join(''), `<tr><td colspan="7" class="review-paper-table__total-label">Kinatibuk-ang Total</td><td>${escapeHtml(payload.businessOperation?.toolsEquipment?.totalCost || '--')}</td></tr>`)}
+                        `).join(''), `<tr><td colspan="7" class="review-paper-table__total-label">Kinatibuk-ang Total</td><td>${escapeHtml(computeReviewMungkahingToolsTotal(equipment, payload.businessOperation?.toolsEquipment?.totalCost) || '--')}</td></tr>`)}
                     </section>
                     <section class="review-paper-section">
                         <div class="review-paper-subtitle">d.) Uban pang mga gastohanan</div>
@@ -668,7 +818,7 @@
                                 <td>${escapeHtml(row.paymentFrequency || '--')}</td>
                                 <td>${escapeHtml(row.projectedCost || '--')}</td>
                             </tr>
-                        `).join(''), `<tr><td colspan="2" class="review-paper-table__total-label">Grand Total</td><td>${escapeHtml(payload.businessOperation?.operatingExpenses?.grandTotal || '--')}</td></tr>`)}
+                        `).join(''), `<tr><td colspan="2" class="review-paper-table__total-label">Grand Total</td><td>${escapeHtml(computeReviewMungkahingExpenseGrandTotal(expenses, payload.businessOperation?.operatingExpenses?.grandTotal) || '--')}</td></tr>`)}
                     </section>
                     <section class="review-paper-section">
                         <div class="review-paper-subtitle">e.) Pangunahing kita gikan sa puhunan alang sa mga sangkap</div>
@@ -680,9 +830,9 @@
                                 <td>${escapeHtml(row.capacity || '--')}</td>
                                 <td>${escapeHtml(row.unit || '--')}</td>
                                 <td>${escapeHtml(row.sellingPrice || '--')}</td>
-                                <td>${escapeHtml(row.projectedSales || '--')}</td>
+                                <td>${escapeHtml(computeReviewMungkahingSalesProjectedSales(row) || '--')}</td>
                             </tr>
-                        `).join(''), `<tr><td colspan="4" class="review-paper-table__total-label">Gross Sales</td><td>${escapeHtml(payload.businessOperation?.salesProjection?.grossSales || '--')}</td></tr>`)}
+                        `).join(''), `<tr><td colspan="4" class="review-paper-table__total-label">Gross Sales</td><td>${escapeHtml(computeReviewMungkahingGrossSales(sales, payload.businessOperation?.salesProjection?.grossSales) || '--')}</td></tr>`)}
                     </section>
                     <section class="review-paper-section">
                         <div class="review-paper-subtitle">f.) Kinatibuk-ang kita sa matag produkto o paghimo sa serbisyo</div>
@@ -727,6 +877,12 @@
                             <div class="review-paper-signoff__meta">Petsa: ${escapeHtml(payload.applicantSignature?.signedDate || '--')}</div>
                             ${renderReadOnlyUpload('Pirma sa Partisipante', payload.applicantSignature?.signatureUpload)}
                         </div>
+                        <div class="review-paper-signoff">
+                            <div class="review-paper-signoff__label">Name and Signature sa Validator</div>
+                            <div class="review-paper-signoff__line">${escapeHtml(recommendation.approverName || '--')}</div>
+                            <div class="review-paper-signoff__meta">Petsa: ${escapeHtml(recommendation.approvedDate || '--')}</div>
+                            ${renderReadOnlyUpload('Validator signature upload', recommendation.signatureUpload)}
+                        </div>
                     </section>
                 `)}
             </div>
@@ -753,13 +909,11 @@
                     </section>
                     <section class="review-paper-section">
                         <div class="review-paper-signoff">
-                            <div class="review-paper-signoff__label">GI ASSESSES UG APRUBAHAN NI</div>
+                            <div class="review-paper-signoff__label">Name and Signature sa Validator</div>
                             <div class="row-grid">
-                                ${renderInput('Pangalan sa PDO/Admin', 'staff.recommendation.approverName', recommendation.approverName || '')}
-                                ${renderInput('Titulo', 'staff.recommendation.approverTitle', recommendation.approverTitle || '')}
+                                ${renderInput('Validator name', 'staff.recommendation.approverName', recommendation.approverName || '')}
                                 ${renderInput('Petsa', 'staff.recommendation.approvedDate', recommendation.approvedDate || '', 'date')}
-                                ${renderTextarea('Recommendation text', 'staff.recommendation.recommendationText', recommendation.recommendationText || '')}
-                                ${renderUploadField('Pirma sa PDO/Admin', 'recommendation.signatureUpload', recommendation.signatureUpload || null)}
+                                ${renderUploadField('Pirma sa Validator', 'recommendation.signatureUpload', recommendation.signatureUpload || null)}
                             </div>
                         </div>
                     </section>
@@ -768,7 +922,7 @@
         `;
     }
 
-    function renderApplicantBusinessPlan(payload) {
+    function renderApplicantBusinessPlanLegacy(payload) {
         const overview = payload.overview || {};
         const products = payload.productsServices?.rows || [];
         const market = payload.marketStrategy || {};
@@ -943,11 +1097,204 @@
         `;
     }
 
+    function renderApplicantBusinessPlan(payload) {
+        const data = payload || {};
+        const approval = data.staffReview?.approval || {};
+        const legacyProducts = Array.isArray(data.productsServices?.rows)
+            ? data.productsServices.rows
+                .map((row) => [row?.name, row?.description, row?.price, row?.targetMarket].filter((part) => String(part || '').trim() !== '').join(' | '))
+                .filter((row) => row !== '')
+                .join('\n')
+            : '';
+        const legacySchedule = Array.isArray(data.implementationSchedule?.rows)
+            ? data.implementationSchedule.rows
+                .map((row) => [row?.activity, row?.targetDate, row?.responsiblePerson].filter((part) => String(part || '').trim() !== '').join(' | '))
+                .filter((row) => row !== '')
+                .join('\n')
+            : '';
+        const executiveSummary = {
+            briefDescriptionOfBusinessProject: data.executiveSummary?.briefDescriptionOfBusinessProject || (typeof data.executiveSummary === 'string' ? data.executiveSummary : ''),
+            briefProfileOfEntrepreneur: data.executiveSummary?.briefProfileOfEntrepreneur || data.overview?.businessGoal || '',
+            projectContributionsToEconomy: data.executiveSummary?.projectContributionsToEconomy || data.riskManagement?.mitigation || '',
+        };
+        const marketingPlan = {
+            descriptionOfProduct: data.marketingPlan?.descriptionOfProduct || legacyProducts,
+            comparisonWithCompetitors: data.marketingPlan?.comparisonWithCompetitors || data.marketStrategy?.competitors || '',
+            location: data.marketingPlan?.location || data.operationsPlan?.businessLocation || '',
+            marketArea: data.marketingPlan?.marketArea || data.marketStrategy?.salesChannel || '',
+            mainCustomers: data.marketingPlan?.mainCustomers || data.marketStrategy?.customerProfile || '',
+            totalDemand: data.marketingPlan?.totalDemand || data.financialPlan?.monthlySalesProjection || '',
+            sellingPrice: data.marketingPlan?.sellingPrice || data.financialPlan?.projectedNetIncome || '',
+            promotionalMeasures: data.marketingPlan?.promotionalMeasures || data.marketStrategy?.marketingApproach || '',
+            marketingStrategy: data.marketingPlan?.marketingStrategy || data.marketStrategy?.salesChannel || '',
+            marketingBudget: data.marketingPlan?.marketingBudget || data.financialPlan?.monthlyExpenseProjection || '',
+        };
+        const productionPlan = {
+            productionServiceProcess: data.productionPlan?.productionServiceProcess || data.operationsPlan?.productionProcess || '',
+            fixedCapital: data.productionPlan?.fixedCapital || data.operationsPlan?.equipmentNeeded || '',
+            lifeOfFixedCapital: data.productionPlan?.lifeOfFixedCapital || data.financialPlan?.breakEvenNotes || '',
+            sourcesOfEquipment: data.productionPlan?.sourcesOfEquipment || data.operationsPlan?.equipmentNeeded || '',
+            plannedCapacity: data.productionPlan?.plannedCapacity || data.financialPlan?.breakEvenNotes || '',
+            futureCapacity: data.productionPlan?.futureCapacity || data.financialPlan?.breakEvenNotes || '',
+            rawMaterials: data.productionPlan?.rawMaterials || data.operationsPlan?.productionProcess || '',
+            costOfRawMaterials: data.productionPlan?.costOfRawMaterials || data.financialPlan?.projectedNetIncome || '',
+            rawMaterialsAvailability: data.productionPlan?.rawMaterialsAvailability || data.riskManagement?.risks || '',
+            labor: data.productionPlan?.labor || data.operationsPlan?.staffingPlan || '',
+            costOfLabor: data.productionPlan?.costOfLabor || data.financialPlan?.monthlyExpenseProjection || '',
+            laborAvailability: data.productionPlan?.laborAvailability || data.operationsPlan?.staffingPlan || '',
+        };
+        const managementPlan = {
+            preOperatingActivities: data.organizationAndManagementPlan?.preOperatingActivities || legacySchedule,
+            preOperatingExpenses: data.organizationAndManagementPlan?.preOperatingExpenses || data.financialPlan?.monthlyExpenseProjection || '',
+        };
+        const financialPlan = {
+            projectCost: data.financialPlan?.projectCost || data.financialPlan?.startupCapital || '',
+        };
+
+        return `
+            <div class="review-bp-document">
+                ${renderReviewBusinessPlanPage(1, `
+                    <header class="review-bp-titlepage">
+                        <h2>BUSINESS PLAN</h2>
+                        <div class="review-bp-titlepage__subhead">EXECUTIVE SUMMARY (PAGLALARAWAN NG NEGOSYO)</div>
+                    </header>
+                    ${renderReviewBusinessPlanPrompt('1.', 'Brief Description of the Business/Project', '', `
+                        ${renderReviewBusinessPlanNarrative(executiveSummary.briefDescriptionOfBusinessProject || '', 'review-bp-narrative--medium')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.', 'Brief Profile of an Entrepreneur', '', `
+                        ${renderReviewBusinessPlanNarrative(executiveSummary.briefProfileOfEntrepreneur || '', 'review-bp-narrative--medium')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('3.', 'Project’s Contributions to the Economy', '', `
+                        ${renderReviewBusinessPlanNarrative(executiveSummary.projectContributionsToEconomy || '', 'review-bp-narrative--medium')}
+                    `)}
+                    <div class="review-bp-section-heading">Section 1: MARKETING PLAN</div>
+                    ${renderReviewBusinessPlanPrompt('1.1', 'Description of the Product', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.descriptionOfProduct || '', 'review-bp-narrative--medium')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.2', 'Comparison of the Product with Its Competitors', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.comparisonWithCompetitors || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.3', 'Location', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.location || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.4', 'Market Area', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.marketArea || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.5', 'Main Customers', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.mainCustomers || '', 'review-bp-narrative--short')}
+                    `)}
+                `)}
+                ${renderReviewBusinessPlanPage(2, `
+                    <div class="review-bp-section-heading">Section 1: MARKETING PLAN</div>
+                    ${renderReviewBusinessPlanPrompt('1.6', 'Total Demand', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.totalDemand || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.7', 'Selling Price', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.sellingPrice || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.8', 'Promotional Measures', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.promotionalMeasures || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.9', 'Marketing Strategy', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.marketingStrategy || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('1.10', 'Marketing Budget', '', `
+                        ${renderReviewBusinessPlanNarrative(marketingPlan.marketingBudget || '', 'review-bp-narrative--short')}
+                    `)}
+                    <div class="review-bp-section-heading">Section 2: PRODUCTION PLAN</div>
+                    ${renderReviewBusinessPlanPrompt('2.1', 'Production/Service Process', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.productionServiceProcess || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.2', 'Fixed Capital', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.fixedCapital || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.3', 'Life of Fixed Capital', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.lifeOfFixedCapital || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.4', 'Sources of Equipment', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.sourcesOfEquipment || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.5', 'Planned Capacity', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.plannedCapacity || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.6', 'Future Capacity', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.futureCapacity || '', 'review-bp-narrative--short')}
+                    `)}
+                `)}
+                ${renderReviewBusinessPlanPage(3, `
+                    <div class="review-bp-section-heading">Section 2: PRODUCTION PLAN</div>
+                    ${renderReviewBusinessPlanPrompt('2.7', 'Raw Materials', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.rawMaterials || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.8', 'Cost of Raw Materials', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.costOfRawMaterials || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.9', 'Raw Materials Availability', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.rawMaterialsAvailability || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.10', 'Labor', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.labor || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.11', 'Cost of Labor', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.costOfLabor || '', 'review-bp-narrative--short')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('2.12', 'Labor Availability', '', `
+                        ${renderReviewBusinessPlanNarrative(productionPlan.laborAvailability || '', 'review-bp-narrative--short')}
+                    `)}
+                    <div class="review-bp-section-heading">Section 3: ORGANIZATION AND MANAGEMENT PLAN</div>
+                    ${renderReviewBusinessPlanPrompt('3.1', 'Pre Operating Activities', '', `
+                        ${renderReviewBusinessPlanNarrative(managementPlan.preOperatingActivities || '', 'review-bp-narrative--medium')}
+                    `)}
+                    ${renderReviewBusinessPlanPrompt('3.2', 'Pre Operating Expenses', '', `
+                        ${renderReviewBusinessPlanNarrative(managementPlan.preOperatingExpenses || '', 'review-bp-narrative--short')}
+                    `)}
+                    <div class="review-bp-section-heading">Section 4: FINANCIAL PLAN</div>
+                    ${renderReviewBusinessPlanPrompt('4.1', 'Project Cost', '', `
+                        ${renderReviewBusinessPlanNarrative(financialPlan.projectCost || '', 'review-bp-narrative--short')}
+                    `)}
+                `)}
+                ${renderReviewBusinessPlanPage(4, `
+                    <section class="review-bp-signoff">
+                        <div class="review-bp-signoff__row">
+                            <div class="review-bp-signoff__label">Prepared by:</div>
+                            <div class="review-bp-signoff__body">
+                                <div class="review-bp-signline">${escapeHtml(data.applicantSignature?.signedName || '--')}</div>
+                                <div class="review-bp-signcaption">(Name sa Benes)</div>
+                                <div class="review-bp-signmeta">Petsa sa pirma: ${escapeHtml(data.applicantSignature?.signedDate || '--')}</div>
+                                ${renderReviewBusinessPlanFileSlot('Pirma sa aplikante', data.applicantSignature?.signatureUpload, 'Walay pirma nga na-upload.')}
+                            </div>
+                        </div>
+                        <div class="review-bp-signoff__row">
+                            <div class="review-bp-signoff__label">Reviewed by:</div>
+                            <div class="review-bp-signoff__body">
+                                <div class="review-bp-signline">${escapeHtml(approval.approverName || '--')}</div>
+                                ${renderReviewBusinessPlanFileSlot('Pirma sa reviewer', approval.signatureUpload, 'Alang sa upload sa reviewer side.')}
+                            </div>
+                        </div>
+                        <div class="review-bp-signoff__row">
+                            <div class="review-bp-signoff__label">Noted by:</div>
+                            <div class="review-bp-signoff__body review-bp-signoff__body--noted">
+                                <div class="review-bp-noted-fixed">GOLDA V. POCON, RSW, MSSW, CESE<br>CGHD-II/CSWDO</div>
+                                ${approval.recommendedAction ? `<div class="review-bp-note"><strong>Girekomendang aksyon:</strong> ${escapeHtml(approval.recommendedAction)}</div>` : ''}
+                            </div>
+                        </div>
+                    </section>
+                `)}
+            </div>
+        `;
+    }
+
     function renderApplicantBuhatSaPagpanumpa(payload) {
         const beneficiary = payload.beneficiary || {};
-        const project = payload.project || {};
+        const project = {
+            programStatement: payload.project?.programStatement || 'Sustainable Market and Technology Driven Livelihood and Employment Program',
+            programShortName: payload.project?.programShortName || payload.project?.programName || 'SMART LEAP',
+            amountInWords: payload.project?.amountInWords || 'Fifteen Thousand Pesos',
+            amountNumeric: payload.project?.amountNumeric || (payload.project?.amountReceived ? `Php ${payload.project.amountReceived}` : 'Php 15,000.00'),
+        };
         const coMaker = payload.coMaker || {};
         const agreement = payload.agreement || {};
+        const currentDateWords = agreement.currentDateWords || formatMonthDayWords(agreement.dateSigned);
         const applicantSignature = payload.applicantSignature || {};
         const coMakerSignature = payload.coMakerSignature || {};
 
@@ -985,15 +1332,15 @@
                         <ol class="review-buhat__clauses">
                             <li>
                                 Ako usa ka benepisyaryo sa
-                                ${renderReviewBuhatInline(project.programName, 'lg')}
-                                Program;
+                                ${renderReviewBuhatInline(project.programStatement, 'lg')};
                             </li>
                             <li>
                                 Tungod sa
-                                ${renderReviewBuhatInline(project.projectName, 'lg')}
-                                Program, ako makadawat ug kantidad nga
-                                <span class="review-buhat__literal">(Php</span>
-                                ${renderReviewBuhatInline(project.amountReceived, 'md')}
+                                ${renderReviewBuhatInline(project.programShortName, 'md')},
+                                <span class="review-buhat__literal">ako makadawat ug kantidad nga</span>
+                                ${renderReviewBuhatInline(project.amountInWords, 'md')}
+                                <span class="review-buhat__literal">(</span>
+                                ${renderReviewBuhatInline(project.amountNumeric, 'sm')}
                                 <span class="review-buhat__literal">)</span>
                                 ug ako kining gamiton sa saktong katuyuan base sa mga dokumento nga akong gisumitar didto sa ahensya;
                             </li>
@@ -1039,9 +1386,7 @@
 
                         <p class="review-buhat__paragraph">
                             Isip sa pagmatuod sa akong pag-uyon og kumpletong pagsabot niining maong kasabutan, ako kining paga pirmahan ibabaw sa akong pangalan karong adlawa
-                            ${renderReviewBuhatInline(agreement.dateSigned, 'md')}
-                            ,
-                            ${renderReviewBuhatInline(agreement.yearSigned, 'xs')}
+                            ${renderReviewBuhatInline(currentDateWords, 'md')}
                             <span class="review-buhat__literal">.</span>
                         </p>
 
@@ -1076,17 +1421,22 @@
     function renderStaffBusinessPlan(staffReview) {
         const approval = staffReview.approval || {};
         return `
-            <section class="review-section">
-                <h4>Business Plan Approval</h4>
-                <div class="row-grid">
-                    ${renderTextarea('Review summary', 'staff.approval.reviewSummary', approval.reviewSummary || '')}
-                    ${renderInput('Recommended action', 'staff.approval.recommendedAction', approval.recommendedAction || '')}
-                    ${renderInput('Approver name', 'staff.approval.approverName', approval.approverName || '')}
-                    ${renderInput('Approver title', 'staff.approval.approverTitle', approval.approverTitle || '')}
-                    ${renderInput('Approved date', 'staff.approval.approvedDate', approval.approvedDate || '', 'date')}
-                    ${renderUploadField('Noted by signature upload (GOLDA V. POCON)', 'approval.signatureUpload', approval.signatureUpload || null)}
-                </div>
-            </section>
+            ${renderReviewStatementBlock(
+                'Reviewed by',
+                `
+                    <div class="row-grid">
+                        ${renderInput('Reviewer name', 'staff.approval.approverName', approval.approverName || '')}
+                        ${renderInput('Approved date', 'staff.approval.approvedDate', approval.approvedDate || '', 'date')}
+                    </div>
+                    ${renderUploadField('Reviewer signature upload', 'approval.signatureUpload', approval.signatureUpload || null)}
+                `
+            )}
+            ${renderReviewStatementBlock(
+                'Noted by',
+                `
+                    <div class="review-paper-paragraph">GOLDA V. POCON, RSW, MSSW, CESE<br>CGHD-II/CSWDO</div>
+                `
+            )}
         `;
     }
 
@@ -1229,7 +1579,49 @@
         `;
     }
 
-    function renderReviewMungkahingSectorMatrix(pantawid, nonPantawid) {
+    function buildReviewMungkahingSectorRows(sectoral) {
+        const source = sectoral || {};
+        const hasNewShape = Object.prototype.hasOwnProperty.call(source, 'membershipType')
+            || Object.prototype.hasOwnProperty.call(source, 'sex')
+            || Object.prototype.hasOwnProperty.call(source, 'seniorCitizen')
+            || Object.prototype.hasOwnProperty.call(source, 'pwd')
+            || Object.prototype.hasOwnProperty.call(source, 'ip')
+            || Object.prototype.hasOwnProperty.call(source, 'soloParent');
+        if (!hasNewShape) {
+            return {
+                pantawid: source.pantawid || {},
+                nonPantawid: source.nonPantawid || {},
+            };
+        }
+
+        const membershipType = String(source.membershipType || '').trim();
+        const sex = String(source.sex || '').trim();
+        const isFemale = sex === 'female';
+        const isMale = sex === 'male';
+        const isPantawid = membershipType === 'pantawid';
+        const isNonPantawid = membershipType === 'non_pantawid';
+
+        const buildRow = (active) => ({
+            sexFemale: active && isFemale ? 1 : 0,
+            sexMale: active && isMale ? 1 : 0,
+            seniorFemale: active && isFemale && Boolean(source.seniorCitizen) ? 1 : 0,
+            seniorMale: active && isMale && Boolean(source.seniorCitizen) ? 1 : 0,
+            pwdFemale: active && isFemale && Boolean(source.pwd) ? 1 : 0,
+            pwdMale: active && isMale && Boolean(source.pwd) ? 1 : 0,
+            ipFemale: active && isFemale && Boolean(source.ip) ? 1 : 0,
+            ipMale: active && isMale && Boolean(source.ip) ? 1 : 0,
+            soloParentFemale: active && isFemale && Boolean(source.soloParent) ? 1 : 0,
+            soloParentMale: active && isMale && Boolean(source.soloParent) ? 1 : 0,
+        });
+
+        return {
+            pantawid: buildRow(isPantawid),
+            nonPantawid: buildRow(isNonPantawid),
+        };
+    }
+
+    function renderReviewMungkahingSectorMatrix(sectoral) {
+        const rows = buildReviewMungkahingSectorRows(sectoral);
         return renderReviewPaperTable(`
             <tr>
                 <th rowspan="2">Paglain-lain</th>
@@ -1252,26 +1644,29 @@
                 <th>Babaye</th><th>Lalake</th>
             </tr>
         `, `
-            ${renderReviewMungkahingSectorMatrixRow('Pantawid', pantawid)}
-            ${renderReviewMungkahingSectorMatrixRow('Non-Pantawid', nonPantawid)}
+            ${renderReviewMungkahingSectorMatrixRow('Pantawid', rows.pantawid)}
+            ${renderReviewMungkahingSectorMatrixRow('Non-Pantawid', rows.nonPantawid)}
         `);
     }
 
     function renderReviewMungkahingSectorMatrixRow(label, group) {
-        const mark = (value) => value ? '&#10003;' : '';
+        const count = (value) => {
+            const normalized = Number.parseInt(String(value ?? ''), 10);
+            return Number.isFinite(normalized) && normalized >= 0 ? String(normalized) : '0';
+        };
         return `
             <tr>
                 <td>${escapeHtml(label)}</td>
-                <td>${mark(group.sexFemale)}</td>
-                <td>${mark(group.sexMale)}</td>
-                <td>${mark(group.seniorFemale)}</td>
-                <td>${mark(group.seniorMale)}</td>
-                <td>${mark(group.pwdFemale)}</td>
-                <td>${mark(group.pwdMale)}</td>
-                <td>${mark(group.ipFemale)}</td>
-                <td>${mark(group.ipMale)}</td>
-                <td>${mark(group.soloParentFemale)}</td>
-                <td>${mark(group.soloParentMale)}</td>
+                <td>${count(group.sexFemale)}</td>
+                <td>${count(group.sexMale)}</td>
+                <td>${count(group.seniorFemale)}</td>
+                <td>${count(group.seniorMale)}</td>
+                <td>${count(group.pwdFemale)}</td>
+                <td>${count(group.pwdMale)}</td>
+                <td>${count(group.ipFemale)}</td>
+                <td>${count(group.ipMale)}</td>
+                <td>${count(group.soloParentFemale)}</td>
+                <td>${count(group.soloParentMale)}</td>
             </tr>
         `;
     }
@@ -1433,10 +1828,12 @@
     }
 
     function renderInput(label, name, value, type = 'text') {
+        const resolvedValue = resolveStaffFieldDefault(name, value, type);
+        const isAutoAssigned = isAutoAssignedStaffField(name, type);
         return `
             <label class="form-field">
                 <span>${escapeHtml(label)}</span>
-                <input type="${escapeAttribute(type)}" name="${escapeAttribute(name)}" value="${escapeAttribute(value || '')}">
+                <input type="${escapeAttribute(type)}" name="${escapeAttribute(name)}" value="${escapeAttribute(resolvedValue)}" ${isAutoAssigned ? 'readonly aria-readonly="true"' : ''}>
             </label>
         `;
     }
@@ -1469,6 +1866,7 @@
         return `
             <div class="form-field full upload-field">
                 <span>${escapeHtml(label)}</span>
+                ${renderAssignedPdoSignatureWarning(fieldKey, metadata)}
                 <label class="upload-card">
                     <input type="file" class="upload-input" data-upload-field="${escapeAttribute(fieldKey)}" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf">
                     <span class="upload-card__copy">
@@ -1480,6 +1878,77 @@
                 ${uploadedAt ? `<small class="field-hint">Uploaded ${escapeHtml(uploadedAt)}</small>` : ''}
             </div>
         `;
+    }
+
+    function resolveStaffFieldDefault(name, value, type = 'text') {
+        const currentValue = String(value || '').trim();
+        if (currentValue !== '') {
+            return currentValue;
+        }
+
+        const fieldName = String(name || '').trim();
+        if (!fieldName.startsWith('staff.')) {
+            return value || '';
+        }
+
+        const assignedPdoName = String(state.task?.assignedPdo?.name || '').trim();
+        const assignedPdoTitle = String(state.task?.assignedPdo?.title || '').trim();
+        const authName = String(state.authUser?.name || '').trim();
+        const authRole = String(state.authUser?.role || '').trim();
+        const today = new Date().toISOString().slice(0, 10);
+
+        if (type === 'date') {
+            if (/(signedDate|approvedDate|reviewerDate)$/i.test(fieldName)) {
+                return today;
+            }
+        }
+
+        if (/(directWorkerName|certifyingOfficerName|validatorName|approverName|reviewerName)$/i.test(fieldName)) {
+            return assignedPdoName || authName;
+        }
+
+        if (/(directWorkerTitle|certifyingOfficerTitle|validatorTitle|approverTitle|reviewerTitle)$/i.test(fieldName)) {
+            return assignedPdoTitle || authRole;
+        }
+
+        return value || '';
+    }
+
+    function isAutoAssignedStaffField(name, type = 'text') {
+        const fieldName = String(name || '').trim();
+        if (!fieldName.startsWith('staff.')) {
+            return false;
+        }
+
+        if (type === 'date' && /(signedDate|approvedDate|reviewerDate)$/i.test(fieldName)) {
+            return true;
+        }
+
+        return /(directWorkerName|directWorkerTitle|certifyingOfficerName|certifyingOfficerTitle|validatorName|validatorTitle|approverName|approverTitle|reviewerName|reviewerTitle)$/i.test(fieldName);
+    }
+
+    function renderAssignedPdoSignatureWarning(fieldKey, metadata) {
+        const normalized = String(fieldKey || '').trim();
+        const staffUploadFields = new Set([
+            'pageOneCertification.signatureUpload',
+            'physicalRequirements.foodRelatedCertification.signatureUpload',
+            'psychoSocialRequirements.residencyAndCharacter.signatureUpload',
+            'psychoSocialRequirements.familyRelationshipsWorkHabitsAspiration.signatureUpload',
+            'validatorIdentity.signatureUpload',
+            'recommendation.signatureUpload',
+            'approval.signatureUpload',
+            'verification.signatureUpload',
+        ]);
+        if (!staffUploadFields.has(normalized) || metadata?.file_path) {
+            return '';
+        }
+
+        const assignedPdoName = String(state.task?.assignedPdo?.name || '').trim();
+        const warning = assignedPdoName
+            ? `${assignedPdoName} has no saved PDO signature yet. Upload one here or through PDO signature settings.`
+            : 'The assigned PDO has no saved signature yet. Upload one here or through PDO signature settings.';
+
+        return `<small class="field-hint">${escapeHtml(warning)}</small>`;
     }
 
     function renderReadOnlyUpload(label, metadata) {
@@ -1592,6 +2061,14 @@
             return String(value);
         }
         return date.toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function formatMonthDayWords(value) {
+        const date = value ? new Date(value) : new Date();
+        if (Number.isNaN(date.getTime())) {
+            return '';
+        }
+        return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', timeZone: 'Asia/Manila' });
     }
 
     function slugify(value) {

@@ -1,15 +1,30 @@
 <?php /** @var string $baseUrl */ ?>
+<?php
+$beneficiaryCssVersion = @filemtime(base_path('public/assets/css/dashboards/beneficiary.css')) ?: time();
+$applicantCssVersion = @filemtime(base_path('public/assets/css/dashboards/applicant.css')) ?: time();
+$notificationsCssVersion = @filemtime(base_path('public/assets/css/components/notifications.css')) ?: time();
+$beneficiaryJsVersion = @filemtime(base_path('public/assets/js/dashboards/beneficiary.js')) ?: time();
+$languageToggleJsVersion = @filemtime(base_path('public/assets/js/dashboards/language-toggle.js')) ?: time();
+$supportHelpdeskJsVersion = @filemtime(base_path('public/assets/js/dashboards/support-helpdesk.js')) ?: time();
+$notificationsJsVersion = @filemtime(base_path('public/assets/js/shared/notifications.js')) ?: time();
+$butuanBarangays = array_map(
+    static fn (array $row): string => (string) ($row['name'] ?? ''),
+    (new \App\Services\BarangayCatalogService())->all()
+);
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SMART LEAP | Beneficiary Dashboard</title>
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css">
-    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/beneficiary.css">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css?v=<?= urlencode((string) $applicantCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/beneficiary.css?v=<?= urlencode((string) $beneficiaryCssVersion) ?>">
+    <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= urlencode((string) $notificationsCssVersion) ?>">
     <script>
         window.SMARTLEAP_AUTH_USER = <?= json_encode($authUser ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
         window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
+        window.SMARTLEAP_BARANGAYS = <?= json_encode($butuanBarangays, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     </script>
 </head>
 <body>
@@ -26,13 +41,6 @@
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
-            <div class="sidebar-user">
-                <div class="sidebar-avatar" id="sidebarAvatar" aria-hidden="true">M</div>
-                <div class="sidebar-user__meta">
-                    <span class="sidebar-user__name" id="sidebarUserName">Beneficiary</span>
-                    <span class="sidebar-user__biz" id="sidebarUserBusiness">Your livelihood</span>
-                </div>
-            </div>
             <nav class="sidebar-nav">
                 <a class="sidebar-link is-active" href="#overview">
                     <span class="sidebar-icon" aria-hidden="true">
@@ -41,25 +49,7 @@
                             <path d="M5.5 10.5V20h13V10.5" stroke-linecap="round" stroke-linejoin="round"/>
                         </svg>
                     </span>
-                    <span>Overview</span>
-                </a>
-                <a class="sidebar-link" href="#profile" data-role="beneficiary">
-                    <span class="sidebar-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" role="presentation">
-                            <circle cx="12" cy="8" r="4" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M4 20a8 8 0 0116 0" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </span>
-                    <span>Profile</span>
-                </a>
-                <a class="sidebar-link" href="#profile-editor" data-role="applicant">
-                    <span class="sidebar-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" role="presentation">
-                            <circle cx="12" cy="8" r="4" stroke-linecap="round" stroke-linejoin="round"/>
-                            <path d="M4 20a8 8 0 0116 0" stroke-linecap="round" stroke-linejoin="round"/>
-                        </svg>
-                    </span>
-                    <span>Profile</span>
+                    <span data-i18n-key="overview">Overview</span>
                 </a>
                 <a class="sidebar-link" href="#repayments" data-role="beneficiary">
                     <span class="sidebar-icon" aria-hidden="true">
@@ -70,7 +60,7 @@
                             <path d="M9 15h3" stroke-linecap="round"/>
                         </svg>
                     </span>
-                    <span>Repayments</span>
+                    <span data-i18n-key="repayments">Repayments</span>
                 </a>
                 <a class="sidebar-link" href="#support-feedback">
                     <span class="sidebar-icon" aria-hidden="true">
@@ -78,7 +68,7 @@
                             <path d="M7 7h10a3 3 0 013 3v4a3 3 0 01-3 3h-3l-3 4-3-4H7a3 3 0 01-3-3v-4a3 3 0 013-3z" stroke-linejoin="round"/>
                         </svg>
                     </span>
-                    <span>Support</span>
+                    <span data-i18n-key="support">Support</span>
                 </a>
                 <a class="sidebar-link" href="#activity-log" data-role="beneficiary">
                     <span class="sidebar-icon" aria-hidden="true">
@@ -88,11 +78,9 @@
                             <path d="M5 18h8" stroke-linecap="round"/>
                         </svg>
                     </span>
-                    <span>Activity</span>
+                    <span data-i18n-key="activity">Activity</span>
                 </a>
             </nav>
-
-            <button type="button" class="btn-outline sidebar-logout" id="logoutButton">Logout</button>
         </aside>
         <button type="button" class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true" tabindex="-1"></button>
         <div class="portal-loader" id="portalLoader" aria-live="polite">
@@ -102,223 +90,307 @@
             <p class="portal-loader__copy" id="portalLoaderCopy">Loading your beneficiary portal...</p>
         </div>
         <div class="dash-content">
-            <header class="mobile-topbar" aria-label="Beneficiary portal mobile navigation">
-                <div class="mobile-topbar__brand">
-                    <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="mobile-topbar__logo">
-                    <strong class="mobile-topbar__title">SMART LEAP</strong>
+            <header class="mobile-topbar beneficiary-contextbar" aria-label="Beneficiary portal navigation">
+                <div class="beneficiary-contextbar__brand">
+                    <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP logo" class="beneficiary-contextbar__logo">
+                    <strong class="mobile-topbar__title" id="mobileTopbarTitle" data-i18n-key="overview">Overview</strong>
                 </div>
-                <button
-                    type="button"
-                    class="mobile-topbar__menu"
-                    id="sidebarToggle"
-                    aria-label="Open navigation"
-                    aria-controls="appSidebar"
-                    aria-expanded="false"
-                >
-                    <span class="mobile-topbar__menu-box" aria-hidden="true">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </span>
-                </button>
+                <div class="beneficiary-contextbar__actions">
+                    <div class="beneficiary-contextbar__notifications" id="beneficiaryNotificationMount"></div>
+                    <div class="portal-language-toggle" role="group" aria-label="Select language">
+                        <button type="button" class="portal-language-toggle__button is-active" data-language-option="en">English</button>
+                        <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Bisaya</button>
+                    </div>
+                    <div class="mobile-topbar__account">
+                        <button
+                            type="button"
+                            class="mobile-topbar__avatar"
+                            id="mobileAccountToggle"
+                            aria-label="Open account menu"
+                            aria-haspopup="menu"
+                            aria-expanded="false"
+                        >
+                            <span class="mobile-topbar__avatar-initial" id="mobileAccountAvatar" aria-hidden="true">B</span>
+                        </button>
+                        <div class="mobile-account-menu" id="mobileAccountMenu" role="menu" aria-hidden="true">
+                            <button type="button" class="mobile-account-menu__item" id="mobileAccountProfile" role="menuitem" data-i18n-key="profile">Profile</button>
+                            <button type="button" class="mobile-account-menu__item" id="mobileAccountPassword" role="menuitem" data-i18n-key="changePassword">Change Password</button>
+                            <button type="button" class="mobile-account-menu__item" id="mobileAccountLogout" role="menuitem" data-i18n-key="signOut">Sign Out</button>
+                        </div>
+                    </div>
+                </div>
             </header>
             <main class="dash-main">
-                <section id="overview" class="dash-page dash-page--home dash-section" aria-labelledby="overviewHeading">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Dashboard</p>
-                            <h2 id="overviewHeading">Beneficiary dashboard</h2>
-                            <p class="dash-page__lead">Review your repayment status, profile details, and support updates in one consistent workspace.</p>
-                        </div>
-                    </div>
-                    <header class="dash-banner" aria-label="Beneficiary overview snapshot">
-                        <div class="banner-profile">
+                <section id="overview" class="dash-page dash-page--home dash-section">
+                    <section class="dash-section beneficiary-command-band" aria-labelledby="beneficiaryCurrentStandingHeading">
+                        <h3 class="sr-only" id="beneficiaryCurrentStandingHeading">Summary sa repayment</h3>
+                        <div class="sr-only">
                             <div class="banner-avatar" id="bannerAvatar" aria-hidden="true">M</div>
-                            <div class="banner-copy">
-                                <p class="banner-eyebrow">Welcome back</p>
-                                <h1 class="banner-greeting" id="bannerGreeting">Hello, Beneficiary!</h1>
-                                <p class="banner-email" id="userEmail">you@gmail.com</p>
-                            </div>
+                            <span class="banner-greeting" id="bannerGreeting">Benepisyaryo</span>
+                            <p class="banner-email" id="userEmail">you@gmail.com</p>
+                            <span id="overviewName"></span>
+                            <span id="overviewBusiness"></span>
+                            <span id="overviewEmail"></span>
+                            <span id="heroBeneficiaryStatus">Aktibong benepisyaryo</span>
+                            <span id="overviewActionStatus">Aktibong benepisyaryo</span>
+                            <span id="heroBeneficiaryTitle">Sakto sa dagan ang account</span>
+                            <span id="heroBeneficiaryCopy">Wala pay update.</span>
+                            <span id="overviewOutstanding">&#8369;0.00</span>
+                            <span data-compat="overviewProgress">0/24 months</span>
+                            <span id="overviewPendingVerification">0 resibo</span>
+                            <span data-compat="overviewDue">Next due --</span>
+                            <span data-compat="overviewRate">0% kompleto</span>
+                            <span id="bannerLabelNextDue">Pending verification</span>
+                            <span id="bannerNextDue">0 resibo</span>
                         </div>
-                        <ul class="banner-stats">
-                            <li>
-                                <span class="label" id="bannerLabelOutstanding">Outstanding balance</span>
+                        <div class="panel beneficiary-balance-card" aria-label="Benepisyaryo repayment summary">
+                            <div class="beneficiary-balance-card__body">
+                                <span class="label" id="bannerLabelOutstanding">Kasamtangang balanse</span>
                                 <strong id="bannerOutstanding">&#8369;0.00</strong>
-                            </li>
-                            <li>
-                                <span class="label" id="bannerLabelProgress">Repayment progress</span>
-                                <strong id="bannerProgress">0/24 months</strong>
-                            </li>
-                            <li>
-                                <span class="label" id="bannerLabelNextDue">Next due date</span>
-                                <strong id="bannerNextDue">--</strong>
-                            </li>
-                            <li>
-                                <span class="label" id="bannerLabelRate">Repayment rate</span>
-                                <strong id="bannerRate">0%</strong>
-                            </li>
-                        </ul>
-                    </header>
-                    <section class="panel dash-section panel--summary" aria-labelledby="beneficiaryOverviewWorkspaceHeading">
-                        <div class="panel-header">
-                            <h3 id="beneficiaryOverviewWorkspaceHeading">Overview</h3>
-                            <p class="panel-subtitle">Status snapshots for your SMART LEAP account.</p>
+                            </div>
+                            <div class="beneficiary-balance-card__actions" id="overviewBalanceActions"></div>
                         </div>
-                        <div class="overview-layout" data-role="beneficiary">
-                            <div class="overview-profile-card">
-                                <div class="overview-profile__meta">
-                                    <h3 id="overviewName">Beneficiary name</h3>
-                                    <p id="overviewBusiness">Business name</p>
-                                    <p id="overviewEmail">email@example.com</p>
-                                </div>
-                                <div class="overview-profile__chip">Beneficiary</div>
-                            </div>
-                            <div class="overview-progress-grid">
-                                <article class="overview-panel">
-                                    <span class="overview-panel__label">Outstanding balance</span>
-                                    <strong class="overview-panel__value" id="overviewOutstanding">&#8369;0.00</strong>
-                                </article>
-                                <article class="overview-panel">
-                                    <span class="overview-panel__label">Repayment progress</span>
-                                    <strong class="overview-panel__value" id="overviewProgress">0/24 months</strong>
-                                </article>
-                                <article class="overview-panel">
-                                    <span class="overview-panel__label">Next due date</span>
-                                    <strong class="overview-panel__value" id="overviewDue">--</strong>
-                                </article>
-                                <article class="overview-panel">
-                                    <span class="overview-panel__label">Repayment rate</span>
-                                    <strong class="overview-panel__value" id="overviewRate">0%</strong>
-                                </article>
-                                <button type="button" class="btn-primary overview-panel__action" id="overviewRepaymentsBtn">Go to Repayments</button>
-                            </div>
-                            <div class="overview-quick-actions">
-                                <h3>Quick actions</h3>
-                                <ul>
-                                    <li id="overviewReminder">Upload OR for --</li>
-                                    <li id="overviewAccountAlert">Account updates will appear here.</li>
-                                    <li id="overviewSupport">Need help? Contact your PDO.</li>
-                                </ul>
-                            </div>
-                        </div>
-                        <div class="overview-grid" data-role="applicant">
-                            <article class="overview-card">
-                                <span class="overview-label">Account status</span>
-                                <strong class="overview-value" id="overviewStatus">Active</strong>
-                                <p class="overview-meta" id="overviewStatusNote">Repayment monitoring is ongoing.</p>
+                    </section>
+                    <section class="panel dash-section panel--summary beneficiary-repayment-hero" aria-label="Snapshot sa repayment">
+                        <h3 class="sr-only" id="repaymentStandingHeading">Snapshot sa repayment</h3>
+                        <p class="sr-only" id="repaymentStandingCopy">A quick snapshot of your current repayment status.</p>
+                        <div class="beneficiary-inline-metrics beneficiary-inline-metrics--hero" role="list">
+                            <article class="overview-card overview-card--balance" role="listitem">
+                                <span class="overview-label">Next due</span>
+                                <strong class="overview-value" id="repaymentStandingOutstanding">Nahuman</strong>
                             </article>
-                            <article class="overview-card">
-                                <span class="overview-label">Requirement progress</span>
-                                <strong class="overview-value" id="overviewRequirementsPercent">0/8</strong>
-                                <p class="overview-meta" id="overviewRequirementsNote">Continue submitting complete requirements.</p>
+                            <article class="overview-card" role="listitem">
+                                <span class="overview-label">Pending verification</span>
+                                <strong class="overview-value" id="repaymentStandingPending">0 resibo</strong>
                             </article>
-                            <article class="overview-card">
-                                <span class="overview-label">Next repayment</span>
-                                <strong class="overview-value" id="overviewNextDue">--</strong>
-                                <p class="overview-meta" id="overviewNextDueNote">Upload monthly OR after payment.</p>
+                            <article class="overview-card" role="listitem">
+                                <span class="overview-label">Na-upload nga resibo</span>
+                                <strong class="overview-value" id="repaymentStandingOverdue">0 resibo</strong>
+                            </article>
+                            <article class="overview-card" role="listitem">
+                                <span class="overview-label">Kinahanglan follow-up</span>
+                                <strong class="overview-value" id="repaymentStandingVerified">Aktibong benepisyaryo</strong>
                             </article>
                         </div>
                     </section>
-                </section>
-
-                <section id="profile" class="dash-page dash-section" aria-labelledby="beneficiaryProfileHeading" data-role="beneficiary">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Profile</p>
-                            <h2 id="beneficiaryProfileHeading">Beneficiary profile</h2>
-                            <p class="dash-page__lead">Update your profile details and verify your assigned PDO.</p>
-                        </div>
-                    </div>
-                    <section class="panel dash-section profile-editor-workspace">
-                    <div class="profile-card">
-                        <div class="profile-photo">
-                            <div class="profile-photo__frame">
-                                <img id="profilePhotoPreview" src="" alt="Profile photo preview" class="is-hidden">
-                                <div class="profile-photo__placeholder" id="profilePhotoPlaceholder">No photo</div>
+                    <section class="panel dash-section beneficiary-progress-row" aria-labelledby="beneficiaryKinatibuk-anProgressHeading">
+                        <div class="beneficiary-progress-row__main">
+                            <div class="beneficiary-progress-row__head">
+                                <div>
+                                    <span class="beneficiary-progress-row__label" id="overviewProgressLabel">Pag-uswag sa repayment</span>
+                                    <strong class="beneficiary-progress-row__value" id="overviewProgress">0/24 months</strong>
+                                </div>
+                                <p class="beneficiary-progress-row__meta" id="overviewRate">0% kompleto</p>
                             </div>
-                            <label class="btn-outline profile-photo__upload">
-                                Upload photo
-                                <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" hidden>
-                            </label>
-                            <p class="profile-photo__note">JPG or PNG, max 2MB.</p>
+                            <div class="beneficiary-progress-row__track" role="progressbar" aria-labelledby="beneficiaryKinatibuk-anProgressHeading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+                                <div class="beneficiary-progress-row__fill" id="overviewProgressFill"></div>
+                            </div>
+                            <p class="beneficiary-progress-row__note is-hidden" id="overviewDue"></p>
                         </div>
-                        <form id="beneficiaryProfileForm" class="form-grid">
-                            <label class="form-field">
-                                <span>Full name *</span>
-                                <input type="text" id="beneficiaryName" name="fullName" required>
-                            </label>
-                            <label class="form-field">
-                                <span>Business name *</span>
-                                <input type="text" id="beneficiaryBusiness" name="businessName" required>
-                            </label>
-                            <label class="form-field">
-                                <span>Email *</span>
-                                <input type="email" id="beneficiaryEmail" name="email" required>
-                            </label>
-                            <label class="form-field">
-                                <span>Contact number *</span>
-                                <input type="tel" id="beneficiaryContact" name="contact" required>
-                            </label>
-                            <label class="form-field">
-                                <span>Barangay</span>
-                                <input type="text" id="beneficiaryBarangay" name="barangay">
-                            </label>
-                            <div class="form-field">
-                                <span>Assigned PDO</span>
-                                <div class="profile-readonly">
-                                    <strong id="assignedPDOName">Project Officer</strong>
-                                    <span id="assignedPDOContact">projectofficer@smartleap.gov.ph</span>
+                        <div class="beneficiary-progress-row__actions" id="overviewProgressActions">
+                            <span class="sr-only" id="bannerLabelRate">Aksyon sa repayment</span>
+                            <button type="button" class="btn-primary" id="overviewRepaymentsBtn">I-upload ang resibo</button>
+                        </div>
+                    </section>
+                    <div class="beneficiary-overview-lower-grid">
+                        <section class="panel dash-section panel--review beneficiary-updates-panel" aria-labelledby="beneficiaryUpdatesHeading">
+                            <div class="panel-header panel-header--compact">
+                                <h3 id="beneficiaryUpdatesHeading">Updates</h3>
+                            </div>
+                            <div class="beneficiary-update-stack">
+                                <div class="beneficiary-update-row">
+                                    <span class="chip">Reminder</span>
+                                    <p id="overviewReminder">Wala pay pahinumdom.</p>
+                                </div>
+                                <div class="beneficiary-update-row">
+                                    <span class="chip">Verification</span>
+                                    <p id="overviewAccountAlert">Wala pay account alert.</p>
+                                </div>
+                                <div class="beneficiary-update-row">
+                                    <span class="chip">Suporta</span>
+                                    <p id="overviewSupport">Nagkinahanglan ug tabang? Kontaka ang imong PDO.</p>
                                 </div>
                             </div>
-                            <div class="form-actions full">
-                                <button type="submit" class="btn-primary">Save changes</button>
+                        </section>
+                        <section class="panel dash-section panel--support support-page-panel beneficiary-support-preview" aria-labelledby="beneficiarySupportPreviewHeading" data-role="beneficiary">
+                            <div class="panel-header panel-header--compact">
+                                <h3 id="beneficiarySupportPreviewHeading">Suporta</h3>
                             </div>
-                        </form>
+                            <div class="beneficiary-support-mini">
+                                <div class="beneficiary-support-mini__copy">
+                                    <span class="overview-label">Assigned PDO</span>
+                                    <strong class="support-card__primary" id="overviewSupportPdo">Project Officer</strong>
+                                    <p class="support-card__meta" id="overviewSupportContact">projectofficer@smartleap.gov.ph</p>
+                                    <p class="beneficiary-support-mini__hint">Kontak your PDO for repayment and verification support.</p>
+                                </div>
+                                <button type="button" class="btn-outline small" id="overviewSupportBtn">Ablihi ang Suporta</button>
+                            </div>
+                        </section>
                     </div>
+                </section>
+
+                <section id="profile" class="dash-page dash-section" data-role="beneficiary">
+                    <section class="panel dash-section profile-editor-workspace beneficiary-profile-workspace">
+                        <div class="profile-card beneficiary-profile-card">
+                            <aside class="profile-photo beneficiary-profile-photo">
+                                <div class="profile-photo__frame">
+                                    <img id="profilePhotoPreview" src="" alt="Preview sa litrato sa profile" class="is-hidden">
+                                    <div class="profile-photo__placeholder" id="profilePhotoPlaceholder">Walay litrato</div>
+                                </div>
+                                <label class="btn-outline profile-photo__upload">
+                                    I-upload ang litrato
+                                    <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" hidden>
+                                </label>
+                                <p class="profile-photo__note">JPG o PNG, kutob 5MB.</p>
+                            </aside>
+                            <form id="beneficiaryProfileForm" class="beneficiary-profile-form">
+                                <section class="panel profile-editor-panel beneficiary-profile-panel" id="beneficiaryPersonalSection">
+                                    <div class="panel-header panel-header--compact">
+                                        <button type="button" class="btn-outline small beneficiary-profile-back" id="beneficiaryProfileBack">Back</button>
+                                    </div>
+                                    <div class="panel-header panel-header--compact">
+                                        <h3 id="beneficiaryPersonalHeading">Personal details</h3>
+                                    </div>
+                                    <div class="form-grid">
+                                        <label class="form-field">
+                                            <span>Full name *</span>
+                                            <input type="text" id="beneficiaryName" name="fullName" required>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Email *</span>
+                                            <input type="email" id="beneficiaryEmail" name="email" required>
+                                        </label>
+                                        <label class="form-field" id="beneficiaryBirthdateField">
+                                            <span>Petsa sa pagkatawo *</span>
+                                            <input type="date" id="beneficiaryBirthdate" name="birthdate" required>
+                                        </label>
+                                        <label class="form-field" id="beneficiaryAgeField">
+                                            <span>Edad</span>
+                                            <input type="number" id="beneficiaryEdad" name="age" readonly>
+                                        </label>
+                                        <label class="form-field" id="beneficiaryGenderField">
+                                            <span>Gender *</span>
+                                            <select id="beneficiaryGender" name="gender" required>
+                                                <option value="">Pili ug gender</option>
+                                                <option value="Babaye">Babaye</option>
+                                                <option value="Lalaki">Lalaki</option>
+                                                <option value="Non-binary">Non-binary</option>
+                                                <option value="Dili gustong mosulti">Dili gustong mosulti</option>
+                                            </select>
+                                        </label>
+                                        <label class="form-field" id="beneficiaryRelationshipField" hidden>
+                                            <span>Relationship to primary beneficiary *</span>
+                                            <input type="text" id="beneficiaryRelationshipToPrimary" name="relationshipToPrimaryBeneficiary">
+                                        </label>
+                                    </div>
+                                </section>
+                                <section class="panel profile-editor-panel beneficiary-profile-panel" id="beneficiaryBusinessSection">
+                                    <div class="panel-header panel-header--compact">
+                                        <h3>Business details</h3>
+                                    </div>
+                                    <div class="form-grid">
+                                        <label class="form-field">
+                                            <span>Ngalan sa negosyo *</span>
+                                            <input type="text" id="beneficiaryBusiness" name="businessName" required>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Batch No</span>
+                                            <input type="text" id="beneficiaryBatchNo" name="batchNo" value="Batch 1" readonly>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Specific business type / Klase sa negosyo *</span>
+                                            <input type="text" id="beneficiaryLivelihood" name="livelihood" required>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Barangay *</span>
+                                            <select id="beneficiaryBarangay" name="barangay" required>
+                                                <option value="">Select barangay</option>
+                                                <?php foreach ($butuanBarangays as $barangay): ?>
+                                                    <option value="<?= htmlspecialchars($barangay, ENT_QUOTES, 'UTF-8') ?>"><?= htmlspecialchars($barangay, ENT_QUOTES, 'UTF-8') ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </label>
+                                    </div>
+                                </section>
+                                <section class="panel profile-editor-panel beneficiary-profile-panel" id="beneficiaryContactSection">
+                                    <div class="panel-header panel-header--compact">
+                                        <h3>Contact details</h3>
+                                    </div>
+                                    <div class="form-grid">
+                                        <label class="form-field">
+                                            <span>Contact number *</span>
+                                            <input type="tel" id="beneficiaryKontak" name="contactNumber" required>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Complete address *</span>
+                                            <input type="text" id="beneficiaryAddress" name="address" required>
+                                        </label>
+                                        <article class="form-field" id="beneficiaryPrimaryBeneficiaryField" hidden>
+                                            <span>Primary beneficiary</span>
+                                            <strong id="beneficiaryPrimaryBeneficiaryName">Primary beneficiary</strong>
+                                        </article>
+                                    </div>
+                                </section>
+                                <section class="panel profile-editor-panel beneficiary-profile-panel" id="beneficiaryProgramSection">
+                                    <div class="panel-header panel-header--compact">
+                                        <h3>Program profile</h3>
+                                    </div>
+                                    <div class="form-grid">
+                                        <label class="form-field">
+                                            <span>4Ps membership *</span>
+                                            <select id="beneficiary4ps" name="is4ps" required>
+                                                <option value="">Select</option>
+                                                <option value="Yes">Yes</option>
+                                                <option value="No">No</option>
+                                            </select>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Highest educational attainment *</span>
+                                            <select id="beneficiaryEducationalAttainment" name="educationalAttainment" required>
+                                                <option value="">Select attainment</option>
+                                                <option value="Kindergarten">Kindergarten</option>
+                                                <option value="Elementary">Elementary</option>
+                                                <option value="JHS">JHS</option>
+                                                <option value="SHS Grad">SHS grad</option>
+                                                <option value="Tertiary">Tertiary</option>
+                                            </select>
+                                        </label>
+                                        <label class="form-field">
+                                            <span>Sector *</span>
+                                            <select id="beneficiarySector" name="sector" required>
+                                                <option value="">Select sector</option>
+                                                <option value="Indigenous People">Indigenous People</option>
+                                                <option value="Senior Citizen">Senior Citizen</option>
+                                                <option value="Solo Parent">Solo Parent</option>
+                                                <option value="PWD">PWD</option>
+                                                <option value="None">None</option>
+                                                <option value="Other">Other (please specify)</option>
+                                            </select>
+                                        </label>
+                                        <label class="form-field" id="beneficiarySectorOtherWrap" hidden>
+                                            <span>Other sector *</span>
+                                            <input type="text" id="beneficiarySectorOtherSpecify" name="sectorOtherSpecify" placeholder="Please specify" disabled>
+                                        </label>
+                                    </div>
+                                </section>
+                                <section class="panel profile-editor-panel beneficiary-profile-panel" id="beneficiaryAssignedPdoSection">
+                                    <div class="panel-header panel-header--compact">
+                                        <h3>Assigned PDO</h3>
+                                    </div>
+                                    <div class="profile-readonly">
+                                        <strong id="assignedPDOName">Project Officer</strong>
+                                        <span id="assignedPDOKontak">projectofficer@smartleap.gov.ph</span>
+                                    </div>
+                                </section>
+                                <div class="form-actions full beneficiary-profile-actions">
+                                    <button type="submit" class="btn-primary">Save changes</button>
+                                </div>
+                            </form>
+                        </div>
                     </section>
                 </section>
 
-                <section id="profile-editor" class="dash-page dash-section" aria-labelledby="profileHeading" data-role="applicant">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Profile</p>
-                            <h2 id="profileHeading">Applicant profile editor</h2>
-                            <p class="dash-page__lead">Keep your personal information up to date for verification.</p>
-                        </div>
-                    </div>
-                    <section class="panel dash-section profile-editor-workspace">
-                    <form id="profileForm" class="form-grid">
-                        <label class="form-field">
-                            <span>Full name *</span>
-                            <input type="text" id="profileName" name="fullName" required>
-                        </label>
-                        <label class="form-field">
-                            <span>Email *</span>
-                            <input type="email" id="profileEmail" name="email" required>
-                        </label>
-                        <label class="form-field">
-                            <span>Barangay *</span>
-                            <input type="text" id="profileBarangay" name="barangay" required>
-                        </label>
-                        <label class="form-field">
-                            <span>Contact number *</span>
-                            <input type="tel" id="profileContact" name="contact" required>
-                        </label>
-                        <div class="form-actions full">
-                            <button type="submit" class="btn-primary">Save profile</button>
-                        </div>
-                    </form>
-                    </section>
-                </section>
-
-                <section id="requirements-progress" class="dash-page dash-section" aria-labelledby="requirementsHeading" data-role="applicant-extra">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Application</p>
-                            <h2 id="requirementsHeading">Requirement progress</h2>
-                            <p class="dash-page__lead">Track which documents are complete, missing, or need revision.</p>
-                        </div>
-                    </div>
+                <section id="requirements-progress" class="dash-page dash-section" data-role="applicant-extra">
                     <section class="panel dash-section panel--summary">
                     <div class="requirements-progress">
                         <div class="requirements-progress__meta">
@@ -338,104 +410,100 @@
                     </section>
                 </section>
 
-                <section id="notifications-panel" class="dash-page dash-section" aria-labelledby="notificationsHeading" data-role="applicant-extra">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Application</p>
-                            <h2 id="notificationsHeading">Notifications</h2>
-                            <p class="dash-page__lead">PDO messages, repayment reminders, and approval updates.</p>
-                        </div>
-                    </div>
+                <section id="notifications-panel" class="dash-page dash-section" data-role="applicant-extra">
                     <section class="panel dash-section panel--summary">
                     <ul class="notification-list" id="notificationList">
-                        <li class="empty">No notifications yet.</li>
+                        <li class="empty">Wala pay notifications.</li>
                     </ul>
                     </section>
                 </section>
 
-                <section id="repayments" class="dash-page dash-section" aria-labelledby="progressHeading" data-role="beneficiary">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Repayments</p>
-                            <h2 id="progressHeading">Repayment workspace</h2>
-                            <p class="dash-page__lead">Track your repayment progress, receipts, and verification updates.</p>
-                        </div>
-                    </div>
-                    <div class="repayments-stack">
-                        <section class="panel dash-section panel--summary repayment-block" aria-labelledby="repaymentTrackerHeading">
+                <section id="repayments" class="dash-page dash-section" data-role="beneficiary">
+                    <div class="beneficiary-repayment-stack">
+                        <section class="panel dash-section panel--info application-workspace-panel repayment-block repayment-actions" aria-labelledby="repaymentActionsHeading">
+                            <div class="panel-header panel-header--compact">
+                                <h3 id="repaymentActionsHeading">I-upload ang opisyal nga resibo</h3>
+                            </div>
+                            <div class="repayment-actions__grid repayment-actions__grid--single">
+                                <div class="repayment-action-card repayment-action-card--form">
+                                    <p class="repayment-action-card__intro">Log your payment record for review.</p>
+                                    <div class="repayment-flow-steps" aria-label="Repayment upload steps">
+                                        <span class="repayment-flow-step is-active">1. Add official receipt</span>
+                                        <span class="repayment-flow-step">2. Submit</span>
+                                    </div>
+                                    <div class="repayment-due-list" id="repaymentDueList" aria-live="polite"></div>
+                                    <form id="uploadForm" class="form-grid repayment-upload-form">
+                                        <div id="singleMonthFields" class="repayment-form-mode">
+                                            <label class="form-field">
+                                                <span>OR month *</span>
+                                                <input type="month" id="uploadMonth" name="month" required>
+                                            </label>
+                                            <label class="form-field">
+                                                <span>Amount paid *</span>
+                                                <input type="number" id="uploadAmount" name="amount" min="0" step="0.01" placeholder="&#8369;625.00" required>
+                                            </label>
+                                            <label class="form-field">
+                                                <span>Payment date *</span>
+                                                <input type="date" id="uploadDate" name="paymentDate" required>
+                                            </label>
+                                            <label class="form-field">
+                                                <span>OR number *</span>
+                                                <input type="text" id="uploadOr" name="or" placeholder="BC 2670412" required>
+                                                <small class="field-helper">Use the official receipt number printed beside "NO." on the receipt.</small>
+                                            </label>
+                                            <label class="form-field full repayment-upload-form__file">
+                                                <span>Upload OR file *</span>
+                                                <input type="file" id="uploadFile" name="file" accept=".jpg,.jpeg,.png,.pdf" required>
+                                                <small class="field-helper">Accepted file types: JPG, PNG, or PDF.</small>
+                                            </label>
+                                            <label class="form-field full repayment-upload-form__notes">
+                                                <span>Notes for verifier</span>
+                                                <textarea id="uploadNotes" name="notes" rows="3" placeholder="Optional message"></textarea>
+                                            </label>
+                                        </div>
+                                        <div class="form-actions full">
+                                            <button type="submit" class="btn-primary repayment-upload-form__submit">Submit receipt</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="panel dash-section panel--summary application-workspace-panel repayment-block beneficiary-repayment-tracker" aria-labelledby="repaymentTrackerHeading">
                             <div class="panel-header panel-header--compact">
                                 <h3 id="repaymentTrackerHeading">Repayment tracker</h3>
-                                <p class="panel-subtitle">Monitor verified months, pending receipts, and overdue follow-ups.</p>
                             </div>
                             <div class="progress-body">
                                 <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                                     <div class="progress-bar__fill" id="progressFill"></div>
                                 </div>
-                                <ul class="progress-stats">
-                                    <li><span class="dot verified"></span><strong id="progressVerified">0 months verified</strong></li>
-                                    <li><span class="dot pending"></span><strong id="progressPending">0 pending verification</strong></li>
-                                    <li><span class="dot uploaded"></span><strong id="progressUploaded">0 uploaded</strong></li>
-                                    <li><span class="dot overdue"></span><strong id="progressOverdue">0 overdue</strong></li>
-                                </ul>
-                            </div>
-                        </section>
-
-                        <section class="panel dash-section panel--info repayment-block repayment-actions" data-access="released" aria-labelledby="repaymentActionsHeading">
-                            <div class="panel-header panel-header--compact">
-                                <h3 id="repaymentActionsHeading">Actions</h3>
-                                <p class="panel-subtitle">Submit receipts and keep your repayment records complete.</p>
-                            </div>
-                            <div class="repayment-actions__grid">
-                                <div class="repayment-action-card">
-                                    <h4>Upload receipt</h4>
-                                    <p>Submit your monthly OR for verification.</p>
-                                    <form id="uploadForm" class="form-grid">
-                                        <label class="form-field">
-                                            <span>OR month *</span>
-                                            <input type="month" id="uploadMonth" name="month" required>
-                                        </label>
-                                        <label class="form-field">
-                                            <span>Amount paid *</span>
-                                            <input type="number" id="uploadAmount" name="amount" min="0" step="0.01" placeholder="&#8369;625.00" required>
-                                        </label>
-                                        <label class="form-field">
-                                            <span>Payment date *</span>
-                                            <input type="date" id="uploadDate" name="paymentDate" required>
-                                        </label>
-                                        <label class="form-field">
-                                            <span>OR number *</span>
-                                            <input type="text" id="uploadOr" name="or" placeholder="e.g., OR-2025-0003" required>
-                                        </label>
-                                        <label class="form-field">
-                                            <span>Upload OR (JPEG / PNG / PDF) *</span>
-                                            <input type="file" id="uploadFile" name="file" accept=".jpg,.jpeg,.png,.pdf" required>
-                                        </label>
-                                        <label class="form-field full">
-                                            <span>Notes for verifier</span>
-                                            <textarea id="uploadNotes" name="notes" rows="3" placeholder="Optional message"></textarea>
-                                        </label>
-                                        <div class="form-actions full">
-                                            <button type="submit" class="btn-primary">Submit receipt</button>
-                                        </div>
-                                    </form>
-                                </div>
-                                <div class="repayment-action-card">
-                                    <h4>Need help?</h4>
-                                    <ul>
-                                        <li>Review your repayment schedule in the Support section.</li>
-                                        <li>Keep digital and hard copies of your OR.</li>
-                                        <li>Contact your PDO for verification follow-ups.</li>
-                                    </ul>
+                                <div class="repayment-tracker-metrics" role="list">
+                                    <article class="repayment-tracker-metric" role="listitem">
+                                        <span class="overview-label">Verified</span>
+                                        <strong class="overview-value" id="progressVerified">0 months verified</strong>
+                                    </article>
+                                    <article class="repayment-tracker-metric" role="listitem">
+                                        <span class="overview-label">Pending verification</span>
+                                        <strong class="overview-value" id="progressPending">0 pending verification</strong>
+                                    </article>
+                                    <article class="repayment-tracker-metric" role="listitem">
+                                        <span class="overview-label">Na-upload</span>
+                                        <strong class="overview-value" id="progressUploaded">0 na-upload</strong>
+                                    </article>
+                                    <article class="repayment-tracker-metric" role="listitem">
+                                        <span class="overview-label">Kinahanglan follow-up</span>
+                                        <strong class="overview-value" id="progressOverdue">0 resibo</strong>
+                                    </article>
                                 </div>
                             </div>
                         </section>
 
                         <section class="panel dash-section panel--review repayment-block history repayment-history-block" aria-labelledby="historyHeading">
-                            <div class="panel-header">
-                                <div class="breadcrumb">Repayments &gt; History</div>
-                                <h2 id="historyHeading">Repayment history</h2>
-                                <p class="panel-subtitle">Official log of OR submissions and their status.</p>
-                                <span class="panel-counter" id="historyCounter">0 receipts</span>
+                            <div class="history-header">
+                                <div class="panel-header panel-header--compact">
+                                    <h3 id="historyHeading">Repayment history</h3>
+                                </div>
+                                <p class="history-summary-line" id="historyCounter">0 resibo</p>
                             </div>
                             <div class="history-filters">
                                 <label>
@@ -443,7 +511,9 @@
                                     <select id="historyFilterStatus">
                                         <option value="">All</option>
                                         <option value="verified">Verified</option>
+                                        <option value="uploaded">Na-upload</option>
                                         <option value="pending">Pending</option>
+                                        <option value="needs_correction">Kinahanglan ayuhon</option>
                                         <option value="rejected">Rejected</option>
                                     </select>
                                 </label>
@@ -455,15 +525,15 @@
                             <div class="history-metrics" role="list">
                                 <article class="history-metric history-metric--verified" role="listitem">
                                     <span class="history-metric__label">Verified receipts</span>
-                                    <strong class="history-metric__value" id="historyVerifiedCount">0 receipts</strong>
+                                    <strong class="history-metric__value" id="historyVerifiedCount">0 resibo</strong>
                                 </article>
                                 <article class="history-metric history-metric--pending" role="listitem">
                                     <span class="history-metric__label">Pending verification</span>
-                                    <strong class="history-metric__value" id="historyPendingCount">0 receipts</strong>
+                                    <strong class="history-metric__value" id="historyPendingCount">0 resibo</strong>
                                 </article>
                                 <article class="history-metric history-metric--uploaded" role="listitem">
-                                    <span class="history-metric__label">Uploaded online</span>
-                                    <strong class="history-metric__value" id="historyUploadedCount">0 receipts</strong>
+                                    <span class="history-metric__label">Na-upload online</span>
+                                    <strong class="history-metric__value" id="historyUploadedCount">0 resibo</strong>
                                 </article>
                             </div>
                             <div class="table-responsive">
@@ -480,93 +550,163 @@
                                     </thead>
                                     <tbody id="historyTableBody">
                                         <tr class="empty">
-                                            <td colspan="6">No receipts yet. Log your first OR to begin.</td>
+                                            <td colspan="6">Wala pay resibo. I-log ang unang OR para magsugod.</td>
                                         </tr>
                                     </tbody>
                                 </table>
+                            </div>
+                            <div class="repayment-history-cards" id="historyCardList">
+                                <article class="history-card history-card--empty">Wala pay resibo. I-log ang unang OR para magsugod.</article>
                             </div>
                         </section>
                     </div>
                 </section>
 
-                <section id="support-feedback" class="dash-page dash-section" aria-label="Support and feedback">
-                    <div class="dash-page__header">
+                <section id="support-feedback" class="dash-page dash-section helpdesk-page" aria-label="Support Center" data-helpdesk-root>
+                    <header class="helpdesk-header panel">
                         <div>
-                            <p class="dash-page__eyebrow">Support</p>
-                            <h2 id="supportPageHeading">Support and feedback</h2>
-                            <p class="dash-page__lead">Reach your project officer, review reminders, and send feedback in the same consistent workspace.</p>
+                            <span class="support-card__eyebrow">SMART LEAP Help Desk</span>
+                            <h2>Support Center</h2>
+                            <p>Submit a concern, track staff replies, and get help from SMART LEAP staff.</p>
                         </div>
-                    </div>
-                    <div class="insight-grid">
-                    <section class="panel dash-section panel--summary feedback" aria-labelledby="feedbackHeading">
-                        <div class="panel-header">
-                            <h2 id="feedbackHeading">Send feedback</h2>
-                            <p class="panel-subtitle">Tell us how SMART LEAP can better support your livelihood.</p>
-                        </div>
-                        <form id="feedbackForm" class="form-grid">
-                            <label class="form-field full">
-                                <span>Your message *</span>
-                                <textarea id="feedbackMessage" name="message" rows="4" placeholder="Share your suggestion or concern" required></textarea>
-                            </label>
-                            <div class="form-actions full">
-                                <button type="submit" class="btn-primary">Send feedback</button>
-                            </div>
-                        </form>
-                        <ul id="feedbackList" class="feedback-list">
-                            <li class="empty">No feedback submitted yet.</li>
-                        </ul>
-                    </section>
-
-                    <section class="panel dash-section panel--support support" aria-labelledby="supportHeading">
-                        <div class="support-card">
-                            <div class="support-card__header panel-header">
-                                <h2 id="supportHeading">Need assistance?</h2>
-                                <p class="panel-subtitle">Quick reminders and ways to reach the SMART LEAP team.</p>
-                            </div>
-                            <div class="support-card__grid">
-                                <section class="support-card__section" data-role="beneficiary">
-                                    <span class="support-card__eyebrow">Next repayment</span>
-                                    <strong class="support-card__primary" id="supportNextDue">--</strong>
-                                    <p class="support-card__meta" id="supportOutstanding">Outstanding &#8369;0</p>
-                                    <p class="support-card__meta" id="supportRate">Completion 0%</p>
-                                </section>
-                                <section class="support-card__section">
-                                    <span class="support-card__eyebrow">Project officer</span>
-                                    <ul class="support-card__list">
-                                        <li>Email: <a href="mailto:projectofficer@smartleap.gov.ph">projectofficer@smartleap.gov.ph</a></li>
-                                        <li>Mobile: 0917 555 1234</li>
-                                        <li>Office hours: Mon-Fri, 8 AM - 5 PM</li>
-                                    </ul>
-                                </section>
-                            </div>
-                            <section class="support-card__section support-card__section--checklist" data-role="beneficiary">
-                                <span class="support-card__eyebrow">Checklist</span>
-                                <ul class="support-card__list support-card__list--bullets">
-                                    <li>Upload OR within 3 days of payment.</li>
-                                    <li>Bring the physical OR to CSWDD for verification.</li>
-                                    <li>Coordinate with your PDO for account and repayment updates.</li>
-                                </ul>
+                        <a class="btn-outline" href="#helpdeskNewConcern">New concern</a>
+                    </header>
+                    <div class="helpdesk-layout">
+                        <div class="helpdesk-main">
+                            <section class="panel helpdesk-card" id="helpdeskNewConcern" aria-labelledby="helpdeskFormHeading">
+                                <div class="panel-header">
+                                    <h3 id="helpdeskFormHeading">Submit New Concern</h3>
+                                    <p class="panel-subtitle">Tell us what you need help with. Your concern will be routed to the appropriate SMART LEAP staff.</p>
+                                </div>
+                                <form class="helpdesk-form" data-helpdesk-form novalidate>
+                                    <label class="form-field">
+                                        <span>Concern category *</span>
+                                        <select name="category" required>
+                                            <option value="">Choose category</option>
+                                            <option>Repayment</option>
+                                            <option>Receipt/OR Concern</option>
+                                            <option>Business/Livelihood</option>
+                                            <option>Correction Clarification</option>
+                                            <option>Other</option>
+                                        </select>
+                                        <small data-helpdesk-error="category"></small>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Subject *</span>
+                                        <input type="text" name="subject" maxlength="180" placeholder="Briefly describe your concern" required>
+                                        <small data-helpdesk-error="subject"></small>
+                                    </label>
+                                    <label class="form-field full">
+                                        <span>Message *</span>
+                                        <textarea name="message" rows="5" maxlength="5000" placeholder="Explain your concern clearly. Include the month, OR number, document name, or screenshot details if applicable." required></textarea>
+                                        <small data-helpdesk-error="message"></small>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Related record</span>
+                                        <select name="related_record_id">
+                                            <option value="">No related record selected</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-field">
+                                        <span>Attachment</span>
+                                        <input type="file" name="attachment" accept=".jpg,.jpeg,.png,.webp,.pdf">
+                                        <small class="field-helper">Screenshots, receipts, proof, or supporting documents. Max 5MB.</small>
+                                    </label>
+                                    <p class="helpdesk-form__status full" data-helpdesk-form-status role="status" aria-live="polite"></p>
+                                    <div class="form-actions full">
+                                        <button type="submit" class="btn-primary">Submit concern</button>
+                                    </div>
+                                </form>
+                            </section>
+                            <section class="panel helpdesk-card" aria-labelledby="helpdeskTicketsHeading">
+                                <div class="panel-header panel-header--compact">
+                                    <div>
+                                        <span class="support-card__eyebrow">My Concerns</span>
+                                        <h3 id="helpdeskTicketsHeading">My Concerns</h3>
+                                    </div>
+                                </div>
+                                <div class="helpdesk-ticket-list" data-helpdesk-ticket-list>
+                                    <p class="helpdesk-empty">No concerns submitted yet. Use the form to submit a concern when you need help from SMART LEAP staff.</p>
+                                </div>
                             </section>
                         </div>
-                    </section>
                     </div>
                 </section>
 
-                <section id="activity-log" class="dash-page dash-section" aria-labelledby="auditHeading" data-role="beneficiary">
-                    <div class="dash-page__header">
-                        <div>
-                            <p class="dash-page__eyebrow">Activity</p>
-                            <h2 id="auditHeading">Activity log</h2>
-                            <p class="dash-page__lead">Recent actions recorded by project officers and administrators.</p>
+                <section id="activity-log" class="dash-page dash-section" data-role="beneficiary">
+                    <section class="panel dash-section panel--summary activity-summary-panel" aria-labelledby="activitySummaryHeading">
+                        <div class="panel-header panel-header--compact">
+                            <h3 id="activitySummaryHeading">Activity summary</h3>
+                            <p class="panel-subtitle">A quick read on your recent beneficiary-side activity.</p>
                         </div>
-                    </div>
-                    <section class="panel dash-section panel--review">
-                        <ul id="auditList" class="audit-list">
+                        <div class="beneficiary-inline-metrics" role="list">
+                            <article class="overview-card" role="listitem">
+                                <span class="overview-label">Verified actions</span>
+                                <strong class="overview-value" id="activityVerifiedCount">0</strong>
+                            </article>
+                            <article class="overview-card" role="listitem">
+                                <span class="overview-label">Uploaded actions</span>
+                                <strong class="overview-value" id="activityUploadedCount">0</strong>
+                            </article>
+                            <article class="overview-card activity-latest-card" role="listitem">
+                                <span class="overview-label">Latest activity</span>
+                                <strong class="overview-value" id="activityLatestTitle">No activity yet</strong>
+                                <p class="overview-meta" id="activityLatestMeta">Recent beneficiary actions will appear here.</p>
+                            </article>
+                        </div>
+                    </section>
+                    <section class="panel dash-section panel--review activity-timeline-panel" aria-labelledby="activityTimelineHeading">
+                        <div class="panel-header panel-header--compact">
+                            <h3 id="activityTimelineHeading">Activity timeline</h3>
+                            <p class="panel-subtitle">Recent repayment verification and upload actions in order.</p>
+                        </div>
+                        <ul id="auditList" class="timeline-list">
                             <li class="empty">No activity yet.</li>
                         </ul>
                     </section>
                 </section>
             </main>
+
+            <nav class="beneficiary-mobile-tabbar" aria-label="Beneficiary mobile navigation">
+                <a class="beneficiary-tabbar__link is-active" href="#overview">
+                    <span class="beneficiary-tabbar__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" role="presentation">
+                            <path d="M3 11.5L12 4l9 7.5" stroke-linecap="round" stroke-linejoin="round"/>
+                            <path d="M5.5 10.5V20h13V10.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                    <span class="beneficiary-tabbar__label" data-i18n-key="overview">Overview</span>
+                </a>
+                <a class="beneficiary-tabbar__link" href="#repayments" data-role="beneficiary">
+                    <span class="beneficiary-tabbar__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" role="presentation">
+                            <rect x="6" y="4" width="12" height="16" rx="2" stroke-linejoin="round"/>
+                            <path d="M9 9h6" stroke-linecap="round"/>
+                            <path d="M9 12h6" stroke-linecap="round"/>
+                            <path d="M9 15h3" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    <span class="beneficiary-tabbar__label" data-i18n-key="repayments">Repayments</span>
+                </a>
+                <a class="beneficiary-tabbar__link" href="#support-feedback">
+                    <span class="beneficiary-tabbar__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" role="presentation">
+                            <path d="M7 7h10a3 3 0 013 3v4a3 3 0 01-3 3h-3l-3 4-3-4H7a3 3 0 01-3-3v-4a3 3 0 013-3z" stroke-linejoin="round"/>
+                        </svg>
+                    </span>
+                    <span class="beneficiary-tabbar__label" data-i18n-key="support">Support</span>
+                </a>
+                <a class="beneficiary-tabbar__link" href="#activity-log" data-role="beneficiary">
+                    <span class="beneficiary-tabbar__icon" aria-hidden="true">
+                        <svg viewBox="0 0 24 24" role="presentation">
+                            <path d="M5 6h14" stroke-linecap="round"/>
+                            <path d="M5 12h14" stroke-linecap="round"/>
+                            <path d="M5 18h8" stroke-linecap="round"/>
+                        </svg>
+                    </span>
+                    <span class="beneficiary-tabbar__label" data-i18n-key="activity">Activity</span>
+                </a>
+            </nav>
 
             <footer class="dash-footer">
             </footer>
@@ -575,7 +715,10 @@
 
     <div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true"></div>
 
-    <script src="<?= $baseUrl ?>/assets/js/dashboards/beneficiary.js" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/shared/notifications.js?v=<?= urlencode((string) $notificationsJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/language-toggle.js?v=<?= urlencode((string) $languageToggleJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/beneficiary.js?v=<?= urlencode((string) $beneficiaryJsVersion) ?>" defer></script>
+    <script src="<?= $baseUrl ?>/assets/js/dashboards/support-helpdesk.js?v=<?= urlencode((string) $supportHelpdeskJsVersion) ?>" defer></script>
 </body>
 </html>
 

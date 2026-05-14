@@ -86,8 +86,16 @@ class TrainingController extends Controller
     {
         $programId = (int) ($_POST['programId'] ?? 0);
         $applicantIds = $_POST['applicantProfileIds'] ?? [];
+        $pdoGroupAssignmentsJson = trim((string) ($_POST['pdoGroupAssignmentsJson'] ?? ''));
         if (!is_array($applicantIds)) {
             $applicantIds = [];
+        }
+        $pdoGroupAssignments = [];
+        if ($pdoGroupAssignmentsJson !== '') {
+            $decoded = json_decode($pdoGroupAssignmentsJson, true);
+            if (is_array($decoded)) {
+                $pdoGroupAssignments = $decoded;
+            }
         }
 
         $service = new TrainingService();
@@ -95,7 +103,7 @@ class TrainingController extends Controller
         if ($schemaError !== null) {
             response_json(['ok' => false, 'message' => $schemaError], 500);
         }
-        $result = $service->syncInvitees($programId, $applicantIds, $this->authorizeTrainingActor());
+        $result = $service->syncInvitees($programId, $applicantIds, $this->authorizeTrainingActor(), $pdoGroupAssignments);
         if (!$result['ok']) {
             response_json($result, 422);
         }
@@ -110,13 +118,17 @@ class TrainingController extends Controller
         if (!is_array($inviteeIds)) {
             $inviteeIds = [];
         }
+        $options = [
+            'groupNumber' => (int) ($_POST['groupNumber'] ?? 0),
+            'batchYear' => (int) ($_POST['batchYear'] ?? 0),
+        ];
 
         $service = new TrainingService();
         $schemaError = $service->schemaError();
         if ($schemaError !== null) {
             response_json(['ok' => false, 'message' => $schemaError], 500);
         }
-        $result = $service->sendNotices($programId, $inviteeIds, $this->authorizeTrainingActor());
+        $result = $service->sendNotices($programId, $inviteeIds, $this->authorizeTrainingActor(), $options);
         if (!$result['ok']) {
             response_json($result, 422);
         }
