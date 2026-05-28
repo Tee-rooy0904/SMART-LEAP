@@ -654,28 +654,10 @@ class TeamService
         if ($staffProfileIds === []) {
             return [];
         }
-
-        $placeholders = implode(',', array_fill(0, count($staffProfileIds), '?'));
-        $statement = db()->prepare(
-            "SELECT staff_profile_id, barangays.id AS barangay_id, barangays.name, barangays.district
-             FROM staff_barangay_assignments
-             INNER JOIN barangays ON barangays.id = staff_barangay_assignments.barangay_id
-             WHERE ended_at IS NULL AND staff_profile_id IN ($placeholders)
-             ORDER BY barangays.district ASC, barangays.name ASC"
-        );
-        foreach ($staffProfileIds as $index => $staffProfileId) {
-            $statement->bindValue($index + 1, $staffProfileId, PDO::PARAM_INT);
-        }
-        $statement->execute();
-        $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
-
         $map = [];
-        foreach ($rows as $row) {
-            $map[(int) $row['staff_profile_id']][] = [
-                'id' => (int) $row['barangay_id'],
-                'name' => $row['name'],
-                'district' => (string) ($row['district'] ?? ''),
-            ];
+        $assignmentService = new BarangayAssignmentService();
+        foreach ($staffProfileIds as $staffProfileId) {
+            $map[(int) $staffProfileId] = $assignmentService->activeAssignmentsForStaffProfileId((int) $staffProfileId);
         }
 
         return $map;

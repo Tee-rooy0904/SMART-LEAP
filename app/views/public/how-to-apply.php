@@ -19,36 +19,36 @@
             <section class="content-hero">
                 <div class="container content-hero__inner">
                     <span class="section-kicker">How to Apply</span>
-                    <h1 class="section-title">Follow the SMART LEAP application process step by step.</h1>
-                    <p class="page-intro">This page lays out the application flow so first-time users can clearly understand what to do next.</p>
+                    <h1 class="section-title">Follow the two-stage SMART LEAP application process step by step.</h1>
+                    <p class="page-intro">SMART LEAP starts with a public Stage 1 registration, then moves qualified applicants into a private Stage 2 portal for the full program application.</p>
                 </div>
             </section>
 
             <section class="content-section">
                 <div class="container timeline-list portal-process-grid">
-                    <article class="timeline-item is-active" tabindex="0" data-timeline-item data-detail-title="Create Account" data-detail-copy="Register using an active email address so SMART LEAP can send notices and record updates.">
+                    <article class="timeline-item is-active" tabindex="0" data-timeline-item data-detail-title="Stage 1 Public Registration" data-detail-copy="Click Apply Now and complete the public Stage 1 registration form with your name, address, contact details, valid ID, and proof or photo of your existing microbusiness.">
                         <span class="timeline-item__number">1</span>
-                        <div><h2>Create Account</h2><p>Register using an active email address.</p></div>
+                        <div><h2>Stage 1 Public Registration</h2><p>Submit your basic registration details, valid ID, and proof of your existing microbusiness.</p></div>
                     </article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Complete Your Profile" data-detail-copy="Fill in your personal and household details accurately before continuing.">
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Admin Batch Validation" data-detail-copy="Admin reviews all Stage 1 registrants and decides who will be included in the current yearly batch and who will be saved for the next batch.">
                         <span class="timeline-item__number">2</span>
-                        <div><h2>Complete Your Profile</h2><p>Enter your personal details and contact information.</p></div>
+                        <div><h2>Admin Batch Validation</h2><p>CSWDD Admin validates Stage 1 registrations and checks available batch slots.</p></div>
                     </article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Prepare Requirements" data-detail-copy="Gather the required documents and make sure they are readable before uploading them.">
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Current Batch or Next Batch" data-detail-copy="Only 255 applicants can be saved in the active yearly batch. If the current batch is already full, other qualified Stage 1 registrants can be saved for the next SMART LEAP batch.">
                         <span class="timeline-item__number">3</span>
-                        <div><h2>Prepare Requirements</h2><p>Gather the documents you need to upload.</p></div>
+                        <div><h2>Current Batch or Next Batch</h2><p>Selected applicants proceed to the current batch, while others may be deferred to the next batch.</p></div>
                     </article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Submit the Application" data-detail-copy="Upload the documents and submit the application when everything is ready.">
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Email Invitation" data-detail-copy="Applicants selected for the current batch receive an email notice with the link they need to continue to Stage 2.">
                         <span class="timeline-item__number">4</span>
-                        <div><h2>Submit the Application</h2><p>Upload your files and submit the record.</p></div>
+                        <div><h2>Email Invitation</h2><p>Selected applicants are notified through their Gmail account with the next-step portal link.</p></div>
                     </article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Wait for Review" data-detail-copy="CSWDD will review the record and may return it for correction if needed.">
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Stage 2 Private Applicant Portal" data-detail-copy="Selected applicants create their account and sign in to the private applicant portal. Stage 2 is the full SMART LEAP application and is not open to the general public.">
                         <span class="timeline-item__number">5</span>
-                        <div><h2>Wait for Review</h2><p>CSWDD will review your files and record.</p></div>
+                        <div><h2>Stage 2 Private Applicant Portal</h2><p>Create your account and access the private SMART LEAP applicant portal.</p></div>
                     </article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Receive the Decision" data-detail-copy="The portal records whether your application is approved, returned for correction, or rejected.">
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Complete the Full Application" data-detail-copy="Inside the private applicant portal, complete your profile, upload the required documents, monitor your application status, and check training schedules and official notices.">
                         <span class="timeline-item__number">6</span>
-                        <div><h2>Receive the Decision</h2><p>Review the decision after the assessment is complete.</p></div>
+                        <div><h2>Complete the Full Application</h2><p>Upload requirements, monitor your status, and check your training schedules inside the applicant portal.</p></div>
                     </article>
                 </div>
             </section>

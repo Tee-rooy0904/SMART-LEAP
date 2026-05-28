@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -50,6 +49,23 @@ class CoMakerRegistrationService
                 UNIQUE KEY uniq_co_maker_user (user_id),
                 UNIQUE KEY uniq_co_maker_beneficiary_profile (beneficiary_profile_id),
                 KEY idx_co_maker_status (registration_status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+        );
+
+        db()->exec(
+            'CREATE TABLE IF NOT EXISTS co_maker_registration_invitations (
+                id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                beneficiary_profile_id BIGINT UNSIGNED NOT NULL,
+                recipient_email VARCHAR(160) NOT NULL,
+                token_hash CHAR(64) NOT NULL,
+                sent_by_user_id BIGINT UNSIGNED NULL,
+                used_at TIMESTAMP NULL DEFAULT NULL,
+                expires_at DATETIME NOT NULL,
+                created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_co_maker_invitation_token (token_hash),
+                KEY idx_co_maker_invitation_beneficiary (beneficiary_profile_id),
+                KEY idx_co_maker_invitation_email (recipient_email)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
 
@@ -187,17 +203,12 @@ class CoMakerRegistrationService
     {
         $this->ensureSchema();
 
+        if (!$this->canViewRegistrations($actor)) {
+            return [];
+        }
+
         $params = [];
         $joins = [];
-        $role = strtolower((string) ($actor['role'] ?? ''));
-        if (str_contains($role, 'project')) {
-            $joins[] = 'INNER JOIN staff_profiles AS actor_staff ON actor_staff.user_id = :actor_user_id
-                        INNER JOIN staff_barangay_assignments
-                            ON staff_barangay_assignments.staff_profile_id = actor_staff.id
-                           AND staff_barangay_assignments.barangay_id = applicant_profiles.barangay_id
-                           AND staff_barangay_assignments.ended_at IS NULL';
-            $params['actor_user_id'] = (int) ($actor['id'] ?? 0);
-        }
 
         $statement = db()->prepare(
             'SELECT
@@ -260,6 +271,10 @@ class CoMakerRegistrationService
     public function reviewForActor(array $actor, int $registrationId, string $decision): array
     {
         $this->ensureSchema();
+
+        if (!$this->isAdminActor($actor)) {
+            return ['ok' => false, 'message' => 'Only Admin can review co-maker registrations.'];
+        }
 
         $registration = $this->findRegistrationForActor($actor, $registrationId);
         if ($registration === null) {
@@ -350,7 +365,135 @@ class CoMakerRegistrationService
         ];
     }
 
-    public function publicRegistrationContext(int $beneficiaryProfileId): ?array
+    public function sendRegistrationLinkForAdmin(array $actor, int $beneficiaryProfileId, string $recipientEmail): array
+    {
+        $this->ensureSchema();
+
+        if (!$this->isAdminActor($actor)) {
+            return ['ok' => false, 'message' => 'Only Admin can send co-maker registration emails.'];
+        }
+
+        $email = strtolower(trim($recipientEmail));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['ok' => false, 'message' => 'Enter a valid co-maker Gmail address.'];
+        }
+        if (!preg_match('/@(gmail\.com|googlemail\.com)$/i', $email)) {
+            return ['ok' => false, 'message' => 'Use the co-maker Gmail address for the registration email.'];
+        }
+
+        $primary = $this->findPublicPrimaryBeneficiary($beneficiaryProfileId);
+        if ($primary === null) {
+            return ['ok' => false, 'message' => 'Beneficiary record is unavailable.'];
+        }
+        if (strtolower(trim((string) ($primary['beneficiary_status'] ?? ''))) !== BeneficiaryProfileService::STATUS_DECEASED) {
+            return ['ok' => false, 'message' => 'The beneficiary must be marked deceased before sending a co-maker registration email.'];
+        }
+
+        $existing = $this->registrationForPrimaryBeneficiary($beneficiaryProfileId);
+        if ($existing !== null) {
+            return ['ok' => false, 'message' => 'A co-maker registration already exists for this beneficiary.'];
+        }
+
+        $token = bin2hex(random_bytes(32));
+        $this->storeInvitation($beneficiaryProfileId, $email, $token, (int) ($actor['id'] ?? 0));
+        $link = app_url('signup?mode=co-maker&beneficiary=' . urlencode((string) $beneficiaryProfileId) . '&invite=' . urlencode($token));
+        $primaryName = (string) ($primary['primary_beneficiary_name'] ?? 'the deceased beneficiary');
+        $businessName = (string) ($primary['primary_business_name'] ?? '');
+        $barangay = (string) ($primary['primary_barangay'] ?? '');
+        $subject = 'SMART LEAP Co-maker Registration Link';
+        $body = sprintf(
+            '<p>Good day,</p>
+             <p>The City Social Welfare and Development Department has invited you to register as the co-maker for <strong>%s</strong>%s%s.</p>
+             <p>Please open the official SMART LEAP registration link below using your Gmail account and complete the required information and document uploads:</p>
+             <p><a href="%s">%s</a></p>
+             <p>Your co-maker access will only become active after Admin review and approval.</p>
+             <p>Thank you.</p>',
+            htmlspecialchars($primaryName, ENT_QUOTES),
+            $businessName !== '' ? ' - ' . htmlspecialchars($businessName, ENT_QUOTES) : '',
+            $barangay !== '' ? ' of ' . htmlspecialchars($barangay, ENT_QUOTES) : '',
+            htmlspecialchars($link, ENT_QUOTES),
+            htmlspecialchars($link, ENT_QUOTES)
+        );
+
+        $sent = (new MailService())->send($email, $subject, $body, (int) ($actor['id'] ?? 0) ?: null);
+        if (!$sent) {
+            return ['ok' => false, 'message' => 'Unable to send the co-maker registration email right now.'];
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Co-maker registration email sent to Gmail.',
+            'email' => $email,
+        ];
+    }
+
+    public function sendRegistrationLinkForProjectOfficer(array $actor, int $beneficiaryProfileId, string $recipientEmail): array
+    {
+        $this->ensureSchema();
+
+        if (!$this->isProjectOfficerActor($actor)) {
+            return ['ok' => false, 'message' => 'Only the assigned PDO can send co-maker registration emails.'];
+        }
+
+        if (!$this->primaryBeneficiaryWithinProjectOfficerScope($actor, $beneficiaryProfileId)) {
+            return ['ok' => false, 'message' => 'Beneficiary record not found in your scope.'];
+        }
+
+        $email = strtolower(trim($recipientEmail));
+        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            return ['ok' => false, 'message' => 'Enter a valid co-maker Gmail address.'];
+        }
+        if (!preg_match('/@(gmail\.com|googlemail\.com)$/i', $email)) {
+            return ['ok' => false, 'message' => 'Use the co-maker Gmail address for the registration email.'];
+        }
+
+        $primary = $this->findPublicPrimaryBeneficiary($beneficiaryProfileId);
+        if ($primary === null) {
+            return ['ok' => false, 'message' => 'Beneficiary record is unavailable.'];
+        }
+        if (strtolower(trim((string) ($primary['beneficiary_status'] ?? ''))) !== BeneficiaryProfileService::STATUS_DECEASED) {
+            return ['ok' => false, 'message' => 'The beneficiary must already be marked deceased before sending a co-maker registration email.'];
+        }
+
+        $existing = $this->registrationForPrimaryBeneficiary($beneficiaryProfileId);
+        if ($existing !== null) {
+            return ['ok' => false, 'message' => 'A co-maker registration already exists for this beneficiary.'];
+        }
+
+        $token = bin2hex(random_bytes(32));
+        $this->storeInvitation($beneficiaryProfileId, $email, $token, (int) ($actor['id'] ?? 0));
+        $link = app_url('signup?mode=co-maker&beneficiary=' . urlencode((string) $beneficiaryProfileId) . '&invite=' . urlencode($token));
+        $primaryName = (string) ($primary['primary_beneficiary_name'] ?? 'the deceased beneficiary');
+        $businessName = (string) ($primary['primary_business_name'] ?? '');
+        $barangay = (string) ($primary['primary_barangay'] ?? '');
+        $subject = 'SMART LEAP Co-maker Registration Link';
+        $body = sprintf(
+            '<p>Good day,</p>
+             <p>The City Social Welfare and Development Department has invited you to register as the co-maker for <strong>%s</strong>%s%s.</p>
+             <p>Please open the official SMART LEAP registration link below using your Gmail account and complete the required information and document uploads:</p>
+             <p><a href="%s">%s</a></p>
+             <p>Your co-maker access will only become active after Admin review and approval.</p>
+             <p>Thank you.</p>',
+            htmlspecialchars($primaryName, ENT_QUOTES),
+            $businessName !== '' ? ' - ' . htmlspecialchars($businessName, ENT_QUOTES) : '',
+            $barangay !== '' ? ' of ' . htmlspecialchars($barangay, ENT_QUOTES) : '',
+            htmlspecialchars($link, ENT_QUOTES),
+            htmlspecialchars($link, ENT_QUOTES)
+        );
+
+        $sent = (new MailService())->send($email, $subject, $body, (int) ($actor['id'] ?? 0) ?: null);
+        if (!$sent) {
+            return ['ok' => false, 'message' => 'Unable to send the co-maker registration email right now.'];
+        }
+
+        return [
+            'ok' => true,
+            'message' => 'Co-maker registration email sent to Gmail.',
+            'email' => $email,
+        ];
+    }
+
+    public function publicRegistrationContext(int $beneficiaryProfileId, string $inviteToken = ''): ?array
     {
         $this->ensureSchema();
         if ($beneficiaryProfileId <= 0) {
@@ -364,6 +507,10 @@ class CoMakerRegistrationService
 
         $status = strtolower(trim((string) ($primary['beneficiary_status'] ?? '')));
         $existing = $this->registrationForPrimaryBeneficiary($beneficiaryProfileId);
+        $invitation = $this->findValidInvitation($beneficiaryProfileId, $inviteToken);
+        if ($existing === null && $invitation === null) {
+            return null;
+        }
 
         return [
             'beneficiaryProfileId' => (int) ($primary['id'] ?? 0),
@@ -379,6 +526,8 @@ class CoMakerRegistrationService
             'canRegister' => $status === BeneficiaryProfileService::STATUS_DECEASED && $existing === null,
             'hasExistingRegistration' => $existing !== null,
             'existingRegistrationStatus' => (string) ($existing['registrationStatus'] ?? ''),
+            'inviteToken' => $invitation !== null ? $inviteToken : '',
+            'invitedEmail' => (string) ($invitation['recipient_email'] ?? ''),
         ];
     }
 
@@ -387,9 +536,15 @@ class CoMakerRegistrationService
         $this->ensureSchema();
 
         $primaryBeneficiaryProfileId = (int) ($input['beneficiaryProfileId'] ?? $input['beneficiary_profile_id'] ?? $input['beneficiary'] ?? 0);
+        $inviteToken = trim((string) ($input['inviteToken'] ?? $input['invite'] ?? ''));
         $primary = $this->findPublicPrimaryBeneficiary($primaryBeneficiaryProfileId);
         if ($primary === null) {
             return ['ok' => false, 'errors' => ['general' => 'The selected primary beneficiary record was not found.']];
+        }
+
+        $invitation = $this->findValidInvitation($primaryBeneficiaryProfileId, $inviteToken);
+        if ($invitation === null) {
+            return ['ok' => false, 'errors' => ['general' => 'The co-maker registration invitation is invalid, expired, or already used. Please ask the assigned PDO to send a new Gmail link.']];
         }
 
         if (strtolower(trim((string) ($primary['beneficiary_status'] ?? ''))) !== BeneficiaryProfileService::STATUS_DECEASED) {
@@ -398,7 +553,7 @@ class CoMakerRegistrationService
 
         $existing = $this->registrationForPrimaryBeneficiary($primaryBeneficiaryProfileId);
         if ($existing !== null) {
-            return ['ok' => false, 'errors' => ['general' => 'A co-maker account is already registered for this beneficiary. Please contact the assigned PDO or Admin for updates.']];
+            return ['ok' => false, 'errors' => ['general' => 'A co-maker account is already registered for this beneficiary. Please contact the Admin for updates.']];
         }
 
         $firstName = trim((string) ($input['firstName'] ?? ''));
@@ -426,6 +581,9 @@ class CoMakerRegistrationService
         }
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = 'Enter a valid email address.';
+        }
+        if ($email !== strtolower((string) ($invitation['recipient_email'] ?? ''))) {
+            $errors['email'] = 'Use the same Gmail address that received the co-maker invitation.';
         }
         if (strlen($password) < 8) {
             $errors['password'] = 'Password must be at least 8 characters.';
@@ -539,6 +697,8 @@ class CoMakerRegistrationService
                 'registration_status' => self::STATUS_PENDING_REVIEW,
             ]);
 
+            $this->markInvitationUsed($pdo, (int) ($invitation['id'] ?? 0));
+
             $pdo->commit();
         } catch (\Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -554,7 +714,7 @@ class CoMakerRegistrationService
 
         return [
             'ok' => true,
-            'message' => 'Your co-maker registration was submitted and is now waiting for PDO/Admin approval.',
+            'message' => 'Your co-maker registration was submitted and is now waiting for Admin approval.',
             'redirect' => 'portal/login',
         ];
     }
@@ -1132,6 +1292,109 @@ class CoMakerRegistrationService
         $row = $statement->fetch(PDO::FETCH_ASSOC);
 
         return is_array($row) ? $row : null;
+    }
+
+    private function isAdminActor(array $actor): bool
+    {
+        return (string) ($actor['role'] ?? '') === ROLE_ADMIN;
+    }
+
+    private function isProjectOfficerActor(array $actor): bool
+    {
+        return (string) ($actor['role'] ?? '') === ROLE_PROJECT_OFFICER;
+    }
+
+    private function canViewRegistrations(array $actor): bool
+    {
+        $role = (string) ($actor['role'] ?? '');
+        return $role === ROLE_ADMIN || $role === ROLE_SOCIAL_WORKER;
+    }
+
+    private function primaryBeneficiaryWithinProjectOfficerScope(array $actor, int $beneficiaryProfileId): bool
+    {
+        if ($beneficiaryProfileId <= 0 || !$this->isProjectOfficerActor($actor)) {
+            return false;
+        }
+
+        $statement = db()->prepare(
+            'SELECT beneficiary_profiles.id
+             FROM beneficiary_profiles
+             INNER JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
+             INNER JOIN staff_profiles AS actor_staff ON actor_staff.user_id = :actor_user_id
+             INNER JOIN staff_barangay_assignments
+                ON staff_barangay_assignments.staff_profile_id = actor_staff.id
+               AND staff_barangay_assignments.barangay_id = applicant_profiles.barangay_id
+               AND staff_barangay_assignments.ended_at IS NULL
+             WHERE beneficiary_profiles.id = :beneficiary_profile_id
+             LIMIT 1'
+        );
+        $statement->execute([
+            'actor_user_id' => (int) ($actor['id'] ?? 0),
+            'beneficiary_profile_id' => $beneficiaryProfileId,
+        ]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    private function storeInvitation(int $beneficiaryProfileId, string $email, string $token, int $adminUserId): void
+    {
+        db()->prepare(
+            'UPDATE co_maker_registration_invitations
+             SET used_at = NOW(),
+                 updated_at = NOW()
+             WHERE beneficiary_profile_id = :beneficiary_profile_id
+               AND used_at IS NULL'
+        )->execute(['beneficiary_profile_id' => $beneficiaryProfileId]);
+
+        db()->prepare(
+            'INSERT INTO co_maker_registration_invitations
+                (beneficiary_profile_id, recipient_email, token_hash, sent_by_user_id, expires_at)
+             VALUES (:beneficiary_profile_id, :recipient_email, :token_hash, :sent_by_user_id, DATE_ADD(NOW(), INTERVAL 14 DAY))'
+        )->execute([
+            'beneficiary_profile_id' => $beneficiaryProfileId,
+            'recipient_email' => $email,
+            'token_hash' => hash('sha256', $token),
+            'sent_by_user_id' => $adminUserId > 0 ? $adminUserId : null,
+        ]);
+    }
+
+    private function findValidInvitation(int $beneficiaryProfileId, string $token): ?array
+    {
+        $token = trim($token);
+        if ($beneficiaryProfileId <= 0 || $token === '') {
+            return null;
+        }
+
+        $statement = db()->prepare(
+            'SELECT id, beneficiary_profile_id, recipient_email, expires_at
+             FROM co_maker_registration_invitations
+             WHERE beneficiary_profile_id = :beneficiary_profile_id
+               AND token_hash = :token_hash
+               AND used_at IS NULL
+               AND expires_at > NOW()
+             LIMIT 1'
+        );
+        $statement->execute([
+            'beneficiary_profile_id' => $beneficiaryProfileId,
+            'token_hash' => hash('sha256', $token),
+        ]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
+    }
+
+    private function markInvitationUsed(PDO $pdo, int $invitationId): void
+    {
+        if ($invitationId <= 0) {
+            return;
+        }
+
+        $pdo->prepare(
+            'UPDATE co_maker_registration_invitations
+             SET used_at = NOW(),
+                 updated_at = NOW()
+             WHERE id = :id'
+        )->execute(['id' => $invitationId]);
     }
 
     private function mapRegistrationRow(array $row): array

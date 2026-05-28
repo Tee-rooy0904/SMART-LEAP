@@ -54,6 +54,12 @@
     let authLoaderStartedAt = 0;
     let photoDataUrl = '';
 
+    function autoResizeTextarea(textarea) {
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+    }
+
     function publicBase() {
         const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
         return match ? match[1] : '';
@@ -524,6 +530,7 @@
 
     fields.birthdate?.addEventListener('change', syncAgeFromBirthdate);
     fields.sector?.addEventListener('change', toggleSectorOther);
+    fields.address?.addEventListener('input', () => autoResizeTextarea(fields.address));
     fields.photoInput?.addEventListener('change', (event) => {
         const file = event.target.files?.[0];
         clearFieldError('signupPhotoInput');
@@ -579,5 +586,6 @@
     updatePasswordHints(fields.password?.value || '');
     toggleSectorOther();
     syncAgeFromBirthdate();
+    autoResizeTextarea(fields.address);
     closeConfirmModal();
 })();

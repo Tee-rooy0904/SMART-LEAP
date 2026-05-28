@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Controllers;
@@ -22,15 +21,16 @@ class SignupController extends Controller
 
         if ($mode === 'co-maker') {
             $beneficiaryProfileId = (int) ($_GET['beneficiaryProfileId'] ?? $_GET['beneficiary'] ?? 0);
-            $coMakerContext = (new CoMakerRegistrationService())->publicRegistrationContext($beneficiaryProfileId);
+            $inviteToken = trim((string) ($_GET['invite'] ?? $_GET['inviteToken'] ?? ''));
+            $coMakerContext = (new CoMakerRegistrationService())->publicRegistrationContext($beneficiaryProfileId, $inviteToken);
             if ($coMakerContext === null) {
-                $signupError = 'The co-maker registration link is invalid or the beneficiary record is unavailable.';
+                $signupError = 'The co-maker registration link is invalid, expired, or the beneficiary record is unavailable.';
             } elseif (!($coMakerContext['isDeceased'] ?? false)) {
                 $signupError = 'Co-maker account creation is only allowed after the primary beneficiary is marked deceased.';
             } elseif ($coMakerContext['hasExistingRegistration'] ?? false && !($coMakerContext['canRegister'] ?? false)) {
                 $existingStatus = strtolower(trim((string) ($coMakerContext['existingRegistrationStatus'] ?? '')));
                 $signupError = $existingStatus === \App\Services\CoMakerRegistrationService::STATUS_PENDING_REVIEW
-                    ? 'A co-maker registration for this beneficiary is already pending PDO/Admin review.'
+                    ? 'A co-maker registration for this beneficiary is already pending Admin review.'
                     : 'A co-maker account is already registered for this beneficiary. Please coordinate with the assigned PDO or Admin.';
             }
         }

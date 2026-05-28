@@ -21,6 +21,12 @@
     const AUTH_LOADER_MIN_MS = 2400;
     let authLoaderStartedAt = 0;
 
+    function autoResizeTextarea(textarea) {
+        if (!textarea) return;
+        textarea.style.height = 'auto';
+        textarea.style.height = `${Math.min(textarea.scrollHeight, 220)}px`;
+    }
+
     function publicBase() {
         const match = window.location.pathname.match(/^(.*\/public)(?:\/.*)?$/);
         return match ? match[1] : '';
@@ -148,6 +154,8 @@
 
     fields.businessPhoto.addEventListener('change', () => updateFileLabel(fields.businessPhoto, 'stageOneBusinessPhotoName'));
     fields.validIdPhoto.addEventListener('change', () => updateFileLabel(fields.validIdPhoto, 'stageOneValidIdPhotoName'));
+    fields.completeAddress?.addEventListener('input', () => autoResizeTextarea(fields.completeAddress));
+    autoResizeTextarea(fields.completeAddress);
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();

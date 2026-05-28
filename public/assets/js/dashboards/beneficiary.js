@@ -1,9 +1,12 @@
 (function () {
+    // Auth bootstrap from the server-rendered beneficiary shell.
     const AUTH_USER = window.SMARTLEAP_AUTH_USER || null;
+    // Legacy local-storage keys kept for beneficiary-side repayment state compatibility.
     const STORAGE_KEYS = {
         payments: 'smartleap_beneficiary_payments_v1',
         submissions: 'smartleap_beneficiary_submissions_v1',
     };
+    // Repayment plan constants used by tracker math and upload validation.
     const PROFILE_PHOTO_MAX_SIZE = 5 * 1024 * 1024;
     const PORTAL_LOADER_MIN_MS = 3000;
     const REPAYMENT_PLAN_MONTHS = 24;
@@ -17,6 +20,7 @@
         syncPortalSelects();
     });
 
+    // Working user snapshot used throughout profile, repayment, support, and activity rendering.
     let user = {
         id: AUTH_USER?.id || null,
         name: AUTH_USER?.name || '',
@@ -24,6 +28,7 @@
         email: AUTH_USER?.email || '',
         role: AUTH_USER?.role || 'Benepisyaryo'
     };
+    // Beneficiary-side state for payments, feedback, notifications, and hydrated backend records.
     let payments = [];
     let groupedSubmissions = [];
     let feedbackEntries = [];
@@ -51,6 +56,7 @@
 
     document.addEventListener('DOMContentLoaded', init);
 
+    // Load cached state, hydrate from the backend, then bind controls and render the full portal.
     async function init() {
         loadState();
         await hydrateBackendState();
@@ -64,11 +70,13 @@
         return match ? match[1] : '';
     }
 
+    // Resolve beneficiary dashboard endpoints relative to the public-facing portal base.
     function routeUrl(path) {
         const trimmed = String(path || '').replace(/^\/+/, '');
         return `${publicBase()}/${trimmed}`;
     }
 
+    // Load the latest beneficiary, repayment, feedback, and notification data from the server.
     async function hydrateBackendState() {
         try {
             const response = await fetch(routeUrl('beneficiary-dashboard/state'), {
@@ -563,6 +571,7 @@
         syncRepaymentMode();
     }
 
+    // Repaint the full beneficiary portal after state changes or after fresh data arrives.
     function renderAll() {
         renderUser();
         applyRoleVisibility();
@@ -589,7 +598,7 @@
             ? [
                 beneficiaryRecord?.relationshipToPrimaryBeneficiary,
                 beneficiaryRecord?.primaryBeneficiaryName ? `Paying for ${beneficiaryRecord.primaryBeneficiaryName}` : '',
-            ].filter(Boolean).join(' • ')
+            ].filter(Boolean).join(' | ')
             : (user.businessName
                 || user.business
                 || applicationRecord?.businessName
@@ -2603,6 +2612,7 @@
         return totalApplied;
     }
 
+    // Guard beneficiary uploads so only accepted OR or proof formats and sizes enter the workflow.
     function validateProofFile(file) {
         if (!(file instanceof File)) {
             return 'Please upload an OR file.';
@@ -2698,6 +2708,7 @@
         });
     }
 
+    // Convert one beneficiary upload into the normalized monthly submission record used by the UI and backend sync.
     function createSingleMonthSubmission(data, context = {}) {
         const paymentList = context.paymentList || payments;
         const meta = getBeneficiarySubmissionMeta();
@@ -2851,6 +2862,7 @@
         return parts.length ? parts.join(' | ') : '-';
     }
 
+    // Summarize the reviewer-facing result of a payment so the beneficiary immediately sees what happened next.
     function buildPaymentReviewNote(payment) {
         const stage = mapPaymentStage(payment?.stage);
         const reviewerName = String(payment?.reviewedBy || payment?.verifiedBy || '').trim();

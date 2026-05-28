@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Beneficiary profile and status service.
+ * Promotes approved applicants into beneficiary records, updates beneficiary statuses, tracks assistance receipt, and manages successor/co-maker repayment links.
+ */
 
 declare(strict_types=1);
 
@@ -193,16 +198,7 @@ class BeneficiaryProfileService
 
     public function updateProjectOfficerRecord(array $actor, int $beneficiaryProfileId, string $status): array
     {
-        $normalized = $this->normalizeManualStatus($status);
-        if ($normalized !== self::STATUS_DECEASED) {
-            return ['ok' => false, 'message' => 'Project officers can only tag a beneficiary as deceased.'];
-        }
-
-        if (!$this->beneficiaryWithinProjectOfficerScope($actor, $beneficiaryProfileId)) {
-            return ['ok' => false, 'message' => 'Beneficiary profile not found in your scope.'];
-        }
-
-        return $this->updateAdminRecord($beneficiaryProfileId, self::STATUS_DECEASED, null);
+        return ['ok' => false, 'message' => 'Only Admin can update beneficiary active or deceased status.'];
     }
 
     public function recordAssistanceReceivedForProjectOfficerRecord(array $actor, int $beneficiaryProfileId): array
@@ -388,6 +384,36 @@ class BeneficiaryProfileService
             return;
         }
 
+        $missingRequirements = [];
+
+        if (!$this->schemaColumnExists('beneficiary_profiles', 'replacement_for_beneficiary_profile_id')) {
+            $missingRequirements[] = 'column beneficiary_profiles.replacement_for_beneficiary_profile_id (migration 046)';
+        }
+
+        if (!$this->schemaColumnExists('beneficiary_profiles', 'approved_at')) {
+            $missingRequirements[] = 'column beneficiary_profiles.approved_at (migration 048)';
+        }
+
+        if (!$this->schemaIndexExists('beneficiary_profiles', 'idx_beneficiary_profiles_replacement_for')) {
+            $missingRequirements[] = 'index beneficiary_profiles.idx_beneficiary_profiles_replacement_for (migration 046)';
+        }
+
+        if ($missingRequirements !== []) {
+            write_app_log('schema', 'Beneficiary profile schema is outdated.', [
+                'table' => 'beneficiary_profiles',
+                'missing' => $missingRequirements,
+            ]);
+
+            throw new \RuntimeException(
+                'Beneficiary profile schema is outdated. Run migrations 046_add_beneficiary_repayment_successor_link.sql and 048_add_beneficiary_approved_at_and_stage_one_email_tracking.sql.'
+            );
+        }
+
+        $ensured = true;
+    }
+
+    private function schemaColumnExists(string $tableName, string $columnName): bool
+    {
         $statement = db()->prepare(
             'SELECT COUNT(*) FROM information_schema.columns
              WHERE table_schema = DATABASE()
@@ -395,55 +421,27 @@ class BeneficiaryProfileService
                AND column_name = :column_name'
         );
         $statement->execute([
-            'table_name' => 'beneficiary_profiles',
-            'column_name' => 'replacement_for_beneficiary_profile_id',
+            'table_name' => $tableName,
+            'column_name' => $columnName,
         ]);
 
-        if ((int) $statement->fetchColumn() === 0) {
-            db()->exec(
-                'ALTER TABLE beneficiary_profiles
-                   ADD COLUMN replacement_for_beneficiary_profile_id BIGINT UNSIGNED NULL
-                   AFTER assigned_staff_profile_id'
-            );
-        }
+        return ((int) $statement->fetchColumn()) > 0;
+    }
 
-        $approvedAtStatement = db()->prepare(
-            'SELECT COUNT(*) FROM information_schema.columns
-             WHERE table_schema = DATABASE()
-               AND table_name = :table_name
-               AND column_name = :column_name'
-        );
-        $approvedAtStatement->execute([
-            'table_name' => 'beneficiary_profiles',
-            'column_name' => 'approved_at',
-        ]);
-        if ((int) $approvedAtStatement->fetchColumn() === 0) {
-            db()->exec(
-                'ALTER TABLE beneficiary_profiles
-                   ADD COLUMN approved_at DATETIME NULL
-                   AFTER approval_date'
-            );
-        }
-
-        $indexStatement = db()->prepare(
+    private function schemaIndexExists(string $tableName, string $indexName): bool
+    {
+        $statement = db()->prepare(
             'SELECT COUNT(*) FROM information_schema.statistics
              WHERE table_schema = DATABASE()
                AND table_name = :table_name
                AND index_name = :index_name'
         );
-        $indexStatement->execute([
-            'table_name' => 'beneficiary_profiles',
-            'index_name' => 'idx_beneficiary_profiles_replacement_for',
+        $statement->execute([
+            'table_name' => $tableName,
+            'index_name' => $indexName,
         ]);
 
-        if ((int) $indexStatement->fetchColumn() === 0) {
-            db()->exec(
-                'ALTER TABLE beneficiary_profiles
-                 ADD INDEX idx_beneficiary_profiles_replacement_for (replacement_for_beneficiary_profile_id)'
-            );
-        }
-
-        $ensured = true;
+        return ((int) $statement->fetchColumn()) > 0;
     }
 
     public function ensureWorkspaceProfileForApplicantProfile(int $applicantProfileId): ?int

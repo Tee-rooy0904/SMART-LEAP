@@ -90,7 +90,7 @@
                             <span class="interactive-card__icon" aria-hidden="true">+</span>
                         </span>
                         <span class="interactive-card__body" data-accordion-panel hidden>
-                            <span class="interactive-card__text">After approval, applicants continue inside the same account for training notices, follow-up forms, later repayment records, and official updates as they move into beneficiary processing.</span>
+                            <span class="interactive-card__text">After approval, applicants continue inside the same account for training notices, repayment records, and official updates as they move into beneficiary processing.</span>
                         </span>
                     </button>
                 </div>

@@ -39,7 +39,7 @@ class RepaymentController extends Controller
     {
         $user = auth_user() ?? [];
         $role = strtolower((string) ($user['role'] ?? ''));
-        if (!str_contains($role, 'social') && !str_contains($role, 'admin')) {
+        if (!str_contains($role, 'admin')) {
             response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
         }
 

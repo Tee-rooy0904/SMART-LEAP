@@ -15,13 +15,20 @@ $butuanBarangays = array_map(
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <!-- Core document metadata for the beneficiary portal. -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Browser tab title for the beneficiary workspace. -->
     <title>SMART LEAP | Beneficiary Dashboard</title>
+
+    <!-- Shared applicant shell styles plus beneficiary-specific repayment and account styling. -->
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css?v=<?= urlencode((string) $applicantCssVersion) ?>">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/beneficiary.css?v=<?= urlencode((string) $beneficiaryCssVersion) ?>">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= urlencode((string) $notificationsCssVersion) ?>">
-    <script>
+
+        <!-- Bootstrap values consumed by beneficiary scripts for profile, repayments, and notifications. -->
+        <script>
         window.SMARTLEAP_AUTH_USER = <?= json_encode($authUser ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
         window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
         window.SMARTLEAP_BARANGAYS = <?= json_encode($butuanBarangays, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
@@ -30,6 +37,7 @@ $butuanBarangays = array_map(
 <body>
     <div class="dashboard-shell">
         <aside class="dash-sidebar" id="appSidebar" aria-label="Beneficiary portal navigation">
+            <!-- Beneficiary portal branding and mobile drawer close button. -->
             <div class="sidebar-drawer__top">
                 <div class="sidebar-brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="sidebar-logo">
@@ -41,7 +49,9 @@ $butuanBarangays = array_map(
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
+            <!-- Beneficiary navigation centers on repayments, support, and the running activity record. -->
             <nav class="sidebar-nav">
+                <!-- Overview page showing repayment standing and primary next actions. -->
                 <a class="sidebar-link is-active" href="#overview">
                     <span class="sidebar-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" role="presentation">
@@ -51,6 +61,7 @@ $butuanBarangays = array_map(
                     </span>
                     <span data-i18n-key="overview">Overview</span>
                 </a>
+                <!-- Repayments page for proof upload, verification history, and repayment tracking. -->
                 <a class="sidebar-link" href="#repayments" data-role="beneficiary">
                     <span class="sidebar-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" role="presentation">
@@ -62,6 +73,7 @@ $butuanBarangays = array_map(
                     </span>
                     <span data-i18n-key="repayments">Repayments</span>
                 </a>
+                <!-- Support page for contacting staff and reviewing help responses. -->
                 <a class="sidebar-link" href="#support-feedback">
                     <span class="sidebar-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" role="presentation">
@@ -70,6 +82,7 @@ $butuanBarangays = array_map(
                     </span>
                     <span data-i18n-key="support">Support</span>
                 </a>
+                <!-- Activity page for beneficiary-side logs and timeline history. -->
                 <a class="sidebar-link" href="#activity-log" data-role="beneficiary">
                     <span class="sidebar-icon" aria-hidden="true">
                         <svg viewBox="0 0 24 24" role="presentation">
@@ -91,6 +104,7 @@ $butuanBarangays = array_map(
         </div>
         <div class="dash-content">
             <header class="mobile-topbar beneficiary-contextbar" aria-label="Beneficiary portal navigation">
+                <!-- Compact top bar shown on smaller screens for context, language, notifications, and account access. -->
                 <div class="beneficiary-contextbar__brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP logo" class="beneficiary-contextbar__logo">
                     <strong class="mobile-topbar__title" id="mobileTopbarTitle" data-i18n-key="overview">Overview</strong>
@@ -102,6 +116,7 @@ $butuanBarangays = array_map(
                         <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Bisaya</button>
                     </div>
                     <div class="mobile-topbar__account">
+                        <!-- Mobile account trigger opens profile, password, and sign-out actions. -->
                         <button
                             type="button"
                             class="mobile-topbar__avatar"
@@ -123,6 +138,7 @@ $butuanBarangays = array_map(
             <main class="dash-main">
                 <section id="overview" class="dash-page dash-page--home dash-section">
                     <section class="dash-section beneficiary-command-band" aria-labelledby="beneficiaryCurrentStandingHeading">
+                        <!-- Hidden compatibility fields keep older beneficiary widgets and JS selectors working. -->
                         <h3 class="sr-only" id="beneficiaryCurrentStandingHeading">Summary sa repayment</h3>
                         <div class="sr-only">
                             <div class="banner-avatar" id="bannerAvatar" aria-hidden="true">M</div>
@@ -143,6 +159,7 @@ $butuanBarangays = array_map(
                             <span id="bannerLabelNextDue">Pending verification</span>
                             <span id="bannerNextDue">0 resibo</span>
                         </div>
+                        <!-- Balance card highlights the beneficiary's current repayment exposure and quick actions. -->
                         <div class="panel beneficiary-balance-card" aria-label="Benepisyaryo repayment summary">
                             <div class="beneficiary-balance-card__body">
                                 <span class="label" id="bannerLabelOutstanding">Kasamtangang balanse</span>
@@ -174,6 +191,7 @@ $butuanBarangays = array_map(
                         </div>
                     </section>
                     <section class="panel dash-section beneficiary-progress-row" aria-labelledby="beneficiaryKinatibuk-anProgressHeading">
+                        <!-- Progress row summarizes month coverage and routes the user into repayment upload. -->
                         <div class="beneficiary-progress-row__main">
                             <div class="beneficiary-progress-row__head">
                                 <div>
@@ -189,6 +207,7 @@ $butuanBarangays = array_map(
                         </div>
                         <div class="beneficiary-progress-row__actions" id="overviewProgressActions">
                             <span class="sr-only" id="bannerLabelRate">Aksyon sa repayment</span>
+                            <!-- This primary CTA routes the beneficiary straight into the repayment workspace. -->
                             <button type="button" class="btn-primary" id="overviewRepaymentsBtn">I-upload ang resibo</button>
                         </div>
                     </section>
@@ -231,6 +250,7 @@ $butuanBarangays = array_map(
 
                 <section id="profile" class="dash-page dash-section" data-role="beneficiary">
                     <section class="panel dash-section profile-editor-workspace beneficiary-profile-workspace">
+                        <!-- Beneficiary profile workspace for editable personal and livelihood details. -->
                         <div class="profile-card beneficiary-profile-card">
                             <aside class="profile-photo beneficiary-profile-photo">
                                 <div class="profile-photo__frame">
@@ -243,6 +263,7 @@ $butuanBarangays = array_map(
                                 </label>
                                 <p class="profile-photo__note">JPG o PNG, kutob 5MB.</p>
                             </aside>
+                            <!-- Beneficiaries can still correct profile data here while protected fields remain system-owned. -->
                             <form id="beneficiaryProfileForm" class="beneficiary-profile-form">
                                 <section class="panel profile-editor-panel beneficiary-profile-panel" id="beneficiaryPersonalSection">
                                     <div class="panel-header panel-header--compact">

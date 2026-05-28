@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Reviewer controller for post-approval submissions.
+ * Serves the staff review workspace, task detail lookups, review decisions, and supporting file uploads for post-approval requirements.
+ */
 
 declare(strict_types=1);
 
@@ -130,6 +135,6 @@ class PostApprovalReviewController extends Controller
             return null;
         }
 
-        return has_role(ROLE_ADMIN, ROLE_PROJECT_OFFICER, ROLE_SOCIAL_WORKER) ? $user : null;
+        return has_role(ROLE_ADMIN, ROLE_PROJECT_OFFICER) ? $user : null;
     }
 }

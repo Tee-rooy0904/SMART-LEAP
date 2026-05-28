@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 function response_view(string $view, array $data = [], int $status = 200): never

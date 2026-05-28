@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 function csrf_token(): string

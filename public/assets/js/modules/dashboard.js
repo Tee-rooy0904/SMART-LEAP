@@ -220,7 +220,6 @@
 
   function renderKpis(data) {
     const applicationSummary = data.applicationSummary || {};
-    const trainingSummary = data.trainingSummary || {};
     const staffSummary = data.staffSummary || {};
     const beneficiarySummary = data.beneficiarySummary || {};
     const repaymentSummary = data.repaymentSummary || {};
@@ -242,18 +241,22 @@
       partialPaid: firstNumber(repaymentSummary, ['partialPaid', 'partial_paid', 'partialVerified', 'partial_verified']) || distributionCount(repaymentSegments, ['partial_paid', 'partial_verified']),
       underReview: firstNumber(repaymentSummary, ['underReview', 'under_review']) || distributionCount(repaymentSegments, ['under_review']),
       noUpload: firstNumber(repaymentSummary, ['noUploadYet', 'no_upload_yet']) || distributionCount(repaymentSegments, ['no_upload_yet']),
+      needsCorrection: firstNumber(repaymentSummary, ['needsCorrection', 'needs_correction', 'overdueAccounts', 'overdue_accounts']) || distributionCount(repaymentSegments, ['needs_correction', 'rejected']),
     };
     const visibleStaffBreakdown = {
       socialWorker: firstNumber(staffSummary, ['socialWorker', 'socialWorkers', 'social_worker', 'social_workers']),
       pdo: firstNumber(staffSummary, ['pdo', 'projectOfficer', 'project_officer']),
     };
+    const totalRepaymentAccounts = repaymentBreakdown.fullyPaid
+      + repaymentBreakdown.partialPaid
+      + repaymentBreakdown.underReview
+      + repaymentBreakdown.needsCorrection;
 
     const targets = {
       adminKpiTotalApplications: safeNumber(applicationSummary.total),
       adminKpiUnderReview: applicationBreakdown.underReview,
-      adminKpiActiveBeneficiaries: safeNumber(beneficiarySummary.active),
-      adminKpiPendingRepayments: safeNumber(repaymentSummary.pendingVerification),
-      adminKpiUpcomingTrainings: firstNumber(trainingSummary, ['scheduled', 'total', 'programs']),
+      adminKpiActiveBeneficiaries: safeNumber(beneficiarySummary.total ?? beneficiarySummary.active),
+      adminKpiPendingRepayments: totalRepaymentAccounts,
       adminKpiActiveStaff: visibleStaffBreakdown.socialWorker + visibleStaffBreakdown.pdo,
       adminKpiApplicationsDraft: applicationBreakdown.draft,
       adminKpiApplicationsSubmitted: applicationBreakdown.submitted,
@@ -263,10 +266,6 @@
       adminKpiReviewForAssessment: applicationBreakdown.forAssessment,
       adminKpiReviewApprovedTraining: applicationBreakdown.approvedForTraining,
       adminKpiReviewRejected: applicationBreakdown.rejected,
-      adminKpiTrainingScheduled: firstNumber(trainingSummary, ['scheduled', 'total', 'programs']),
-      adminKpiTrainingAttended: firstNumber(trainingSummary, ['attended', 'completed']),
-      adminKpiTrainingExcused: firstNumber(trainingSummary, ['excused']),
-      adminKpiTrainingAbsent: firstNumber(trainingSummary, ['absent', 'missed']),
       adminKpiBeneficiariesActive: safeNumber(beneficiarySummary.active),
       adminKpiBeneficiariesTotal: safeNumber(beneficiarySummary.total),
       adminKpiBeneficiariesPendingVerification: firstNumber(beneficiarySummary, ['pendingVerification', 'pending']) || safeNumber(repaymentSummary.pendingVerification),
@@ -283,6 +282,8 @@
     Object.entries(targets).forEach(([id, value]) => {
       setText(id, value);
     });
+
+    setText('adminKpiActiveStaffMeta', `SW ${visibleStaffBreakdown.socialWorker} | PDO ${visibleStaffBreakdown.pdo}`);
   }
 
   function renderWorkflowDistribution(data) {
@@ -350,7 +351,7 @@
         <small>${total > 0 ? Math.round((safeNumber(segment.count) / total) * 100) : 0}%</small>
       </span>
     `).join('');
-    footer.textContent = `${safeNumber(data.beneficiarySummary?.active || 0)} active beneficiaries tracked.`;
+    footer.textContent = `${safeNumber(data.beneficiarySummary?.total ?? data.beneficiarySummary?.active ?? 0)} beneficiaries tracked.`;
   }
 
   function renderRepaymentDistribution(data) {

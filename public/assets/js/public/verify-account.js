@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Account verification script.
+ * Handles verification code submission, resend actions, loading feedback, and redirect behavior after account verification succeeds.
+ */
 (function () {
     const form = document.getElementById('verifyAccountForm');
     if (!form) return;

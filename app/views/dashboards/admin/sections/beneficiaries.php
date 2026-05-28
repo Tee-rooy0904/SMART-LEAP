@@ -1,13 +1,16 @@
 <section id="beneficiaries-section" class="admin-section" data-role-section hidden>
     <div class="section-header admin-layout-header">
         <div class="admin-layout-header__chips">
+            <!-- Export and refresh actions for the beneficiary roster and summary cards. -->
             <button type="button" class="app-btn-outline" id="adminBeneficiaryExport">Export CSV</button>
             <button type="button" class="app-btn-outline" id="adminBeneficiaryRefresh">Refresh</button>
         </div>
     </div>
     <div class="admin-beneficiaries-shell">
+        <!-- Snapshot cards are injected by JS to summarize beneficiary totals and repayment groupings. -->
         <div class="metric-grid metric-grid--compact admin-beneficiaries-snapshots" id="adminBeneficiarySnapshots"></div>
 
+        <!-- Admin can slice the beneficiary roster by text search, barangay, assigned PDO, and repayment standing. -->
         <div class="filters-row admin-beneficiaries-filters">
             <label class="filter-group filter-group--search">
                 <span class="filter-label">Search</span>
@@ -39,18 +42,16 @@
                     <option value="fully_paid">Fully Paid</option>
                 </select>
             </label>
-            <div class="filter-group filter-group--actions admin-beneficiaries-filter-actions">
-                <span class="filter-label">Actions</span>
-                <button type="button" class="app-btn-outline" id="adminBeneficiaryClearFilters">Clear</button>
-            </div>
         </div>
 
         <div class="table-card admin-beneficiaries-table-card">
             <div class="admin-beneficiaries-table-head">
+                <!-- The count pill tracks how many beneficiary records currently match the active filters. -->
                 <h3>Beneficiary Roster</h3>
                 <span class="admin-inline-pill" id="adminBeneficiaryRosterCount">0 records</span>
             </div>
             <div class="table-wrapper">
+                <!-- Row actions are injected by JS and can open the beneficiary detail modal for review or edits. -->
                 <table class="data-table admin-beneficiaries-table">
                     <thead>
                         <tr>
@@ -69,18 +70,22 @@
             </div>
         </div>
 
+        <!-- This modal shows the selected beneficiary's details and any Admin-editable status controls. -->
         <div class="admin-beneficiary-modal" id="adminBeneficiaryModal" hidden>
             <button type="button" class="admin-beneficiary-modal__backdrop" data-beneficiary-modal-close aria-label="Close beneficiary details"></button>
             <section class="admin-beneficiary-modal__panel" role="dialog" aria-modal="true" aria-labelledby="adminBeneficiaryModalTitle">
                 <div class="admin-beneficiary-modal__header">
                     <div>
+                        <!-- Modal heading confirms the user is reviewing a beneficiary record rather than a roster row. -->
                         <span class="admin-inline-pill">Beneficiary</span>
                         <h3 id="adminBeneficiaryModalTitle">Beneficiary Details</h3>
                     </div>
                     <button type="button" class="app-btn-outline" data-beneficiary-modal-close>Close</button>
                 </div>
+                <!-- JS writes the selected beneficiary summary, profile, repayment, and assignment details here. -->
                 <div class="admin-beneficiary-modal__body" id="adminBeneficiaryModalBody"></div>
                 <div class="admin-beneficiary-modal__footer">
+                    <!-- Save applies any admin-permitted beneficiary status change from the modal form. -->
                     <button type="button" class="team-action-button team-action-button--primary" id="adminBeneficiaryStatusSave">Save Status</button>
                     <button type="button" class="team-action-button team-action-button--soft" data-beneficiary-modal-close>Close</button>
                 </div>

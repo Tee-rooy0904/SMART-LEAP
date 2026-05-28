@@ -1,10 +1,16 @@
 <?php
-
 declare(strict_types=1);
 
 function ensure_session_started(): void
 {
     if (session_status() === PHP_SESSION_ACTIVE) {
+        return;
+    }
+
+    if (PHP_SAPI === 'cli' || PHP_SAPI === 'phpdbg') {
+        if (!isset($_SESSION) || !is_array($_SESSION)) {
+            $_SESSION = [];
+        }
         return;
     }
 

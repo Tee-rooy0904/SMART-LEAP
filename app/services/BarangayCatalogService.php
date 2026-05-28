@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -31,7 +30,7 @@ class BarangayCatalogService
             'code' => 'district_3b',
             'district' => 'District 3B',
             'office' => 'Office - Brgy Doongan - Operational',
-            'barangays' => ['Agusan Pequeño', 'Bading', 'Bayanihan', 'Dagohoy', 'Doongan', 'Fort Poyohon', 'Holy Redeemer', 'Imadejas', 'J.P. Rizal', 'Limaha', 'Obrero', 'Ong Yiu', 'San Ignacio', 'Tandang Sora', 'Villa Kananga'],
+            'barangays' => ['Agusan PequeÃ±o', 'Bading', 'Bayanihan', 'Dagohoy', 'Doongan', 'Fort Poyohon', 'Holy Redeemer', 'Imadejas', 'J.P. Rizal', 'Limaha', 'Obrero', 'Ong Yiu', 'San Ignacio', 'Tandang Sora', 'Villa Kananga'],
         ],
         [
             'code' => 'district_4',
@@ -79,16 +78,16 @@ class BarangayCatalogService
             'code' => 'district_11',
             'district' => 'District 11',
             'office' => 'Office - Brgy Sumilihon - Operational',
-            'barangays' => ['Los Angeles', 'Sumilihon', 'Sto. Niño', 'Cabcabon', 'Baobaoan', 'Anticala', 'Taguibo', 'Pianing', 'Baan Riverside', 'Buhangin'],
+            'barangays' => ['Los Angeles', 'Sumilihon', 'Sto. NiÃ±o', 'Cabcabon', 'Baobaoan', 'Anticala', 'Taguibo', 'Pianing', 'Baan Riverside', 'Buhangin'],
         ],
     ];
 
     private const LEGACY_NAME_MAP = [
         'Ag-ao' => 'Agao',
         'Agao Pob.' => 'Agao',
-        'Agusan PequeÃ±o' => 'Agusan Pequeño',
-        'Agusan PequeÃƒÂ±o' => 'Agusan Pequeño',
-        'Agusan Pequeno' => 'Agusan Pequeño',
+        'Agusan PequeÃƒÂ±o' => 'Agusan PequeÃ±o',
+        'Agusan PequeÃƒÆ’Ã‚Â±o' => 'Agusan PequeÃ±o',
+        'Agusan Pequeno' => 'Agusan PequeÃ±o',
         'Bading Pob.' => 'Bading',
         'Bayanihan Pob.' => 'Bayanihan',
         'Buhangin Pob.' => 'Buhangin',
@@ -114,10 +113,10 @@ class BarangayCatalogService
         'Tandang Sora Pob.' => 'Tandang Sora',
         'Urduja Pob.' => 'Urduja',
         'Obrero Pob.' => 'Obrero',
-        'Santo NiÃ±o' => 'Sto. Niño',
-        'Santo NiÃƒÂ±o' => 'Sto. Niño',
-        'Santo Niño' => 'Sto. Niño',
-        'Santo Nino' => 'Sto. Niño',
+        'Santo NiÃƒÂ±o' => 'Sto. NiÃ±o',
+        'Santo NiÃƒÆ’Ã‚Â±o' => 'Sto. NiÃ±o',
+        'Santo NiÃ±o' => 'Sto. NiÃ±o',
+        'Santo Nino' => 'Sto. NiÃ±o',
         'Bugabus' => 'MJ Santos (Bugabus)',
         'Bitan-agan' => 'Bitan-Agan',
         'Nong-nong' => 'Nong-Nong',

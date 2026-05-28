@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -20,8 +19,12 @@ class PostApprovalComplianceService
             return $this->emptyState();
         }
 
-        $this->ensureRequiredTaskTypes();
-        $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $applicationGate['reviewedAt'] ?? null, $userId, true);
+        (new PostApprovalTaskProvisioningService())->ensureUnlockedApplicantTasks(
+            (int) $context['beneficiary_profile_id'],
+            $userId,
+            $applicationGate['reviewedAt'] ?? null,
+            true
+        );
         $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
         if (($seminarAccess['codes'] ?? []) === []) {
             return $this->emptyState();
@@ -50,8 +53,12 @@ class PostApprovalComplianceService
             return null;
         }
 
-        $this->ensureRequiredTaskTypes();
-        $this->ensureUnlockedTaskSet((int) $context['beneficiary_profile_id'], $applicationGate['reviewedAt'] ?? null, $userId, true);
+        (new PostApprovalTaskProvisioningService())->ensureUnlockedApplicantTasks(
+            (int) $context['beneficiary_profile_id'],
+            $userId,
+            $applicationGate['reviewedAt'] ?? null,
+            true
+        );
         $seminarAccess = $this->openedSeminarAccessForApplicant((int) $context['applicant_profile_id']);
         if (!in_array($code, $seminarAccess['codes'] ?? [], true)) {
             return null;
@@ -629,26 +636,6 @@ class PostApprovalComplianceService
         return $payload;
     }
 
-    private function ensureRequiredTaskTypes(): void
-    {
-        $statement = db()->prepare(
-            'INSERT INTO post_approval_task_types (code, label, description)
-             VALUES (:code, :label, :description)
-             ON DUPLICATE KEY UPDATE
-                label = VALUES(label),
-                description = VALUES(description),
-                updated_at = CURRENT_TIMESTAMP'
-        );
-
-        foreach ($this->taskDefinitions() as $code => $definition) {
-            $statement->execute([
-                'code' => $code,
-                'label' => $definition['title'],
-                'description' => $definition['summary'],
-            ]);
-        }
-    }
-
     private function findLatestUnlockAt(int $applicantProfileId): ?string
     {
         $statement = db()->prepare(
@@ -718,62 +705,6 @@ class PostApprovalComplianceService
             'openedAt' => $openedAt,
             'programs' => $programs,
         ];
-    }
-
-    private function ensureUnlockedTaskSet(int $beneficiaryProfileId, ?string $unlockedAt, int $actorUserId, bool $forceForApplication = false): void
-    {
-        if ($unlockedAt === null && !$forceForApplication) {
-            return;
-        }
-
-        db()->prepare(
-            'UPDATE post_approval_tasks
-             INNER JOIN post_approval_task_types ON post_approval_task_types.id = post_approval_tasks.task_type_id
-             SET post_approval_tasks.status = CASE
-                    WHEN post_approval_task_types.code = :final_code THEN :locked_status
-                    ELSE :status
-                 END,
-                 post_approval_tasks.updated_at = CURRENT_TIMESTAMP
-             WHERE post_approval_tasks.beneficiary_profile_id = :beneficiary_profile_id
-               AND LOWER(post_approval_tasks.status) = "pending"'
-        )->execute([
-            'final_code' => POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE,
-            'status' => POST_APPROVAL_STATUS_UNLOCKED,
-            'locked_status' => POST_APPROVAL_STATUS_LOCKED,
-            'beneficiary_profile_id' => $beneficiaryProfileId,
-        ]);
-
-        $typeMap = $this->taskTypeIdMap();
-        $statement = db()->prepare(
-            'INSERT INTO post_approval_tasks
-             (beneficiary_profile_id, task_type_id, status, assigned_by_user_id)
-             VALUES (:beneficiary_profile_id, :task_type_id, :status, :assigned_by_user_id)
-             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
-        );
-
-        foreach (array_keys($this->taskDefinitions()) as $code) {
-            if (!isset($typeMap[$code])) {
-                continue;
-            }
-
-            $statement->execute([
-                'beneficiary_profile_id' => $beneficiaryProfileId,
-                'task_type_id' => $typeMap[$code],
-                'status' => POST_APPROVAL_STATUS_UNLOCKED,
-                'assigned_by_user_id' => $actorUserId,
-            ]);
-        }
-    }
-
-    private function taskTypeIdMap(): array
-    {
-        $rows = db()->query('SELECT id, code FROM post_approval_task_types')->fetchAll(PDO::FETCH_ASSOC) ?: [];
-        $map = [];
-        foreach ($rows as $row) {
-            $map[(string) $row['code']] = (int) $row['id'];
-        }
-
-        return $map;
     }
 
     private function fetchTasks(int $beneficiaryProfileId, array $context, array $allowedCodes): array
@@ -2271,7 +2202,7 @@ class PostApprovalComplianceService
             'type' => trim((string) ($value['mime_type'] ?? '')),
             'size' => (int) ($value['file_size'] ?? 0),
             'uploadedAt' => trim((string) ($value['uploaded_at'] ?? '')),
-            'url' => upload_url($filePath),
+            'url' => app_url($filePath),
         ];
     }
 

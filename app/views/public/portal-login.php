@@ -7,7 +7,6 @@
     <title>SMART LEAP | Sign In</title>
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/public/portal.css?v=<?= urlencode((string) (@filemtime(base_path('public/assets/css/public/portal.css')) ?: time())) ?>">
     <script defer src="<?= $baseUrl ?>/assets/js/public/portal.js?v=<?= urlencode((string) (@filemtime(base_path('public/assets/js/public/portal.js')) ?: time())) ?>"></script>
-    <script defer src="<?= $baseUrl ?>/assets/js/shared/auth.js?v=<?= urlencode((string) (@filemtime(base_path('public/assets/js/shared/auth.js')) ?: time())) ?>"></script>
 </head>
 <body class="portal-page portal-page--login">
     <div class="page-shell">
@@ -37,7 +36,7 @@
                                 <span>Password</span>
                                 <div class="field__secure">
                                     <input type="password" id="password" name="password" placeholder="Enter your password" autocomplete="current-password" required>
-                                    <button type="button" class="field-toggle toggle-visibility" id="showPassword" aria-label="Show password">Show</button>
+                                    <button type="button" class="field-toggle toggle-visibility" id="showPassword" data-action="toggle-password" aria-label="Show password">Show</button>
                                 </div>
                             </label>
 
@@ -45,7 +44,8 @@
                                 <a class="text-link" href="<?= $baseUrl ?>/forgot-password?entryPoint=portal">Forgot password?</a>
                             </div>
 
-                            <button type="submit" class="auth-submit">Sign in</button>
+                            <p class="auth-feedback auth-error" id="authError" role="alert" hidden></p>
+                            <button type="submit" class="auth-submit" id="signInBtn">Sign in</button>
                             <p class="auth-card__subaction">Do not have an account? <a class="text-link" href="<?= $baseUrl ?>/signup">Create account</a></p>
                         </form>
                     </section>

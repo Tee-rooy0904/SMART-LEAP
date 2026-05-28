@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Controllers;
@@ -66,6 +65,23 @@ class AdminDashboardController extends Controller
         $registrationId = (int) ($_POST['registrationId'] ?? $_POST['coMakerRegistrationId'] ?? 0);
         $decision = trim((string) ($_POST['decision'] ?? ''));
         $result = (new CoMakerRegistrationService())->reviewForActor($user, $registrationId, $decision);
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function sendCoMakerRegistrationEmail(): never
+    {
+        $user = auth_user();
+        if ($user === null) {
+            response_json(['ok' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $beneficiaryProfileId = (int) ($_POST['beneficiaryProfileId'] ?? $_POST['beneficiary_profile_id'] ?? 0);
+        $email = trim((string) ($_POST['email'] ?? $_POST['gmail'] ?? ''));
+        $result = (new CoMakerRegistrationService())->sendRegistrationLinkForAdmin($user, $beneficiaryProfileId, $email);
         if (!$result['ok']) {
             response_json($result, 422);
         }

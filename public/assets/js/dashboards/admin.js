@@ -1,11 +1,14 @@
 (function () {
+  // Shared namespace used by the Admin shell to hand off section ownership to specialized modules.
   window.App = window.App || {};
   window.App.modules = window.App.modules || {};
 
+  // Auth and route bootstrap values supplied by the server-rendered admin shell.
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
   const authUser = window.SMARTLEAP_AUTH_USER || null;
   let repaymentWorkspace = null;
 
+  // Top-level admin shell state for overview refreshes and live status timers.
   const state = {
     overview: window.SMARTLEAP_ADMIN_OVERVIEW || {},
     fetchPromise: null,
@@ -13,6 +16,7 @@
     statusTimer: null,
   };
 
+  // Header copy applied when the admin switches between major workspaces.
   const SECTION_META = {
     dashboard: {
       eyebrow: 'Admin Workspace',
@@ -31,10 +35,12 @@
     reports: { eyebrow: 'Admin Workspace', title: 'Reports' },
   };
 
+  // Build same-origin admin endpoints used by the shell and mounted modules.
   function routeUrl(path) {
     return `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
   }
 
+  // Normalize API responses so shell-level fetch helpers return a consistent shape.
   async function parseJson(response) {
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('application/json')) {
@@ -46,6 +52,7 @@
     return response.json();
   }
 
+  // Generic GET helper for admin shell and module bootstrap requests.
   async function apiGet(path, params = {}) {
     const query = new URLSearchParams(params);
     const url = query.toString() ? `${routeUrl(path)}?${query}` : routeUrl(path);
@@ -60,6 +67,7 @@
     }
   }
 
+  // Generic POST helper for admin profile, password, and other shell-owned mutations.
   async function apiPost(path, payload) {
     const body = new URLSearchParams();
     Object.entries(payload || {}).forEach(([key, value]) => body.append(key, value ?? ''));
@@ -79,6 +87,7 @@
     }
   }
 
+  // Small DOM helpers reused throughout the Admin shell logic.
   function qs(selector, root) {
     return (root || document).querySelector(selector);
   }
@@ -634,6 +643,7 @@
     });
   }
 
+  // Boot each admin workspace module after the shell is ready so section-specific logic stays isolated.
   function initModules() {
     const modules = window.App?.modules || {};
     modules.dashboard?.init?.();
@@ -645,6 +655,7 @@
     modules.coMakerRegistrations?.init?.();
   }
 
+  // Wire the shared repayment review modal into the Admin repayment roster and decision buttons.
   function initRepaymentWorkspace() {
     if (!window.SMARTLEAP_REPAYMENT_REVIEW?.createWorkspace || repaymentWorkspace) {
       return;
@@ -668,7 +679,6 @@
         stateFilter: 'adminRepaymentStateFilter',
         fromDateFilter: 'adminRepaymentFromDate',
         toDateFilter: 'adminRepaymentToDate',
-        applyFilters: 'adminRepaymentApplyFilters',
         resetFilters: 'adminRepaymentResetFilters',
         approvedCount: 'adminRepaymentApprovedCount',
         pendingCount: 'adminRepaymentPendingBeneficiaryCount',
@@ -746,6 +756,7 @@
     }, 5000);
   }
 
+  // Repaint the Admin KPI strip and top-level dashboard charts from the latest overview payload.
   function renderDashboard(data) {
     state.overview = data || {};
     window.SMARTLEAP_ADMIN_OVERVIEW = state.overview;
@@ -801,6 +812,7 @@
     return state.fetchPromise;
   }
 
+  // Keep the dashboard fresh in the background while still allowing an explicit manual refresh.
   function initLiveRefresh() {
     document.getElementById('adminRefreshButton')?.addEventListener('click', () => {
       fetchDashboardData('manual');

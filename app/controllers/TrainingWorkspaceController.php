@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Training workspace page router.
+ * Maps admin, PDO, and applicant training URLs to the correct static training HTML workspace and injects authenticated bootstrap data.
+ */
 
 declare(strict_types=1);
 

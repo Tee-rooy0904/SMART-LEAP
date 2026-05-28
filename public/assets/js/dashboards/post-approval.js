@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Dashboard script for p os t a pp ro va l.
+ * Controls one role-specific workspace page, including its live state, interactions, and any page-owned modals or drawers.
+ */
 (function () {
     const state = {
         baseUrl: window.SMARTLEAP_BASE_URL || '',

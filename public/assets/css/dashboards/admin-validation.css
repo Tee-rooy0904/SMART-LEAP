@@ -41,6 +41,16 @@
   min-height: 150px;
 }
 
+#validationEmailFailureMeta {
+  color: #9f1239;
+}
+
+#validationSelectedEmailBadge.admin-inline-pill--warning {
+  background: rgba(254, 226, 226, 0.96);
+  color: #9f1239;
+  border-color: rgba(225, 29, 72, 0.18);
+}
+
 .validation-notice {
   margin: 0;
 }
@@ -121,6 +131,13 @@
   padding: 18px 22px 0;
 }
 
+.validation-table-card__badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .validation-person-cell {
   display: grid;
   gap: 4px;
@@ -133,6 +150,47 @@
 .validation-person-cell span {
   color: #5b6f80;
   font-size: 0.86rem;
+}
+
+.validation-email-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.validation-email-state__meta {
+  color: #607384;
+  font-size: 0.82rem;
+}
+
+.validation-email-state__error {
+  display: block;
+  margin-top: 6px;
+  color: #9f1239;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.validation-email-card {
+  grid-column: span 2;
+}
+
+.validation-email-card__state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.validation-email-card__meta {
+  color: #607384;
+  font-size: 0.88rem;
+}
+
+.validation-email-card__error {
+  color: #9f1239;
+  line-height: 1.5;
 }
 
 .validation-table .data-table tbody td,
@@ -166,6 +224,25 @@
   border-radius: 999px;
   background: #d97706;
   box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.16);
+}
+
+#validation-section .status-badge.is-danger,
+.validation-review-modal .status-badge.is-danger {
+  background: linear-gradient(135deg, #ffe1e7, #ffc8d3);
+  color: #9f1239 !important;
+  border: 1px solid rgba(225, 29, 72, 0.22);
+  box-shadow: 0 10px 24px rgba(225, 29, 72, 0.12);
+}
+
+#validation-section .status-badge.is-danger::before,
+.validation-review-modal .status-badge.is-danger::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: #e11d48;
+  box-shadow: 0 0 0 3px rgba(225, 29, 72, 0.16);
 }
 
 .validation-review-modal__card {

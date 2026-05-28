@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Shared beneficiaries module for staff dashboards.
+ * Builds beneficiary filters, roster rows, summary cards, export controls, and beneficiary detail/status modal content.
+ */
 (function () {
   window.App = window.App || {};
   window.App.modules = window.App.modules || {};
@@ -21,10 +26,6 @@
 
   function routeUrl(path) {
     return `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
-  }
-
-  function absoluteRouteUrl(path) {
-    return new URL(routeUrl(path), window.location.origin).toString();
   }
 
   async function apiPost(path, payload) {
@@ -73,39 +74,6 @@
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
-  }
-
-  async function copyTextToClipboard(value) {
-    const text = String(value || '');
-    if (!text) return false;
-
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(text);
-        return true;
-      } catch (error) {
-        // Fall through to the legacy copy path below.
-      }
-    }
-
-    const input = document.createElement('textarea');
-    input.value = text;
-    input.setAttribute('readonly', 'readonly');
-    input.style.position = 'fixed';
-    input.style.opacity = '0';
-    document.body.appendChild(input);
-    input.focus();
-    input.select();
-
-    let copied = false;
-    try {
-      copied = document.execCommand('copy');
-    } catch (error) {
-      copied = false;
-    }
-
-    document.body.removeChild(input);
-    return copied;
   }
 
   function formatActivityTime(value) {
@@ -348,7 +316,6 @@
       : `<div class="admin-record-sheet__avatar" aria-hidden="true">${escapeHtml(initials)}</div>`;
     const serviceTypeLabel = beneficiary.serviceType || beneficiary.businessType || beneficiary.sectorOtherSpecify || 'Not set';
     const coMaker = beneficiary.coMakerRegistration || null;
-    const coMakerSignupUrl = absoluteRouteUrl(`signup?mode=co-maker&beneficiary=${safeNumber(beneficiary.id)}`);
     const beneficiaryStatusKey = normalizeStatusValue(beneficiary.programStatus || beneficiary.status || 'active');
     state.selectedBeneficiaryId = safeNumber(beneficiary.id);
     title.textContent = beneficiary.name || 'Beneficiary Details';
@@ -428,14 +395,15 @@
             <span>Co-maker Account</span>
           </div>
           <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
-                  <article class="admin-record-sheet__field admin-record-sheet__field--wide">
-                    <span>Public self-registration link</span>
-                    <small>Share this link with the co-maker. Opening it while logged in as staff will redirect back to the portal. Portal access opens only after PDO/Admin approval.</small>
-                    <div class="admin-record-sheet__link-share">
-                      <input class="admin-profile-modal__input" type="text" value="${escapeHtml(coMakerSignupUrl)}" readonly>
-                      <button type="button" class="team-action-button team-action-button--soft" data-copy-text="${escapeHtml(coMakerSignupUrl)}">Copy Link</button>
-                    </div>
-                  </article>
+                  ${!coMaker
+                    ? `
+                    <article class="admin-record-sheet__field admin-record-sheet__field--wide">
+                      <span>Official Gmail invitation</span>
+                      <strong>Awaiting PDO Gmail invitation</strong>
+                      <small>Admin only tags the beneficiary as active or deceased. The assigned PDO sends the co-maker registration Gmail link, and Admin still handles the approval.</small>
+                    </article>
+                    `
+                    : ''}
                   ${coMaker
                     ? `
                     <article class="admin-record-sheet__field">
@@ -551,15 +519,6 @@
     if (!section || state.bound) return;
     state.bound = true;
     document.getElementById('adminBeneficiaryModal')?.addEventListener('click', (event) => {
-      const copyButton = event.target.closest('[data-copy-text]');
-      if (copyButton) {
-        event.preventDefault();
-        event.stopPropagation();
-        copyTextToClipboard(copyButton.dataset.copyText || '')
-          .then((copied) => showToast(copied ? 'Co-maker signup link copied.' : 'Unable to copy the signup link.', copied ? 'success' : 'warning'));
-        return;
-      }
-
       if (event.target.closest('[data-beneficiary-modal-close]')) {
         closeModal();
       }
@@ -570,10 +529,6 @@
       });
 
     document.getElementById('adminBeneficiaryExport')?.addEventListener('click', exportCsv);
-    document.getElementById('adminBeneficiaryClearFilters')?.addEventListener('click', () => {
-      state.filters = { search: '', barangay: '', pdo: '', repayment: '' };
-      render();
-    });
 
     section.addEventListener('input', (event) => {
       if (event.target.id === 'adminBeneficiarySearch') {

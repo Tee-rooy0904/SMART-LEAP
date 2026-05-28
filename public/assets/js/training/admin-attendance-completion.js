@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Training workspace script for a dm in a tt en da nc e c om pl et io n.
+ * Controls one static training page used by admin, PDO, or applicant training flows.
+ */
 TrainingUI.mountPage({
   async init(ui) {
     const sessionId = Number(ui.queryValue('sessionId', '0'));

@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -46,7 +45,7 @@ class AuthService
             if ($coMakerRegistration !== null && strtolower((string) ($coMakerRegistration['registrationStatus'] ?? '')) === CoMakerRegistrationService::STATUS_PENDING_REVIEW) {
                 return [
                     'ok' => false,
-                    'message' => 'Your co-maker registration is still pending PDO/Admin approval.',
+                    'message' => 'Your co-maker registration is still pending Admin approval.',
                 ];
             }
 
@@ -169,6 +168,7 @@ class AuthService
         $errors = [];
         $fullName = trim(implode(' ', array_filter([$firstName, $middleName, $lastName], static fn (string $value): bool => $value !== '')));
         $applicationService = new ApplicationService();
+        $stageOneRegistration = $this->findSelectedStageOneRegistrationByEmail($email);
 
         if (mb_strlen($firstName) < 2) {
             $errors['firstName'] = 'Enter your first name.';
@@ -198,10 +198,19 @@ class AuthService
             return ['ok' => false, 'errors' => $errors];
         }
 
-        if ($this->findUserByEmail($email) !== null) {
+        if ($stageOneRegistration === null) {
             return [
                 'ok' => false,
-                'errors' => ['email' => 'This email is already registered.'],
+                'errors' => ['email' => 'Only Stage 1 registrants selected for the current batch can create a Stage 2 portal account.'],
+            ];
+        }
+
+        $existingUser = $this->findUserByEmail($email);
+        if ($existingUser !== null) {
+            return [
+                'ok' => true,
+                'message' => 'A SMART LEAP portal account already exists for this approved email. Redirecting you so you can recover access.',
+                'redirect' => 'forgot-password?email=' . urlencode($email) . '&entryPoint=portal',
             ];
         }
 
@@ -778,6 +787,26 @@ class AuthService
         $statement->execute(['email' => $email]);
         $user = $statement->fetch();
         return is_array($user) ? $user : null;
+    }
+
+    private function findSelectedStageOneRegistrationByEmail(string $email): ?array
+    {
+        if ($email === '') {
+            return null;
+        }
+
+        $statement = db()->prepare(
+            'SELECT id, full_name, email, validation_status
+             FROM stage_one_registrations
+             WHERE LOWER(email) = LOWER(:email)
+               AND LOWER(validation_status) IN ("selected", "approved")
+             ORDER BY id DESC
+             LIMIT 1'
+        );
+        $statement->execute(['email' => $email]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+
+        return is_array($row) ? $row : null;
     }
 
     private function sessionPayloadForUser(int $userId): array

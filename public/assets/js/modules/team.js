@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Shared team management module.
+ * Builds staff roster tables, team filters, add/edit staff modals, assignment controls, and signature management interactions.
+ */
 (function () {
   const { qs, on, setHTML } = window.App.dom;
   const { formatDate } = window.App.format;
@@ -179,19 +184,19 @@
     const block = qs('#team-assignment-block');
     if (!block) return;
 
-    const inputs = Array.from(block.querySelectorAll('input[name="districtCodes"]'));
-    const checked = inputs.filter((input) => input.checked);
+    const selectedInput = block.querySelector('input[name="districtCode"]:checked');
+    const selectedDistrictName = String(selectedInput?.dataset.districtName || '').trim();
     const counts = [qs('#team-assignment-count'), qs('#team-assignment-side-count')].filter(Boolean);
     const selected = qs('#team-assignment-selected');
 
     counts.forEach((count) => {
-      count.textContent = `${checked.length} selected`;
+      count.textContent = selectedDistrictName ? '1 selected' : '0 selected';
     });
 
     if (selected) {
-      selected.innerHTML = checked.length
-        ? checked.map((input) => `<span>${escapeHtml(input.dataset.districtName || 'District')}</span>`).join('')
-        : '<em>No districts assigned yet.</em>';
+      selected.innerHTML = selectedDistrictName
+        ? `<span>${escapeHtml(selectedDistrictName)}</span>`
+        : '<em>No district assigned yet.</em>';
     }
   };
 
@@ -284,9 +289,6 @@
           ${districtOptions}
         </select>
       </div>
-      <div class="filter-actions filter-actions--inline">
-        <button class="app-btn-ghost" id="team-filter-reset">Reset</button>
-      </div>
     `);
   };
 
@@ -303,7 +305,7 @@
           </div>
         </td>
         <td>${escapeHtml(item.roleLabel || getRoleLabel(item.role))}</td>
-        <td>${item.assignedDistricts?.length ? item.assignedDistricts.map((district) => escapeHtml(district.district)).join(', ') : '--'}</td>
+        <td>${item.assignedDistricts?.length ? escapeHtml(item.assignedDistricts[0].district) : '--'}</td>
         <td><span class="status-badge ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span></td>
         <td>${formatDate(item.lastLoginAt)}</td>
         <td class="actions">
@@ -324,7 +326,7 @@
             <tr>
               <th>Name</th>
               <th>Role</th>
-              <th>Assigned District(s)</th>
+              <th>Assigned District</th>
               <th>Status</th>
               <th>Last Active</th>
               <th class="actions">Actions</th>
@@ -344,11 +346,11 @@
     const nameParts = deriveNameParts(editing);
     const roleValue = editing ? editing.role : 'pdo';
     const statusValue = editing ? editing.status : 'active';
-    const assignedDistrictCodes = new Set((editing?.assignedDistricts || []).map((item) => String(item.code)));
+    const selectedDistrictCode = String(editing?.assignedDistricts?.[0]?.code || '');
     const selectedRoleLabel = getRoleLabel(roleValue);
     const isPdo = isProjectDevelopmentOfficerRole(roleValue, selectedRoleLabel);
     const modalTitle = editing ? 'Edit Staff Account' : 'Add Staff Account';
-    const assignedCount = assignedDistrictCodes.size;
+    const assignedCount = selectedDistrictCode ? 1 : 0;
     const trainingGroupValue = editing?.trainingGroupNumber ? String(editing.trainingGroupNumber) : '1';
     setHTML(root, `
       <div class="team-form-header">
@@ -457,7 +459,7 @@
                 <span>Search district</span>
                 <input type="search" id="team-assignment-search" placeholder="Type a district name">
               </label>
-              <button type="button" class="team-action-button team-action-button--soft" id="team-assignment-clear">Clear selection</button>
+              <button type="button" class="team-action-button team-action-button--soft" id="team-assignment-clear">Clear district</button>
             </div>
             <div class="team-form-grid">
               <label>
@@ -468,14 +470,14 @@
               </label>
             </div>
             <div class="team-assignment-selected" id="team-assignment-selected">
-              ${editing && editing.assignedDistricts?.length
-                ? editing.assignedDistricts.map((district) => `<span>${escapeHtml(district.district)}</span>`).join('')
-                : '<em>No districts assigned yet.</em>'}
+              ${selectedDistrictCode && editing?.assignedDistricts?.length
+                ? `<span>${escapeHtml(editing.assignedDistricts[0].district)}</span>`
+                : '<em>No district assigned yet.</em>'}
             </div>
             <div class="team-assignment-grid">
               ${(state.meta.districts || []).map((district) => `
-                <label class="team-assignment-option ${assignedDistrictCodes.has(String(district.code)) ? 'is-selected' : ''}" data-district-option data-district-name="${escapeHtml(district.district)}">
-                  <input type="checkbox" name="districtCodes" value="${district.code}" data-district-name="${escapeHtml(district.district)}" ${assignedDistrictCodes.has(String(district.code)) ? 'checked' : ''}>
+                <label class="team-assignment-option ${selectedDistrictCode === String(district.code) ? 'is-selected' : ''}" data-district-option data-district-name="${escapeHtml(district.district)}">
+                  <input type="radio" name="districtCode" value="${district.code}" data-district-name="${escapeHtml(district.district)}" ${selectedDistrictCode === String(district.code) ? 'checked' : ''}>
                   <span class="team-assignment-option__text"><strong>${district.district}</strong><small>${escapeHtml(district.office || '')}</small></span>
                 </label>
               `).join('')}
@@ -539,13 +541,14 @@
       contactNumber: formData.get('contactNumber') || '',
       positionTitle: formData.get('positionTitle') || '',
       password: formData.get('password') || '',
-      districtCodes: formData.getAll('districtCodes'),
+      districtCode: formData.get('districtCode') || '',
       trainingGroupNumber: formData.get('trainingGroupNumber') || '',
     };
     payload.firstName = formData.get('firstName') || '';
     payload.middleName = formData.get('middleName') || '';
     payload.lastName = formData.get('lastName') || '';
     payload.name = composeFullName(payload);
+    payload.districtCodes = payload.districtCode ? [payload.districtCode] : [];
     const districtMap = new Map((state.meta.districts || []).map((district) => [String(district.code), district]));
     payload.barangayIds = payload.districtCodes.flatMap((code) => {
       const district = districtMap.get(String(code));
@@ -682,13 +685,6 @@
     });
 
     on(section, 'click', async (event) => {
-      const reset = event.target.closest('#team-filter-reset');
-      if (reset) {
-        state.filters = { role: '', status: '', districtCode: '', search: '' };
-        await load();
-        return;
-      }
-
       if (event.target.closest('#team-focus-form')) {
         state.editingId = null;
         renderForm();
@@ -767,7 +763,7 @@
           roleDescriptionText.hidden = !nextDescription;
         }
         if (!isPdoRole) {
-          document.querySelectorAll('#team-assignment-block input[name="districtCodes"]').forEach((input) => {
+          document.querySelectorAll('#team-assignment-block input[name="districtCode"]').forEach((input) => {
             input.checked = false;
             input.closest('.team-assignment-option')?.classList.remove('is-selected');
           });
@@ -784,8 +780,10 @@
       }
 
       const assignmentOption = event.target.closest('.team-assignment-option');
-      if (assignmentOption) {
-        assignmentOption.classList.toggle('is-selected', event.target.checked);
+      if (assignmentOption && event.target.name === 'districtCode') {
+        document.querySelectorAll('#team-assignment-block .team-assignment-option').forEach((option) => {
+          option.classList.toggle('is-selected', option.contains(event.target) && event.target.checked);
+        });
         updateAssignmentSummary();
       }
     });
@@ -804,7 +802,7 @@
       }
 
       if (event.target.closest('#team-assignment-clear')) {
-        document.querySelectorAll('#team-assignment-block input[name="districtCodes"]').forEach((input) => {
+        document.querySelectorAll('#team-assignment-block input[name="districtCode"]').forEach((input) => {
           input.checked = false;
           input.closest('.team-assignment-option')?.classList.remove('is-selected');
         });

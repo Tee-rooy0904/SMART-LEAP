@@ -19,8 +19,8 @@
             <section class="content-hero">
                 <div class="container content-hero__inner">
                     <span class="section-kicker">Beneficiary Guide</span>
-                    <h1 class="section-title">Approved applicants use the same portal for training, follow-up forms, and the next steps before full beneficiary continuation.</h1>
-                    <p class="page-intro">This guide explains what happens after approval, including the possible SMART LEAP assistance package worth up to ₱15,000, training requirements, follow-up forms, and the later records continued in the same portal.</p>
+                    <h1 class="section-title">Approved applicants use the same portal for training, repayment monitoring, and the next steps before full beneficiary continuation.</h1>
+                    <p class="page-intro">This guide explains what happens after approval, including the possible SMART LEAP assistance package worth up to PHP 15,000, training requirements, repayment records, and the later records continued in the same portal.</p>
                 </div>
             </section>
 
@@ -35,9 +35,9 @@
                         </ul>
                     </article>
                     <article class="content-card">
-                        <h2>Forms and proof upload</h2>
+                        <h2>Proof upload and record updates</h2>
                         <ul class="content-list">
-                            <li>Open post-approval forms as soon as they become available.</li>
+                            <li>Check the portal for required post-approval steps and official notices.</li>
                             <li>Upload clear and complete receipt or proof files.</li>
                             <li>Follow reviewer notes when a record needs correction.</li>
                         </ul>

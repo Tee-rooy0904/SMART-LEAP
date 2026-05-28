@@ -1,8 +1,13 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Training workspace script for a dm in p ar ti ci pa nt a ss ig nm en t.
+ * Controls one static training page used by admin, PDO, or applicant training flows.
+ */
 TrainingUI.mountPage({
   async init(ui) {
     const sessionId = Number(ui.queryValue('sessionId', '0'));
     const highlightApplicantId = Number(ui.queryValue('highlightApplicantId', '0'));
-    const state = { activeSessionDetail: null, eligibleApplicantsList: [], assignedParticipantsList: [], capacity: ui.TRAINING_YEARLY_BATCH_CAPACITY || 255, groupSize: ui.TRAINING_BATCH_GROUP_SIZE || 85, pdoGroupAssignments: {}, ui: { dirty: false } };
+    const state = { activeSessionDetail: null, eligibleApplicantsList: [], assignedParticipantsList: [], capacity: ui.TRAINING_YEARLY_BATCH_CAPACITY || 255, groupSize: ui.TRAINING_BATCH_GROUP_SIZE || 100, pdoGroupAssignments: {}, ui: { dirty: false } };
     const selectedEligible = new Set();
     const selectedAssigned = new Set();
     const banner = document.getElementById('assignment-banner');

@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Shared frontend helper for a ut h.
+ * Provides reusable browser-side utilities consumed by multiple SMART LEAP pages or modules.
+ */
 (function () {
     const loginForm = document.getElementById('loginForm');
     if (!loginForm) {

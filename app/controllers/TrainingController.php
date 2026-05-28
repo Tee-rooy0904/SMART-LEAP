@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Training operations controller for admin and PDO staff.
+ * Handles training session CRUD, invitee syncing, notice sending, attendance updates, and training session deletion.
+ */
 
 declare(strict_types=1);
 

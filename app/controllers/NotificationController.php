@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Controller for N ot if ic at io nC on tr ol le r routes.
+ * Accepts HTTP requests for this feature area and delegates business logic to the appropriate service layer.
+ */
 
 declare(strict_types=1);
 

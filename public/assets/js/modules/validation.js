@@ -81,6 +81,56 @@
     return 'is-warning';
   };
 
+  const emailStatusClass = (record) => {
+    if (record.selectionEmailNeedsResend) return 'is-danger';
+    if (record.selectionEmailReady) return 'is-success';
+    return 'is-muted';
+  };
+
+  const emailStatusLabel = (record) => {
+    if (record.selectionEmailNeedsResend) return 'Needs Resend';
+    if (record.selectionEmailReady) return 'Sent';
+    return 'Not Required';
+  };
+
+  const emailStatusMeta = (record) => {
+    if (record.selectionEmailSentAt) {
+      return `Sent ${formatDate(record.selectionEmailSentAt)}`;
+    }
+    if (record.selectionEmailFailedAt) {
+      return `Last failed ${formatDate(record.selectionEmailFailedAt)}`;
+    }
+    return record.statusKey === 'selected' ? 'Waiting for resend' : 'No Stage 2 email needed';
+  };
+
+  const emailStatusMarkup = (record, compact = false) => {
+    if (record.statusKey !== 'selected') {
+      return compact ? '--' : `
+        <div class="validation-email-state">
+          <span class="status-badge is-muted">Not Required</span>
+        </div>
+      `;
+    }
+
+    const badge = `<span class="status-badge ${emailStatusClass(record)}">${escapeHtml(emailStatusLabel(record))}</span>`;
+    const meta = `<span class="${compact ? 'validation-email-state__meta' : 'validation-email-card__meta'}">${escapeHtml(emailStatusMeta(record))}</span>`;
+    const error = record.selectionEmailNeedsResend && record.selectionEmailError
+      ? `<span class="${compact ? 'validation-email-state__error' : 'validation-email-card__error'}">${escapeHtml(record.selectionEmailError)}</span>`
+      : '';
+
+    if (compact) {
+      return `<div class="validation-email-state">${badge}${meta}</div>${error}`;
+    }
+
+    return `
+      <div class="validation-email-card__state">
+        ${badge}
+        ${meta}
+      </div>
+      ${error}
+    `;
+  };
+
   const fileCardMarkup = (label, file) => {
     if (!file || !file.url) {
       return `
@@ -134,6 +184,18 @@
       if (node) node.textContent = String(value);
     });
 
+    const emailFailureCount = Number(summary.selectionEmailFailures || 0);
+    const emailMeta = document.getElementById('validationEmailFailureMeta');
+    if (emailMeta) {
+      emailMeta.textContent = emailFailureCount > 0 ? `${emailFailureCount} need resend` : 'All selected emails are up to date';
+    }
+
+    const emailBadge = document.getElementById('validationSelectedEmailBadge');
+    if (emailBadge) {
+      emailBadge.hidden = emailFailureCount <= 0;
+      emailBadge.textContent = `${emailFailureCount} need resend`;
+    }
+
     const navBadge = document.querySelector('[data-section-badge="validation"]');
     if (navBadge) {
       const pending = Number(summary.pending || 0);
@@ -142,7 +204,7 @@
     }
   };
 
-  const tableRowMarkup = (record, dateLabel, actionLabel = 'Open Validation') => `
+  const tableRowMarkup = (record, dateLabel, actionLabel = 'Open Validation', mode = 'pending') => `
     <tr>
       <td>
         <div class="validation-person-cell">
@@ -153,6 +215,7 @@
       <td>${escapeHtml(record.contactNumber || '--')}</td>
       <td>${escapeHtml(record.email || '--')}</td>
       <td>${escapeHtml(dateLabel)}</td>
+      ${mode === 'selected' ? `<td>${emailStatusMarkup(record, true)}</td>` : ''}
       <td class="actions">
         <button class="action-button action-button--review" data-open-validation="${record.id}">
           <i class="fas fa-folder-open"></i>
@@ -171,21 +234,21 @@
     setHTML(
       pendingBody,
       state.data.pending.length
-        ? state.data.pending.map((record) => tableRowMarkup(record, formatDate(record.submittedAt), 'Open Validation')).join('')
+        ? state.data.pending.map((record) => tableRowMarkup(record, formatDate(record.submittedAt), 'Open Validation', 'pending')).join('')
         : '<tr><td colspan="6">No pending registrations yet.</td></tr>'
     );
 
     setHTML(
       selectedBody,
       state.data.selected.length
-        ? state.data.selected.map((record) => tableRowMarkup(record, formatDate(record.validatedAt || record.submittedAt), 'View Details')).join('')
-        : '<tr><td colspan="6">No selected registrations yet.</td></tr>'
+        ? state.data.selected.map((record) => tableRowMarkup(record, formatDate(record.validatedAt || record.submittedAt), 'View Details', 'selected')).join('')
+        : '<tr><td colspan="7">No selected registrations yet.</td></tr>'
     );
 
     setHTML(
       savedBody,
       state.data.saved.length
-        ? state.data.saved.map((record) => tableRowMarkup(record, formatDate(record.validatedAt || record.submittedAt), 'View Details')).join('')
+        ? state.data.saved.map((record) => tableRowMarkup(record, formatDate(record.validatedAt || record.submittedAt), 'View Details', 'saved')).join('')
         : '<tr><td colspan="6">No saved registrations yet.</td></tr>'
     );
   };
@@ -256,6 +319,11 @@
               <span class="validation-record-card__label">Contact</span>
               <strong>${escapeHtml(record.contactNumber)}</strong>
             </article>
+            ${record.statusKey === 'selected' ? `
+            <article class="validation-record-card validation-email-card">
+              <span class="validation-record-card__label">Stage 2 Email Invite</span>
+              ${emailStatusMarkup(record)}
+            </article>` : ''}
             <article class="validation-record-card validation-record-card--wide">
               <span class="validation-record-card__label">Complete Address</span>
               <strong>${escapeHtml(record.completeAddress)}</strong>
@@ -272,6 +340,9 @@
           ${record.statusKey === 'pending'
             ? `<button type="button" class="btn btn-warning" data-validation-action="hold" data-registration-id="${record.id}">Hold / Save for Next Batch</button>
           <button type="button" class="btn btn-success" data-validation-action="approve" data-registration-id="${record.id}">Approve for Current Batch</button>`
+            : ''}
+          ${record.statusKey === 'selected'
+            ? `<button type="button" class="btn btn-outline-primary" data-validation-action="resend-email" data-registration-id="${record.id}">${record.selectionEmailNeedsResend ? 'Resend Stage 2 Email' : 'Send Stage 2 Email Again'}</button>`
             : ''}
         </div>
       </div>
@@ -320,23 +391,39 @@
     if (!registrationId || !action) return;
 
     button.disabled = true;
-    const response = await apiPost('api/validation/review', {
-      registrationId,
-      action,
-    });
+    const response = action === 'resend-email'
+      ? await apiPost('api/validation/resend-selection-email', { registrationId })
+      : await apiPost('api/validation/review', {
+        registrationId,
+        action,
+      });
     button.disabled = false;
 
     if (!response.ok) {
-      renderNotice(response.message || 'Unable to save the validation decision.', 'danger');
+      renderNotice(response.message || 'Unable to update the validation email state.', 'danger');
       return;
     }
 
-    closeModal();
     state.data = response.state || state.data;
     renderSummary();
     renderTables();
     setActiveTab(state.activeTab);
     renderNotice(response.message || 'Validation decision saved.', 'info');
+
+    if (action === 'resend-email') {
+      if (state.activeId === registrationId) {
+        const refreshed = await apiGet('api/validation/show', { id: registrationId });
+        if (refreshed.ok && refreshed.registration) {
+          const root = qs('#modal-root');
+          if (root) {
+            setHTML(root, buildModalMarkup(refreshed.registration));
+          }
+        }
+      }
+      return;
+    }
+
+    closeModal();
   };
 
   const bindEvents = () => {

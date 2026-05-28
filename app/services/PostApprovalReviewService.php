@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Staff review service for post-approval submissions.
+ * Loads reviewer queues, task detail data, file context, and applies review decisions for applicant or beneficiary post-approval records.
+ */
 
 declare(strict_types=1);
 

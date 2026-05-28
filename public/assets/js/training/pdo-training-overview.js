@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Training workspace script for p do t ra in in g o ve rv ie w.
+ * Controls one static training page used by admin, PDO, or applicant training flows.
+ */
 TrainingUI.mountPage({
   async init(ui) {
     const response = await ui.apiGet('api/training');

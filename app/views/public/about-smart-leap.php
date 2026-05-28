@@ -45,8 +45,8 @@
                         <ul class="content-list">
                             <li>Residents of Butuan City who operate microbusinesses or livelihood activities and need SMART LEAP program support.</li>
                             <li>Applicants preparing to submit complete personal, business, and document requirements for CSWDD review.</li>
-                            <li>Approved applicants who continue using the same portal account for training, follow-up forms, and later beneficiary records when they move forward in the program.</li>
-                            <li>Users who need official notices, follow-up guidance, reviewer remarks, or record updates from the SMART LEAP team.</li>
+                            <li>Approved applicants who continue using the same portal account for training, repayment monitoring, and later beneficiary records when they move forward in the program.</li>
+                            <li>Users who need official notices, program guidance, reviewer remarks, or record updates from the SMART LEAP team.</li>
                         </ul>
                     </article>
                     <article class="content-card">

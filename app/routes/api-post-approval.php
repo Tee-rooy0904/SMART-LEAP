@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Route definitions for a pi p os t a pp ro va l.
+ * Maps HTTP endpoints to controllers and middleware for this area of the SMART LEAP system.
+ */
 
 declare(strict_types=1);
 

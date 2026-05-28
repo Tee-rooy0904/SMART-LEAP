@@ -1,5 +1,6 @@
 <section id="repayments-section" class="admin-section" data-role-section hidden>
     <div class="admin-repayments-page">
+        <!-- Top summary cards show how many approved beneficiaries and repayment states exist right now. -->
         <section class="admin-repayments-summary-strip" aria-label="Repayment management summary">
             <article class="metric-card metric-card--soft">
                 <span class="metric-card__label">Approved Beneficiaries</span>
@@ -22,10 +23,11 @@
         <section class="admin-repayments-filters-card">
             <header class="admin-repayments-block-head">
                 <div>
-                    <span class="admin-section-label">Filter</span>
+                    <!-- This header groups the search and dropdown controls that limit the repayment roster below. -->
                     <h3>Beneficiary Filters</h3>
                 </div>
             </header>
+            <!-- These filters drive the shared repayment roster and limit which beneficiary records appear below. -->
             <div class="admin-repayments-filters-grid">
                 <label class="filter-group admin-repayments-filter admin-repayments-filter--search">
                     <span class="filter-label">Search beneficiary</span>
@@ -64,21 +66,19 @@
                     <input type="date" class="filter-select" id="adminRepaymentToDate">
                 </label>
             </div>
-            <div class="admin-repayments-filter-actions">
-                <button type="button" class="app-btn-primary" id="adminRepaymentApplyFilters">Apply Filters</button>
-                <button type="button" class="app-btn-outline" id="adminRepaymentResetFilters">Clear Filters</button>
-            </div>
         </section>
 
         <section class="admin-repayments-roster-card">
             <header class="admin-repayments-block-head">
                 <div>
+                    <!-- This roster lists each beneficiary account with repayment standing and an Open Repayments action. -->
                     <span class="admin-section-label">Beneficiaries</span>
                     <h3>Beneficiary Roster</h3>
                 </div>
                 <span class="chip" id="adminRepaymentRosterCount">0 beneficiaries</span>
             </header>
             <div class="table-wrapper admin-repayments-table-wrapper">
+                <!-- The shared repayment workspace binds row actions in this table to the modal below. -->
                 <table class="data-table admin-repayments-table">
                     <thead>
                         <tr>
@@ -106,11 +106,13 @@
         </section>
     </div>
 
+    <!-- Shared repayment review modal used to inspect proof, history, and apply verification decisions. -->
     <div class="admin-repayment-modal" id="adminRepaymentModal" aria-hidden="true">
         <div class="admin-repayment-modal__backdrop" data-repayment-modal-close></div>
         <div class="admin-repayment-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="adminRepaymentModalTitle">
             <header class="admin-repayment-modal__header">
                 <div class="admin-repayment-modal__header-copy">
+                    <!-- Modal title area updates when a specific beneficiary or upload record is selected. -->
                     <span class="admin-section-label">Repayment Review</span>
                     <h3 id="adminRepaymentModalTitle">Beneficiary repayment review</h3>
                     <p id="adminRepaymentModalSubtitle">Select a beneficiary repayment record.</p>
@@ -122,6 +124,7 @@
             </header>
 
             <div class="admin-repayment-modal__body">
+                <!-- Summary cards reflect the selected beneficiary's overall repayment account, not just one upload. -->
                 <section class="admin-repayment-modal__summary">
                     <article class="admin-repayment-modal__metric">
                         <span>Outstanding Balance</span>
@@ -145,6 +148,7 @@
                     <article class="admin-repayment-panel admin-repayment-panel--proof">
                         <header class="admin-repayment-panel__header">
                             <div>
+                                <!-- Proof preview panel shows the uploaded OR or receipt file currently under review. -->
                                 <span class="admin-section-label">Uploaded OR / Proof</span>
                                 <h4>Proof / Receipt Preview</h4>
                             </div>
@@ -158,6 +162,7 @@
                             <div class="admin-repayment-proof-empty">No proof preview available.</div>
                         </div>
                         <div class="admin-repayment-proof-actions">
+                            <!-- File actions let staff open, download, or enlarge the selected uploaded proof. -->
                             <button type="button" class="app-btn-outline" id="adminRepaymentOpenProof">Open file</button>
                             <button type="button" class="app-btn-outline" id="adminRepaymentDownloadProof">Download file</button>
                             <button type="button" class="app-btn-outline" id="adminRepaymentFullscreenProof">Fullscreen</button>
@@ -168,6 +173,7 @@
                         <article class="admin-repayment-panel">
                             <header class="admin-repayment-panel__header">
                                 <div>
+                                    <!-- Beneficiary summary ties the active upload back to its account owner and PDO assignment. -->
                                     <span class="admin-section-label">Beneficiary Summary</span>
                                     <h4 id="adminRepaymentBeneficiaryName">Beneficiary</h4>
                                 </div>
@@ -183,6 +189,7 @@
                         <article class="admin-repayment-panel">
                             <header class="admin-repayment-panel__header">
                                 <div>
+                                    <!-- OR details summarize the currently selected upload record and its metadata. -->
                                     <span class="admin-section-label">OR Details</span>
                                     <h4>Submission Details</h4>
                                 </div>
@@ -202,9 +209,11 @@
                     </div>
                 </section>
 
+                <!-- History lists each covered month and lets staff reopen individual proof rows from the same review session. -->
                 <section class="admin-repayment-panel">
                     <header class="admin-repayment-panel__header">
                         <div>
+                            <!-- History table makes month-by-month repayment progress and prior review outcomes visible. -->
                             <span class="admin-section-label">Repayment History</span>
                             <h4>Repayment History</h4>
                         </div>
@@ -234,9 +243,11 @@
                     </div>
                 </section>
 
+                <!-- Decision tools apply partial verification, full verification, correction, or rejection to the active upload. -->
                 <section class="admin-repayment-panel admin-repayment-panel--decision">
                     <header class="admin-repayment-panel__header">
                         <div>
+                            <!-- Review decision block records remarks and the office hard-copy state before final action. -->
                             <span class="admin-section-label">Review Decision</span>
                             <h4>Decision Actions</h4>
                         </div>

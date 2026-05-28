@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Shared applications module for reviewer dashboards.
+ * Builds application KPIs, filters, lists, and the detailed application modal used in admin and social worker applicant-review sections.
+ */
 (function () {
   const { qs, on, setHTML } = window.App.dom;
   const { formatDate } = window.App.format;
@@ -8,7 +13,7 @@
     activeApplication: null,
     activePreviewToken: '',
   };
-  const livelihoodCategories = ['Establishment', 'Livestock', 'Buy & Sell', 'Agriculture', 'Services', 'Food Processing', 'Production', 'Other'];
+  const livelihoodCategories = ['Establishment', 'Livestock', 'Buy & Sell', 'Agriculture', 'Food and Beverages', 'Other'];
 
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
 
@@ -357,17 +362,6 @@
               </div>
               <ul class="profile-checklist profile-checklist--timeline">
                 ${(application.history || []).map((entry) => `<li><div><strong>${escapeHtml(entry.toStatus)}</strong><div>${escapeHtml(entry.actorName)} • ${formatDate(entry.createdAt)}</div></div><span>${escapeHtml(entry.remarks || '--')}</span></li>`).join('') || '<li>No status history yet.</li>'}
-              </ul>
-            </section>
-            <section class="po-readiness-panel">
-              <div class="po-review-section__header">
-                <div>
-                  <span class="po-panel-label">Reviewer Comments</span>
-                  <h6>Staff Notes</h6>
-                </div>
-              </div>
-              <ul class="profile-checklist profile-checklist--timeline">
-                ${(application.comments || []).map((entry) => `<li><div><strong>${escapeHtml(entry.actorName)}</strong><div>${formatDate(entry.createdAt)}</div></div><span>${escapeHtml(entry.comment || '--')}</span></li>`).join('') || '<li>No comments yet.</li>'}
               </ul>
             </section>
           </div>

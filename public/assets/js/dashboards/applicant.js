@@ -1,4 +1,5 @@
 (function () {
+    // Shared Stage 2 applicant runtime state, including support polling and next-step routing.
     const state = {
         baseUrl: window.SMARTLEAP_BASE_URL || '',
         authUser: window.SMARTLEAP_AUTH_USER || null,
@@ -8,6 +9,7 @@
         supportRecipient: 'social_worker',
         supportChatTimer: null,
     };
+    // Post-approval form cards shown inside the applicant application workspace.
     const APPLICANT_FORM_REQUIREMENTS = [
         { code: 'availment_form', title: 'Availment Form' },
         { code: 'validation_form', title: 'Validation Form' },
@@ -19,11 +21,13 @@
 
     document.addEventListener('DOMContentLoaded', init);
 
+    // Bind static controls first, then hydrate the full applicant dashboard state from the server.
     async function init() {
         bindStaticEvents();
         await loadDashboardState();
     }
 
+    // Register sidebar, mobile account, support, certificate, and route-driven interactions.
     function bindStaticEvents() {
         document.getElementById('applicantLogoutButton')?.addEventListener('click', handleLogout);
         document.getElementById('mobileAccountLogout')?.addEventListener('click', handleLogout);
@@ -89,6 +93,7 @@
         syncSidebarMenuState();
     }
 
+    // Pull the entire Stage 2 applicant workspace state before any section is rendered.
     async function loadDashboardState() {
         try {
             const payload = await fetchJson('applicant-dashboard/state');
@@ -106,6 +111,7 @@
         }
     }
 
+    // Fan out rendering so every applicant sub-workspace stays in sync with the same payload.
     function renderDashboard() {
         if (!state.dashboard) {
             renderFatalState('Wala magamit ang applicant dashboard state.');
@@ -269,6 +275,7 @@
         setText('profileWorkspaceAplikasyonNote', buildProfileAplikasyonNote(application));
     }
 
+    // Render uploaded requirement cards, review states, and any correction or resubmission guidance.
     function renderRequirements() {
         const requirements = state.dashboard.requirements || [];
         const list = document.getElementById('requirementsList');
@@ -431,6 +438,7 @@
         renderTimelineList('remarksList', application?.remarks || [], renderRemarkItem, 'No applicant-visible remarks yet.');
     }
 
+    // Render the applicant's seminar schedule, attendance progress, and training-related notices.
     function renderTraining() {
         const training = state.dashboard.training || {};
         const summary = training.summary || {};
@@ -485,7 +493,7 @@
         const trainingTotal = certificate.trainingTotal || 0;
         const postApprovalVerified = certificate.postApprovalVerified || 0;
         const postApprovalTotal = certificate.postApprovalTotal || 0;
-        setText('certificateMeta', `${trainingNahuman}/${trainingTotal} trainings completed ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ ${postApprovalVerified}/${postApprovalTotal} verified application requirements`);
+        setText('certificateMeta', `${trainingNahuman}/${trainingTotal} trainings completed - ${postApprovalVerified}/${postApprovalTotal} verified application requirements`);
         setText('certificateNote', sanitizeSertipikoNote(certificate.note || 'Certificate availability will be shown here once your training and application requirements are complete.'));
 
         if (statusButton) {
@@ -496,6 +504,7 @@
         }
     }
 
+    // Render support contacts, conversation context, and the active support channel target.
     function renderSupport() {
         const nextStep = state.dashboard.nextStep || {};
         const application = state.dashboard.application || {};
@@ -1146,6 +1155,7 @@
             || normalized.endsWith('#profile-page');
     }
 
+    // Reusable password-change modal opened from both desktop and mobile account actions.
     function openChangePasswordModal() {
         closeCenteredModal();
         const modal = document.createElement('div');

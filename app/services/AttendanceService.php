@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -14,8 +13,8 @@ class AttendanceService
         ?array $proofAttachment = null
     ): array
     {
-        if (!in_array($status, TRAINING_ALLOWED_STATUSES, true)) {
-            return ['ok' => false, 'errors' => ['status' => 'Invalid training attendance status.']];
+        if (!in_array($status, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_MISSED, TRAINING_STATUS_EXCUSED], true)) {
+            return ['ok' => false, 'errors' => ['status' => 'Attendance can only be marked as Present, Absent, or Excused.']];
         }
 
         $invitee = $this->findInvitee($trainingInviteeId);
@@ -59,7 +58,7 @@ class AttendanceService
         $pdo->beginTransaction();
 
         try {
-            $checkedInAt = in_array($status, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_COMPLETED], true) ? date('Y-m-d H:i:s') : null;
+            $checkedInAt = $status === TRAINING_STATUS_ATTENDED ? date('Y-m-d H:i:s') : null;
 
             $statement = $pdo->prepare(
                 'INSERT INTO attendance_records
@@ -158,21 +157,10 @@ class AttendanceService
             return;
         }
 
-        $taskTypeIds = $this->ensurePostApprovalTaskTypes();
-        $statement = db()->prepare(
-            'INSERT INTO post_approval_tasks (beneficiary_profile_id, task_type_id, status, assigned_by_user_id)
-             VALUES (:beneficiary_profile_id, :task_type_id, :status, :assigned_by_user_id)
-             ON DUPLICATE KEY UPDATE updated_at = CURRENT_TIMESTAMP'
+        (new PostApprovalTaskProvisioningService())->ensureTrainingPendingTasks(
+            $beneficiaryProfileId,
+            $actorUserId
         );
-
-        foreach ($taskTypeIds as $taskTypeId) {
-            $statement->execute([
-                'beneficiary_profile_id' => $beneficiaryProfileId,
-                'task_type_id' => $taskTypeId,
-                'status' => 'pending',
-                'assigned_by_user_id' => $actorUserId,
-            ]);
-        }
     }
 
     private function revokePostApproval(array $invitee, int $actorUserId): void
@@ -216,39 +204,6 @@ class AttendanceService
             $delete->bindValue($index + 2, $code, \PDO::PARAM_STR);
         }
         $delete->execute();
-    }
-
-    private function ensurePostApprovalTaskTypes(): array
-    {
-        $definitions = [
-            POST_APPROVAL_TASK_BUSINESS_PLAN => 'Business Plan',
-            POST_APPROVAL_TASK_AVAILMENT_FORM => 'SMART LEAP Availment Form',
-            POST_APPROVAL_TASK_VALIDATION_FORM => 'SMART LEAP Validation Form',
-            POST_APPROVAL_TASK_MUNGKAHING_PROYEKTO => 'Mungkahing Proyekto',
-            POST_APPROVAL_TASK_BUHAT_SA_PAGPANUMPA => 'Buhat sa Pagpanumpa',
-            POST_APPROVAL_TASK_FUND_RELEASE_EVIDENCE => 'Proof of Fund Release',
-            POST_APPROVAL_TASK_SEMINAR_ATTENDANCE => 'Attendance to seminars/trainings conducted',
-        ];
-
-        $insert = db()->prepare(
-            'INSERT INTO post_approval_task_types (code, label)
-             VALUES (:code, :label)
-             ON DUPLICATE KEY UPDATE label = VALUES(label), updated_at = CURRENT_TIMESTAMP'
-        );
-        foreach ($definitions as $code => $label) {
-            $insert->execute(['code' => $code, 'label' => $label]);
-        }
-
-        $query = db()->query('SELECT id, code FROM post_approval_task_types');
-        $rows = $query->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-        $ids = [];
-        foreach ($rows as $row) {
-            if (isset($definitions[$row['code']])) {
-                $ids[] = (int) $row['id'];
-            }
-        }
-
-        return $ids;
     }
 
     private function findInvitee(int $trainingInviteeId): ?array

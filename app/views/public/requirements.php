@@ -61,7 +61,6 @@
                         <ul class="content-list">
                             <li>Use a clear scan or a bright photo.</li>
                             <li>Make sure all document edges and text are visible.</li>
-                            <li>Match names and dates with the information in your profile.</li>
                         </ul>
                     </article>
                     <article class="content-card">
@@ -69,7 +68,7 @@
                         <ul class="content-list">
                             <li>Use an active email address for official notices.</li>
                             <li>Prepare complete information before you submit.</li>
-                            <li>Check the portal again when follow-up forms become available.</li>
+                            <li>Check the portal again for review updates, training schedules, and official notices.</li>
                         </ul>
                     </article>
                 </div>

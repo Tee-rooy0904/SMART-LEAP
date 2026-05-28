@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Training workspace script for t ra in in g s ha re d.
+ * Controls one static training page used by admin, PDO, or applicant training flows.
+ */
 (function (global) {
   const TRAINING_BATCH_GROUP_COUNT = 3;
   const TRAINING_BATCH_GROUP_SIZE = 100;

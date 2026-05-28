@@ -1,28 +1,198 @@
 (function () {
+  // Shared bootstrap values for the Social Worker workspace.
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
   const authUser = window.SMARTLEAP_AUTH_USER || {};
-  const overview = window.SMARTLEAP_SOCIAL_WORKER_OVERVIEW || {};
+  let overview = window.SMARTLEAP_SOCIAL_WORKER_OVERVIEW || {};
+  const APPLICATION_COLORS = {
+    draft: '#cfdcf0',
+    submitted: '#f2994a',
+    under_review: '#31d0c6',
+    checked_by_pdo: '#3e78ff',
+    approved_for_training: '#1ba7e1',
+    approved: '#8c61ff',
+    needs_correction: '#f59e0b',
+    rejected: '#dc2626',
+  };
+  const BENEFICIARY_COLORS = {
+    active: '#16a34a',
+    inactive: '#f59e0b',
+    deceased: '#dc2626',
+    pending: '#7c3aed',
+  };
+  const REPAYMENT_COLORS = {
+    no_upload_yet: '#cfdcf0',
+    under_review: '#3e78ff',
+    needs_correction: '#f2994a',
+    partial_paid: '#31d0c6',
+    fully_paid: '#8c61ff',
+  };
+  const FALLBACK_CHART_COLORS = ['#1d4ed8', '#16a34a', '#f97316', '#7c3aed', '#dc2626', '#0891b2', '#be185d', '#4d7c0f'];
 
+  // Client state for oversight lists, reports initialization, and help-desk tickets.
   const state = {
     section: 'dashboard',
+    validationTab: 'pending',
+    beneficiaryFilters: {
+      search: '',
+      barangay: '',
+      pdo: '',
+      repayment: '',
+    },
+    coMakerFilters: {
+      search: '',
+      status: '',
+      pdo: '',
+    },
+    validationRecords: [
+      ...(Array.isArray(overview.validationState?.pending) ? overview.validationState.pending : []),
+      ...(Array.isArray(overview.validationState?.selected) ? overview.validationState.selected : []),
+      ...(Array.isArray(overview.validationState?.saved) ? overview.validationState.saved : []),
+    ],
     applications: Array.isArray(overview.assessmentQueue) ? overview.assessmentQueue.slice() : [],
     beneficiaries: Array.isArray(overview.beneficiaryRoster) ? overview.beneficiaryRoster.slice() : [],
+    coMakers: Array.isArray(overview.coMakerRegistrations) ? overview.coMakerRegistrations.slice() : [],
     repayments: [],
     recentApplications: Array.isArray(overview.recentApplications) ? overview.recentApplications.slice() : [],
     tickets: [],
     activeTicketId: null,
     reportsInitialized: false,
     busy: false,
+    overviewLoadPromise: null,
   };
 
+  function asArray(value) {
+    return Array.isArray(value) ? value.slice() : [];
+  }
+
+  function syncOverviewState(nextOverview) {
+    overview = nextOverview && typeof nextOverview === 'object' ? nextOverview : {};
+    const validationState = overview.validationState || {};
+    state.validationRecords = [
+      ...asArray(validationState.pending),
+      ...asArray(validationState.selected),
+      ...asArray(validationState.saved),
+    ];
+    state.beneficiaries = asArray(overview.beneficiaryRoster);
+    state.coMakers = asArray(overview.coMakerRegistrations);
+    state.recentApplications = asArray(overview.recentApplications);
+    populateBeneficiaryFilters();
+    populateCoMakerFilters();
+  }
+
+  function uniqueSorted(values) {
+    return Array.from(new Set(values.map((value) => cleanText(value)).filter(Boolean))).sort((left, right) => left.localeCompare(right));
+  }
+
+  function populateSelectOptions(selectId, values, emptyLabel, selectedValue = '') {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    const currentValue = cleanText(selectedValue);
+    const uniqueValues = uniqueSorted(values);
+    select.innerHTML = [`<option value="">${escapeHtml(emptyLabel)}</option>`]
+      .concat(uniqueValues.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`))
+      .join('');
+    select.value = uniqueValues.includes(currentValue) ? currentValue : '';
+    if (!select.value) select.selectedIndex = 0;
+  }
+
+  function clearSelectState(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    select.value = '';
+    select.selectedIndex = 0;
+    delete select.dataset.userTouched;
+  }
+
+  function forceDefaultSelects(selectIds) {
+    const apply = () => {
+      selectIds.forEach((selectId) => {
+        const select = document.getElementById(selectId);
+        if (!select || select.dataset.userTouched === '1') return;
+        select.value = '';
+        select.selectedIndex = 0;
+      });
+    };
+    apply();
+    window.requestAnimationFrame(apply);
+    window.setTimeout(apply, 80);
+  }
+
+  function selectFilterValue(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select || select.dataset.userTouched !== '1') {
+      return '';
+    }
+    return cleanText(select.value || '');
+  }
+
+  function selectFilterKey(selectId) {
+    return normalizeKey(selectFilterValue(selectId));
+  }
+
+  function syncInputValue(inputId, value) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    input.value = value || '';
+  }
+
+  function syncBeneficiaryFilterControls() {
+    syncInputValue('swBeneficiarySearch', state.beneficiaryFilters.search);
+    populateSelectOptions(
+      'swBeneficiaryBarangay',
+      state.beneficiaries.map((item) => item.barangay || ''),
+      'All barangays',
+      state.beneficiaryFilters.barangay
+    );
+    populateSelectOptions(
+      'swBeneficiaryPdo',
+      state.beneficiaries.map((item) => item.assignedPdo || ''),
+      'All PDOs',
+      state.beneficiaryFilters.pdo
+    );
+    const repaymentSelect = document.getElementById('swBeneficiaryRepayment');
+    if (repaymentSelect) {
+      repaymentSelect.value = state.beneficiaryFilters.repayment || '';
+      if (!repaymentSelect.value) repaymentSelect.selectedIndex = 0;
+    }
+  }
+
+  function syncCoMakerFilterControls() {
+    syncInputValue('swCoMakerSearch', state.coMakerFilters.search);
+    const statusSelect = document.getElementById('swCoMakerStatus');
+    if (statusSelect) {
+      statusSelect.value = state.coMakerFilters.status || '';
+      if (!statusSelect.value) statusSelect.selectedIndex = 0;
+    }
+    populateSelectOptions(
+      'swCoMakerPdo',
+      state.coMakers.map((item) => item.assignedPdo?.name || ''),
+      'All PDOs',
+      state.coMakerFilters.pdo
+    );
+  }
+
+  function populateBeneficiaryFilters() {
+    syncBeneficiaryFilterControls();
+  }
+
+  function populateCoMakerFilters() {
+    syncCoMakerFilterControls();
+  }
+
+  // Section titles reused when the Social Worker moves between panes.
   const sectionMeta = {
-    dashboard: ['', 'Dashboard'],
-    applications: ['', 'Applications'],
-    beneficiaries: ['', 'Beneficiaries'],
-    reports: ['', 'Reports'],
-    support: ['', 'Support'],
+    dashboard: 'Dashboard',
+    validation: 'Applications for Validation',
+    applications: 'Applicants',
+    beneficiaries: 'Beneficiaries',
+    'co-makers': 'Co-makers',
+    repayments: 'Repayments',
+    reports: 'Reports',
   };
 
+  syncOverviewState(overview);
+
+  // Build same-origin API and navigation URLs for Social Worker actions.
   function routeUrl(path) {
     return `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
   }
@@ -49,13 +219,70 @@
     return Number.isFinite(number) ? number : 0;
   }
 
-  function setText(id, value) {
-    const node = document.getElementById(id);
+  function setText(target, value) {
+    const node = typeof target === 'string' && target.startsWith('[')
+      ? document.querySelector(target)
+      : document.getElementById(target);
     if (node) node.textContent = String(value);
   }
 
   function normalizeKey(value) {
     return String(value || 'Unspecified').trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'unspecified';
+  }
+
+  function optionalFilterKey(value) {
+    const text = cleanText(value);
+    return text ? normalizeKey(text) : '';
+  }
+
+  function matchesFilterKey(actual, selected) {
+    const selectedText = cleanText(selected);
+    if (selectedText === '') return true;
+    const current = normalizeKey(actual);
+    const wanted = normalizeKey(selectedText);
+    return current === wanted || current.startsWith(wanted);
+  }
+
+  function cleanText(value) {
+    return value == null ? '' : String(value).trim();
+  }
+
+  function isDeceasedBeneficiary(beneficiary) {
+    const raw = beneficiary?.programStatus || beneficiary?.beneficiaryStatus || beneficiary?.statusLabel || beneficiary?.status || '';
+    return normalizeKey(raw) === 'deceased';
+  }
+
+  function activeCoMaker(beneficiary) {
+    const registration = beneficiary?.coMakerRegistration;
+    if (!registration || typeof registration !== 'object') return null;
+    const status = normalizeKey(registration.registrationStatus || '');
+    if (!['active', 'approved'].includes(status)) return null;
+    return cleanText(registration.name) ? registration : null;
+  }
+
+  function responsiblePayerForBeneficiary(beneficiary, fallbackName = '') {
+    const originalName = cleanText(beneficiary?.name || fallbackName || 'Unnamed beneficiary');
+    const coMaker = isDeceasedBeneficiary(beneficiary) ? activeCoMaker(beneficiary) : null;
+    if (!coMaker) {
+      return {
+        name: originalName,
+        originalName,
+        isCoMakerTakeover: false,
+        relationship: '',
+      };
+    }
+    return {
+      name: cleanText(coMaker.name) || originalName,
+      originalName,
+      isCoMakerTakeover: true,
+      relationship: cleanText(coMaker.relationshipToPrimaryBeneficiary),
+    };
+  }
+
+  function beneficiaryForRepayment(repayment) {
+    const beneficiaryId = Number(repayment?.beneficiaryId || 0);
+    if (!beneficiaryId) return null;
+    return state.beneficiaries.find((beneficiary) => Number(beneficiary.id || beneficiary.beneficiaryId || 0) === beneficiaryId) || null;
   }
 
   function titleCase(value) {
@@ -86,57 +313,163 @@
     }, new Map());
   }
 
+  function shortLabel(value) {
+    const words = String(value || '').trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '--';
+    if (words.length === 1) return words[0];
+    if (words.length === 2 && words[0].length <= 8 && words[1].length <= 8) return `${words[0]}\n${words[1]}`;
+    return words.map((word) => word.charAt(0)).join('');
+  }
+
+  function buildScale(max) {
+    const safeMax = Math.max(0, Math.ceil(safeNumber(max)));
+    if (safeMax <= 4) {
+      const maxValue = Math.max(safeMax, 1);
+      return { maxValue, ticks: Array.from({ length: maxValue + 1 }, (_, index) => maxValue - index) };
+    }
+    const roughStep = safeMax / 4;
+    const magnitude = 10 ** Math.floor(Math.log10(roughStep));
+    const normalizedStep = roughStep / magnitude;
+    const stepUnit = normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 5 ? 5 : 10;
+    const step = Math.max(1, Math.ceil(stepUnit * magnitude));
+    const maxValue = Math.max(step * 4, Math.ceil(safeMax / step) * step, 1);
+    const ticks = [];
+    for (let tick = maxValue; tick >= 0; tick -= step) ticks.push(tick);
+    if (ticks[ticks.length - 1] !== 0) ticks.push(0);
+    return { maxValue, ticks };
+  }
+
+  function chartColor(colors, item, index) {
+    if (Array.isArray(colors)) return colors[index % colors.length] || '#94a3b8';
+    return colors?.[item.key] || FALLBACK_CHART_COLORS[index % FALLBACK_CHART_COLORS.length] || '#94a3b8';
+  }
+
+  function percentOf(count, total) {
+    if (!total) return '0%';
+    const value = (safeNumber(count) / total) * 100;
+    return `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)}%`;
+  }
+
+  function renderDashboardLegend(targetId, items, colors, total) {
+    const root = document.getElementById(targetId);
+    if (!root) return;
+    root.innerHTML = items.map((item, index) => {
+      const count = safeNumber(item.count);
+      return `
+        <span class="sw-dashboard-legend__item">
+          <span class="sw-dashboard-legend__dot" style="background:${chartColor(colors, item, index)};"></span>
+          <span>${escapeHtml(item.label)}</span>
+          <strong>${count}</strong>
+          <small>${percentOf(count, total)}</small>
+        </span>
+      `;
+    }).join('');
+  }
+
+  function setDashboardFooter(targetId, text) {
+    const node = document.getElementById(targetId);
+    if (node) node.textContent = text;
+  }
+
+  // Render admin-style Social Worker dashboard charts from normalized counts.
   function renderDashboardChart(rootId, entries, options = {}) {
     const root = document.getElementById(rootId);
     if (!root) return;
-    const palette = ['#1d4ed8', '#16a34a', '#f97316', '#7c3aed', '#dc2626', '#0891b2', '#be185d', '#4d7c0f'];
-    const horizontal = options.horizontal === true;
-    const limit = Number(options.limit || (horizontal ? 8 : 24));
-    const items = entries.filter((item) => safeNumber(item.count) > 0).slice(0, limit);
+    const colors = options.colors || FALLBACK_CHART_COLORS;
+    const items = entries.filter((item) => safeNumber(item.count) > 0).slice(0, Number(options.limit || 24));
     if (!items.length) {
       root.innerHTML = '<div class="sw-dashboard-empty-chart">No records available.</div>';
+      if (options.legendId) renderDashboardLegend(options.legendId, [], colors, 0);
+      if (options.footerId) setDashboardFooter(options.footerId, options.emptyFooter || 'No records yet.');
       return;
     }
-    const max = Math.max(...items.map((item) => safeNumber(item.count)), 1);
-    const denseClass = !horizontal && items.length > 8 ? ' is-dense' : '';
+    const total = items.reduce((sum, item) => sum + safeNumber(item.count), 0);
+    const scale = buildScale(Math.max(...items.map((item) => safeNumber(item.count)), 1));
+    const denseClass = items.length > 10 ? ' is-dense' : '';
     root.innerHTML = `
-      <div class="sw-dashboard-chart__plot ${horizontal ? 'is-horizontal' : 'is-vertical'}${denseClass}" style="--bar-count:${items.length};">
-        ${items.map((item, index) => {
-          const count = safeNumber(item.count);
-          const size = Math.max((count / max) * 100, count > 0 ? 8 : 0);
-          const color = palette[index % palette.length];
-          return horizontal
-            ? `<article class="sw-dashboard-bar-row"><span>${escapeHtml(item.label)}</span><div class="sw-dashboard-bar-track"><i style="width:${size}%; --bar-color:${color}"></i></div><strong>${count}</strong></article>`
-            : `<article class="sw-dashboard-column"><div class="sw-dashboard-column__track"><i style="height:${size}%; --bar-color:${color}"></i></div><span>${escapeHtml(item.label)}</span><strong>${count}</strong></article>`;
-        }).join('')}
+      <div class="sw-dashboard-column-chart${denseClass}" style="--bar-count:${items.length};" role="img" aria-label="${escapeHtml(options.ariaLabel || 'Social Worker dashboard chart')}">
+        <div class="sw-dashboard-column-chart__surface">
+          <div class="sw-dashboard-column-chart__grid">
+            ${scale.ticks.map((tickValue, index) => {
+              const denominator = Math.max(scale.ticks.length - 1, 1);
+              const position = (index / denominator) * 100;
+              return `<span class="sw-dashboard-column-chart__guide" style="top:${position}%"><span>${tickValue}</span></span>`;
+            }).join('')}
+          </div>
+          <div class="sw-dashboard-column-chart__bars">
+            ${items.map((item, index) => {
+              const count = safeNumber(item.count);
+              const height = Math.max((count / scale.maxValue) * 100, count > 0 ? 12 : 0);
+              return `
+                <article class="sw-dashboard-column-chart__group">
+                  <div class="sw-dashboard-column-chart__bar-wrap">
+                    <i class="sw-dashboard-column-chart__bar" style="height:${height}%; --bar-color:${chartColor(colors, item, index)};" title="${escapeHtml(item.label)}: ${count}"></i>
+                  </div>
+                  <span>${escapeHtml(shortLabel(item.label))}</span>
+                </article>
+              `;
+            }).join('')}
+          </div>
+        </div>
       </div>
     `;
+    if (options.legendId) renderDashboardLegend(options.legendId, items, colors, total);
+    if (options.footerId) {
+      setDashboardFooter(options.footerId, options.footerText ? options.footerText(items, total) : `${total} records tracked.`);
+    }
   }
 
+  // Recompute dashboard KPIs and charts from the latest oversight data in memory.
   function renderDashboardSummary() {
     const applicationSummary = overview.applicationSummary || {};
-    const trainingSummary = overview.trainingSummary || {};
     const repaymentSummary = overview.repaymentSummary || {};
-    const activeBeneficiaries = state.beneficiaries.slice();
+    const roster = state.beneficiaries.slice();
+    const beneficiaryTotal = safeNumber(overview.beneficiarySummary?.total) || roster.length;
     const applicationCounts = countBy(state.applications, (application) => application.status || application.applicationStatus || 'Draft');
-    const repaymentCounts = countBy(activeBeneficiaries, (beneficiary) => beneficiary.repayment?.label || beneficiary.repayment?.key || 'No Upload Yet');
-    const barangayCounts = countBy(activeBeneficiaries, (beneficiary) => beneficiary.barangay || 'Unassigned');
-    const genderCounts = countBy(activeBeneficiaries, (beneficiary) => normalizeGenderLabel(beneficiary.gender));
+    const beneficiaryCounts = countBy(roster, (beneficiary) => beneficiary.statusLabel || beneficiary.programStatus || beneficiary.beneficiaryStatus || beneficiary.status || 'Active');
+    const repaymentCounts = countBy(roster, (beneficiary) => beneficiary.repayment?.label || beneficiary.repayment?.key || 'No Upload Yet');
     const appValue = (key) => safeNumber(applicationCounts.get(normalizeKey(key))?.count);
     const repaymentValue = (key) => safeNumber(repaymentCounts.get(normalizeKey(key))?.count);
 
     setText('swDashApplicationsTotal', safeNumber(applicationSummary.total) || state.applications.length);
-    setText('swDashBeneficiariesTotal', activeBeneficiaries.length);
-    setText('swDashTrainingTotal', safeNumber(trainingSummary.programs) || safeNumber(trainingSummary.total));
-
+    setText('swDashBeneficiariesTotal', beneficiaryTotal);
     const repaymentTotal = (repaymentValue('Fully Paid') || repaymentValue('Fully Verified'))
       + (repaymentValue('Partial Paid') || repaymentValue('Partially Verified'))
       + repaymentValue('Under Review')
-      + repaymentValue('No Upload Yet');
+      + repaymentValue('Needs Correction')
+      + repaymentValue('Rejected');
     setText('swDashRepaymentsPending', repaymentTotal);
 
-    renderDashboardChart('swApplicantsStatusChart', Array.from(applicationCounts.values()));
-    renderDashboardChart('swRepaymentVerificationRateChart', Array.from(repaymentCounts.values()));
+    renderDashboardChart('swApplicantsStatusChart', Array.from(applicationCounts.values()), {
+      colors: APPLICATION_COLORS,
+      legendId: 'swApplicantsStatusLegend',
+      footerId: 'swApplicantsStatusFooter',
+      ariaLabel: 'Column chart of Social Worker application statuses',
+      emptyFooter: 'No application records yet.',
+      footerText: (items, total) => {
+        const top = items[0];
+        return top ? `${top.label}: ${top.count} of ${total}.` : `${total} application records tracked.`;
+      },
+    });
+    renderDashboardChart('swBeneficiariesStatusChart', Array.from(beneficiaryCounts.values()), {
+      colors: BENEFICIARY_COLORS,
+      legendId: 'swBeneficiariesStatusLegend',
+      footerId: 'swBeneficiariesStatusFooter',
+      ariaLabel: 'Column chart of Social Worker beneficiary statuses',
+      emptyFooter: 'No beneficiary records yet.',
+      footerText: (_items, total) => `${total} beneficiaries tracked.`,
+    });
+    renderDashboardChart('swRepaymentVerificationRateChart', Array.from(repaymentCounts.values()), {
+      colors: REPAYMENT_COLORS,
+      legendId: 'swRepaymentVerificationRateLegend',
+      footerId: 'swRepaymentVerificationRateFooter',
+      ariaLabel: 'Column chart of Social Worker repayment verification states',
+      emptyFooter: 'No repayment records yet.',
+      footerText: (items, total) => {
+        const top = items[0];
+        return top ? `${top.label}: ${top.count} records, ${percentOf(top.count, total)}.` : `${total} repayment records tracked.`;
+      },
+    });
   }
 
   async function request(path, options = {}) {
@@ -156,19 +489,69 @@
     return payload;
   }
 
+  function refreshOverviewBadges() {
+    const validationSummary = overview.validationSummary || overview.validationState?.summary || {};
+    setText('[data-sw-validation-pending]', safeNumber(validationSummary.pending));
+    setText('[data-sw-validation-selected]', safeNumber(validationSummary.selected));
+    setText('[data-sw-validation-saved]', safeNumber(validationSummary.saved));
+    setText('[data-sw-validation-tab-count="pending"]', safeNumber(validationSummary.pending));
+    setText('[data-sw-validation-tab-count="selected"]', safeNumber(validationSummary.selected));
+    setText('[data-sw-validation-tab-count="saved"]', safeNumber(validationSummary.saved));
+  }
+
+  function renderOverviewMetrics() {
+    const beneficiarySummary = overview.beneficiaryRosterSummary || {};
+    const activeNode = document.querySelector('[data-sw-beneficiary-active-count]');
+    if (activeNode) {
+      const activeCount = safeNumber(beneficiarySummary.active);
+      activeNode.textContent = `${activeCount} ${activeCount === 1 ? 'active' : 'active'}`;
+    }
+    refreshOverviewBadges();
+  }
+
+  async function loadOverviewData() {
+    if (state.overviewLoadPromise) {
+      return state.overviewLoadPromise;
+    }
+
+    state.overviewLoadPromise = (async () => {
+    try {
+      const payload = await request('social-worker/overview-data');
+      syncOverviewState(payload.data || {});
+      renderOverviewMetrics();
+      renderValidation();
+      renderBeneficiaries();
+      renderCoMakers();
+      renderDashboardSummary();
+    } catch (error) {
+      console.warn('Unable to load Social Worker overview records', error);
+      renderOverviewMetrics();
+    } finally {
+      state.overviewLoadPromise = null;
+    }
+    })();
+
+    return state.overviewLoadPromise;
+  }
+
   async function loadRepayments() {
     try {
       const payload = await request('api/repayments');
       state.repayments = Array.isArray(payload.data?.payments) ? payload.data.payments : [];
+      renderRepayments();
       renderBeneficiaries();
       renderDashboardSummary();
     } catch (error) {
       console.warn('Unable to load Social Worker repayment records', error);
+      renderRepayments();
     }
   }
 
+  // Swap between dashboard, oversight tables, and reports panes.
   function setSection(section) {
-    state.section = sectionMeta[section] ? section : 'dashboard';
+    const nextSection = sectionMeta[section] ? section : 'dashboard';
+    const previousSection = state.section;
+    state.section = nextSection;
     document.querySelectorAll('[data-role-section]').forEach((panel) => {
       const active = panel.id === `${state.section}-section`;
       panel.hidden = !active;
@@ -177,19 +560,61 @@
     document.querySelectorAll('.admin-sidebar .nav-link[data-section]').forEach((link) => {
       link.classList.toggle('active', link.dataset.section === state.section);
     });
-    const eyebrowNode = document.getElementById('swSectionEyebrow');
     const titleNode = document.getElementById('swSectionTitle');
-    if (eyebrowNode) {
-      eyebrowNode.textContent = 'Welcome back';
-      eyebrowNode.hidden = false;
-    }
-    if (titleNode) titleNode.textContent = authUser?.name || 'Social Worker';
+    if (titleNode) titleNode.textContent = sectionMeta[state.section] || 'Dashboard';
 
-    if (state.section === 'support' && state.tickets.length === 0) {
-      loadSupportTickets();
+    if (previousSection !== state.section) {
+      resetSectionFilters(state.section);
     }
+
     if (state.section === 'reports') {
       initReports();
+    }
+  }
+
+  function resetSectionFilters(section) {
+    if (section === 'validation') {
+      state.validationTab = 'pending';
+      const search = document.getElementById('swValidationSearch');
+      if (search) search.value = '';
+      renderValidation();
+      return;
+    }
+    if (section === 'applications') {
+      const search = document.getElementById('swApplicationSearch');
+      if (search) search.value = '';
+      clearSelectState('swApplicationStatus');
+      forceDefaultSelects(['swApplicationStatus']);
+      renderApplications();
+      return;
+    }
+    if (section === 'beneficiaries') {
+      state.beneficiaryFilters = {
+        search: '',
+        barangay: '',
+        pdo: '',
+        repayment: '',
+      };
+      syncBeneficiaryFilterControls();
+      renderBeneficiaries();
+      return;
+    }
+    if (section === 'co-makers') {
+      state.coMakerFilters = {
+        search: '',
+        status: '',
+        pdo: '',
+      };
+      syncCoMakerFilterControls();
+      renderCoMakers();
+      return;
+    }
+    if (section === 'repayments') {
+      const search = document.getElementById('swRepaymentSearch');
+      if (search) search.value = '';
+      clearSelectState('swRepaymentStatus');
+      forceDefaultSelects(['swRepaymentStatus']);
+      renderRepayments();
     }
   }
 
@@ -309,7 +734,7 @@
             <td>${escapeHtml(application.barangay || '--')}</td>
             <td><span class="sw-status ${statusClass(application.status)}">${escapeHtml(application.status || '--')}</span></td>
             <td>${escapeHtml(formatDate(application.updatedAt || application.submittedAt))}</td>
-            <td class="actions"><button type="button" class="app-btn-outline" data-open-case="${id}"><i class="fas fa-folder-open"></i><span>Open Case</span></button></td>
+            <td class="actions"><button type="button" class="app-btn-outline" data-open-case="${id}"><i class="fas fa-folder-open"></i><span>View</span></button></td>
           </tr>
         `;
       }
@@ -321,12 +746,13 @@
           <td><span class="sw-status ${statusClass(application.status)}">${escapeHtml(application.status || '--')}</span></td>
           <td>${escapeHtml(requirements)}</td>
           <td>${escapeHtml(formatDate(application.updatedAt || application.submittedAt))}</td>
-          <td class="actions"><button type="button" class="app-btn-outline" data-open-case="${id}"><i class="fas fa-folder-open"></i><span>Open Case</span></button></td>
+          <td class="actions"><button type="button" class="app-btn-outline" data-open-case="${id}"><i class="fas fa-folder-open"></i><span>View</span></button></td>
         </tr>
       `;
     }).join('');
   }
 
+  // Draw the applicant oversight table after search and status filters are applied.
   function renderApplications() {
     const search = String(document.getElementById('swApplicationSearch')?.value || '').toLowerCase();
     const status = String(document.getElementById('swApplicationStatus')?.value || '').toLowerCase();
@@ -385,9 +811,14 @@
   }
 
   function initApplicationFilters() {
+    const searchInput = document.getElementById('swApplicationSearch');
+    if (searchInput) searchInput.value = '';
+    clearSelectState('swApplicationStatus');
     document.getElementById('swApplicationSearch')?.addEventListener('input', renderApplications);
-    document.getElementById('swApplicationStatus')?.addEventListener('change', renderApplications);
-    document.getElementById('swApplicationRefresh')?.addEventListener('click', loadApplications);
+    document.getElementById('swApplicationStatus')?.addEventListener('change', (event) => {
+      event.currentTarget.dataset.userTouched = '1';
+      renderApplications();
+    });
     document.addEventListener('click', (event) => {
       const button = event.target.closest('[data-open-case]');
       if (!button) return;
@@ -395,15 +826,249 @@
     });
   }
 
+  function renderValidation() {
+    const body = document.querySelector('[data-sw-validation-body]');
+    if (!body) return;
+
+    if (!state.validationRecords.length) {
+      const expected = safeNumber(overview.validationSummary?.pending)
+        + safeNumber(overview.validationSummary?.selected)
+        + safeNumber(overview.validationSummary?.saved);
+      if (expected > 0 && !state.overviewLoadPromise) {
+        body.innerHTML = '<tr><td colspan="7">Loading validation records...</td></tr>';
+        void loadOverviewData();
+      }
+    }
+
+    const search = String(document.getElementById('swValidationSearch')?.value || '').toLowerCase();
+    const activeTab = ['pending', 'selected', 'saved'].includes(state.validationTab) ? state.validationTab : 'pending';
+    document.querySelectorAll('[data-sw-validation-tab]').forEach((button) => {
+      const active = button.getAttribute('data-sw-validation-tab') === activeTab;
+      button.classList.toggle('is-active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    const filtered = state.validationRecords.filter((record) => {
+      const haystack = [
+        record.fullName,
+        record.email,
+        record.contactNumber,
+        record.completeAddress,
+        record.statusLabel,
+      ].join(' ').toLowerCase();
+      const recordStatus = normalizeKey(record.statusKey || record.statusLabel || '');
+      return (!search || haystack.includes(search)) && recordStatus === activeTab;
+    });
+
+    const count = document.querySelector('[data-sw-validation-count]');
+    if (count) count.textContent = `${filtered.length} ${activeTab}`;
+    const badge = document.querySelector('[data-section-badge="validation"]');
+    if (badge) {
+      const pendingCount = safeNumber(overview.validationSummary?.pending);
+      badge.textContent = pendingCount ? String(pendingCount) : '';
+    }
+
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="7">No validation records matched the current filters.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = filtered.map((record) => `
+      <tr>
+        <td><div class="sw-applicant-cell"><strong>${escapeHtml(record.fullName || 'Unnamed applicant')}</strong><span>${escapeHtml(record.referenceCode || '')}</span></div></td>
+        <td>${escapeHtml(record.email || '--')}</td>
+        <td>${escapeHtml(record.contactNumber || '--')}</td>
+        <td>${escapeHtml(record.completeAddress || '--')}</td>
+        <td><span class="sw-status ${statusClass(record.statusLabel)}">${escapeHtml(record.statusLabel || '--')}</span></td>
+        <td>${escapeHtml(formatDate(record.submittedAt))}</td>
+        <td class="actions"><button type="button" class="app-btn-outline" data-open-validation-record="${Number(record.id || 0)}">View</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function initValidationFilters() {
+    const searchInput = document.getElementById('swValidationSearch');
+    if (searchInput) searchInput.value = '';
+    document.getElementById('swValidationSearch')?.addEventListener('input', renderValidation);
+    document.addEventListener('click', (event) => {
+      const tab = event.target.closest('[data-sw-validation-tab]');
+      if (tab) {
+        state.validationTab = tab.getAttribute('data-sw-validation-tab') || 'pending';
+        renderValidation();
+        return;
+      }
+    });
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-open-validation-record]');
+      if (!button) return;
+      openValidationRecord(Number(button.dataset.openValidationRecord || 0));
+    });
+  }
+
+  function renderCoMakers() {
+    const body = document.querySelector('[data-sw-co-makers-body]');
+    if (!body) return;
+
+    if (!state.coMakers.length) {
+      const expected = safeNumber(overview.coMakerRegistrationSummary?.total);
+      if (expected > 0 && !state.overviewLoadPromise) {
+        body.innerHTML = '<tr><td colspan="7">Loading co-maker registrations...</td></tr>';
+        void loadOverviewData();
+      }
+    }
+
+    syncCoMakerFilterControls();
+    const search = String(state.coMakerFilters.search || '').toLowerCase();
+    const status = optionalFilterKey(state.coMakerFilters.status);
+    const pdo = cleanText(state.coMakerFilters.pdo || '');
+    const filtered = state.coMakers.filter((item) => {
+      const haystack = [
+        item.name,
+        item.email,
+        item.primaryBeneficiaryName,
+        item.primaryBusinessName,
+        item.relationshipToPrimaryBeneficiary,
+        item.assignedPdo?.name,
+      ].join(' ').toLowerCase();
+      const itemStatus = normalizeKey(item.registrationStatus || '');
+      return (!search || haystack.includes(search))
+        && matchesFilterKey(itemStatus, status)
+        && (!pdo || cleanText(item.assignedPdo?.name || '') === pdo);
+    });
+
+    const count = document.querySelector('[data-sw-co-maker-count]');
+    if (count) count.textContent = `${filtered.length} ${filtered.length === 1 ? 'registration' : 'registrations'}`;
+    const badge = document.querySelector('[data-section-badge="co-makers"]');
+    if (badge) badge.textContent = filtered.length ? String(filtered.length) : '';
+
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="7">No co-maker registrations matched the current filters.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = filtered.map((item) => `
+      <tr>
+        <td><div class="sw-applicant-cell"><strong>${escapeHtml(item.name || 'Unnamed co-maker')}</strong><span>${escapeHtml(item.email || '--')}</span></div></td>
+        <td><div class="sw-applicant-cell"><strong>${escapeHtml(item.primaryBeneficiaryName || '--')}</strong><span>${escapeHtml(item.primaryBusinessName || '--')}</span></div></td>
+        <td>${escapeHtml(item.relationshipToPrimaryBeneficiary || '--')}</td>
+        <td>${escapeHtml(item.assignedPdo?.name || 'Unassigned')}</td>
+        <td><span class="sw-status ${statusClass(item.registrationStatus)}">${escapeHtml(labelize(item.registrationStatus || 'inactive'))}</span></td>
+        <td>${escapeHtml(formatDate(item.createdAt || item.updatedAt))}</td>
+        <td class="actions"><button type="button" class="app-btn-outline" data-open-co-maker-record="${Number(item.id || 0)}">View</button></td>
+      </tr>
+    `).join('');
+  }
+
+  function initCoMakerFilters() {
+    syncCoMakerFilterControls();
+    document.getElementById('swCoMakerSearch')?.addEventListener('input', (event) => {
+      state.coMakerFilters.search = cleanText(event.currentTarget.value || '');
+      renderCoMakers();
+    });
+    document.getElementById('swCoMakerStatus')?.addEventListener('change', (event) => {
+      state.coMakerFilters.status = cleanText(event.currentTarget.value || '');
+      renderCoMakers();
+    });
+    document.getElementById('swCoMakerPdo')?.addEventListener('change', (event) => {
+      state.coMakerFilters.pdo = cleanText(event.currentTarget.value || '');
+      renderCoMakers();
+    });
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-open-co-maker-record]');
+      if (!button) return;
+      openCoMakerRecord(Number(button.dataset.openCoMakerRecord || 0));
+    });
+  }
+
+  function renderRepayments() {
+    const body = document.querySelector('[data-sw-repayments-body]');
+    if (!body) return;
+
+    const search = String(document.getElementById('swRepaymentSearch')?.value || '').toLowerCase();
+    const status = String(document.getElementById('swRepaymentStatus')?.value || '').toLowerCase();
+    const filtered = state.repayments.filter((record) => {
+      const beneficiary = beneficiaryForRepayment(record);
+      const payer = responsiblePayerForBeneficiary(beneficiary, record.beneficiaryName);
+      const recordStatus = normalizeKey(record.statusLabel || record.status || '');
+      const haystack = [
+        payer.name,
+        payer.originalName,
+        record.beneficiaryName,
+        record.beneficiaryBusiness,
+        record.beneficiaryBarangay,
+        record.orNumber,
+        record.month,
+        record.coverageFrom,
+      ].join(' ').toLowerCase();
+      return (!search || haystack.includes(search)) && matchesFilterKey(recordStatus, status);
+    });
+
+    const count = document.querySelector('[data-sw-repayment-count]');
+    if (count) count.textContent = `${filtered.length} ${filtered.length === 1 ? 'repayment' : 'repayments'}`;
+
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="8">No repayment records matched the current filters.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = filtered.map((record) => {
+      const beneficiary = beneficiaryForRepayment(record);
+      const payer = responsiblePayerForBeneficiary(beneficiary, record.beneficiaryName);
+      return `
+        <tr>
+          <td><div class="sw-applicant-cell"><strong>${escapeHtml(payer.name || 'Unnamed payer')}</strong><span>${payer.isCoMakerTakeover ? `Current payer for ${escapeHtml(payer.originalName || 'deceased beneficiary')}` : escapeHtml(record.beneficiaryBusiness || '--')}</span></div></td>
+          <td>${escapeHtml(record.beneficiaryName || payer.originalName || '--')}</td>
+          <td>${escapeHtml(record.month || record.coverageFrom || '--')}</td>
+          <td>${escapeHtml(money(record.amount || 0))}</td>
+          <td>${escapeHtml(record.orNumber || '--')}</td>
+          <td>${escapeHtml(formatDate(record.paymentDate || record.submittedAt))}</td>
+          <td><span class="sw-status ${statusClass(record.statusLabel || record.status)}">${escapeHtml(record.statusLabel || labelize(record.status || 'No Upload Yet'))}</span></td>
+          <td class="actions"><button type="button" class="app-btn-outline" data-open-repayment-record="${Number(record.id || 0)}">View</button></td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function initRepaymentFilters() {
+    const searchInput = document.getElementById('swRepaymentSearch');
+    if (searchInput) searchInput.value = '';
+    clearSelectState('swRepaymentStatus');
+    document.getElementById('swRepaymentSearch')?.addEventListener('input', renderRepayments);
+    document.getElementById('swRepaymentStatus')?.addEventListener('change', (event) => {
+      event.currentTarget.dataset.userTouched = '1';
+      renderRepayments();
+    });
+    document.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-open-repayment-record]');
+      if (!button) return;
+      openRepaymentRecord(Number(button.dataset.openRepaymentRecord || 0));
+    });
+  }
+
+  // Draw the beneficiary oversight table with read-only status and repayment monitoring.
   function renderBeneficiaries() {
     const body = document.querySelector('[data-sw-beneficiaries-body]');
     if (!body) return;
 
-    const search = String(document.getElementById('swBeneficiarySearch')?.value || '').toLowerCase();
-    const repayment = String(document.getElementById('swBeneficiaryRepayment')?.value || '').toLowerCase();
+    if (!state.beneficiaries.length) {
+      const expected = safeNumber(overview.beneficiarySummary?.total);
+      if (expected > 0 && !state.overviewLoadPromise) {
+        body.innerHTML = '<tr><td colspan="10">Loading beneficiaries...</td></tr>';
+        void loadOverviewData();
+      }
+    }
+
+    syncBeneficiaryFilterControls();
+    const search = String(state.beneficiaryFilters.search || '').toLowerCase();
+    const barangay = cleanText(state.beneficiaryFilters.barangay || '');
+    const pdo = cleanText(state.beneficiaryFilters.pdo || '');
+    const repayment = optionalFilterKey(state.beneficiaryFilters.repayment);
     const filtered = state.beneficiaries.filter((beneficiary) => {
-      const repaymentKey = String(beneficiary.repayment?.key || '').toLowerCase();
+      const repaymentKey = normalizeKey(beneficiary.repayment?.key || '');
+      const payer = responsiblePayerForBeneficiary(beneficiary);
       const haystack = [
+        payer.name,
+        payer.originalName,
+        payer.relationship,
         beneficiary.name,
         beneficiary.businessName,
         beneficiary.barangay,
@@ -414,7 +1079,10 @@
         beneficiary.repayment?.label,
       ].join(' ').toLowerCase();
 
-      return (!search || haystack.includes(search)) && (!repayment || repaymentKey === repayment);
+      return (!search || haystack.includes(search))
+        && (!barangay || cleanText(beneficiary.barangay || '') === barangay)
+        && (!pdo || cleanText(beneficiary.assignedPdo || '') === pdo)
+        && matchesFilterKey(repaymentKey, repayment);
     });
 
     const count = document.querySelector('[data-sw-beneficiary-count]');
@@ -430,15 +1098,18 @@
 
     body.innerHTML = filtered.map((beneficiary) => {
       const repayment = beneficiary.repayment || {};
-      const repaymentRecord = repaymentForBeneficiary(beneficiary);
+      const payer = responsiblePayerForBeneficiary(beneficiary);
       const rate = Number.isFinite(Number(repayment.repaymentRate)) ? `${Number(repayment.repaymentRate)}%` : '0%';
       const verified = money(repayment.paidAmount || repayment.verifiedAmount || 0);
-      const action = repaymentRecord
-        ? `<button type="button" class="app-btn-outline" data-edit-repayment="${Number(repaymentRecord.id || 0)}">Edit Repayment</button>`
-        : '<span class="sw-muted-action">No repayment record</span>';
       return `
         <tr>
-          <td><div class="sw-applicant-cell"><strong>${escapeHtml(beneficiary.name || 'Unnamed beneficiary')}</strong><span>${escapeHtml(beneficiary.businessName || '')}</span></div></td>
+          <td>
+            <div class="sw-applicant-cell">
+              <strong>${escapeHtml(payer.name || 'Unnamed beneficiary')}</strong>
+              <span>${payer.isCoMakerTakeover ? `Current payer for ${escapeHtml(payer.originalName || 'deceased beneficiary')}` : escapeHtml(beneficiary.businessName || '')}</span>
+              ${payer.isCoMakerTakeover && payer.relationship ? `<span>${escapeHtml(payer.relationship)}</span>` : ''}
+            </div>
+          </td>
           <td>${escapeHtml(beneficiary.gender || '--')}</td>
           <td>${escapeHtml(beneficiary.ageGroup || '--')}</td>
           <td>${escapeHtml(beneficiary.serviceType || beneficiary.businessType || '--')}</td>
@@ -447,7 +1118,7 @@
           <td><span class="sw-status ${statusClass(repayment.label || repayment.key)}">${escapeHtml(repayment.label || 'No Upload Yet')}</span></td>
           <td>${escapeHtml(verified)}</td>
           <td>${escapeHtml(rate)}</td>
-          <td class="actions">${action}</td>
+          <td class="actions"><button type="button" class="app-btn-outline" data-open-beneficiary="${Number(beneficiary.id || beneficiary.beneficiaryId || 0)}">View</button></td>
         </tr>
       `;
     }).join('');
@@ -464,12 +1135,27 @@
   }
 
   function initBeneficiaryFilters() {
-    document.getElementById('swBeneficiarySearch')?.addEventListener('input', renderBeneficiaries);
-    document.getElementById('swBeneficiaryRepayment')?.addEventListener('change', renderBeneficiaries);
+    syncBeneficiaryFilterControls();
+    document.getElementById('swBeneficiarySearch')?.addEventListener('input', (event) => {
+      state.beneficiaryFilters.search = cleanText(event.currentTarget.value || '');
+      renderBeneficiaries();
+    });
+    document.getElementById('swBeneficiaryBarangay')?.addEventListener('change', (event) => {
+      state.beneficiaryFilters.barangay = cleanText(event.currentTarget.value || '');
+      renderBeneficiaries();
+    });
+    document.getElementById('swBeneficiaryPdo')?.addEventListener('change', (event) => {
+      state.beneficiaryFilters.pdo = cleanText(event.currentTarget.value || '');
+      renderBeneficiaries();
+    });
+    document.getElementById('swBeneficiaryRepayment')?.addEventListener('change', (event) => {
+      state.beneficiaryFilters.repayment = cleanText(event.currentTarget.value || '');
+      renderBeneficiaries();
+    });
     document.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-edit-repayment]');
+      const button = event.target.closest('[data-open-beneficiary]');
       if (!button) return;
-      openRepaymentCorrection(Number(button.dataset.editRepayment || 0));
+      openBeneficiaryRecord(Number(button.dataset.openBeneficiary || 0));
     });
   }
 
@@ -496,6 +1182,235 @@
     reports.init();
   }
 
+  function uploadCard(label, file) {
+    const url = String(file?.url || '');
+    if (!url) {
+      return `
+        <article class="validation-upload-card validation-upload-card--empty">
+          <span class="validation-upload-card__label">${escapeHtml(label)}</span>
+          <strong>No file uploaded</strong>
+        </article>
+      `;
+    }
+
+    const isImage = String(file?.mimeType || '').toLowerCase().startsWith('image/');
+    return `
+      <article class="validation-upload-card">
+        <div class="validation-upload-card__head">
+          <span class="validation-upload-card__label">${escapeHtml(label)}</span>
+          <a href="${escapeHtml(url)}" class="app-btn-outline validation-upload-card__link" target="_blank" rel="noopener">Open file</a>
+        </div>
+        ${isImage ? `<div class="validation-upload-card__preview"><img src="${escapeHtml(url)}" alt="${escapeHtml(label)}"></div>` : ''}
+        <div class="validation-upload-card__meta">
+          <strong>${escapeHtml(file?.name || 'Uploaded file')}</strong>
+        </div>
+      </article>
+    `;
+  }
+
+  function oversightField(label, value, wide = false) {
+    return `
+      <article class="admin-record-sheet__field${wide ? ' admin-record-sheet__field--wide' : ''}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value || '--')}</strong>
+      </article>
+    `;
+  }
+
+  function oversightPill(label, kind = 'soft') {
+    const className = kind === 'primary'
+      ? 'admin-record-sheet__pill admin-record-sheet__pill--primary'
+      : 'admin-record-sheet__pill admin-record-sheet__pill--soft';
+    return `<span class="${className}">${escapeHtml(label)}</span>`;
+  }
+
+  function overviewModalShell({ eyebrow, title, subtitle, pills = '', body }) {
+    return `
+      <div class="modal-card sw-oversight-modal" role="dialog" aria-modal="true">
+        <div class="modal-header">
+          <div class="po-modal-title-block">
+            <span class="po-modal-eyebrow">${escapeHtml(eyebrow)}</span>
+            <h2 class="modal-title">${escapeHtml(title)}</h2>
+            <p class="po-modal-subtitle">${escapeHtml(subtitle)}</p>
+          </div>
+          <button type="button" class="modal-close" data-close-modal aria-label="Close overview modal">&times;</button>
+        </div>
+        <div class="modal-body">
+          <section class="admin-record-sheet sw-oversight-sheet">
+            <div class="admin-record-sheet__hero">
+              <div class="admin-record-sheet__identity">
+                <span class="admin-record-sheet__eyebrow">${escapeHtml(eyebrow)}</span>
+                <h3>${escapeHtml(title)}</h3>
+                <p>${escapeHtml(subtitle)}</p>
+              </div>
+              ${pills ? `<div class="admin-record-sheet__pills">${pills}</div>` : ''}
+            </div>
+            ${body}
+          </section>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="app-btn-outline" data-close-modal>Close</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function openValidationRecord(recordId) {
+    const record = state.validationRecords.find((item) => Number(item.id || 0) === Number(recordId));
+    if (!record) {
+      showToast('Validation record not found.', 'error');
+      return;
+    }
+
+    openModal(overviewModalShell({
+      eyebrow: 'Applications for Validation',
+      title: record.fullName || 'Applicant',
+      subtitle: `${record.statusLabel || '--'} | ${record.referenceCode || '--'}`,
+      pills: [
+        oversightPill(record.statusLabel || '--', 'primary'),
+        oversightPill(`Submitted ${formatDate(record.submittedAt)}`),
+      ].join(''),
+      body: `
+        <section class="admin-record-sheet__section admin-record-sheet__section--violet">
+          <div class="admin-record-sheet__section-head"><span>Applicant Information</span></div>
+          <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
+            ${oversightField('Email', record.email)}
+            ${oversightField('Contact Number', record.contactNumber)}
+            ${oversightField('Reviewed By', record.reviewedByName || 'Not reviewed yet')}
+            ${oversightField('Validated At', formatDate(record.validatedAt || ''))}
+            ${oversightField('Complete Address', record.completeAddress, true)}
+          </div>
+        </section>
+        <section class="admin-record-sheet__section admin-record-sheet__section--aqua">
+          <div class="admin-record-sheet__section-head"><span>Uploaded Files</span></div>
+          <div class="validation-upload-grid">
+            ${uploadCard('Business Photo', record.businessPhoto)}
+            ${uploadCard('Valid ID', record.validIdPhoto)}
+          </div>
+        </section>
+      `,
+    }));
+  }
+
+  function openBeneficiaryRecord(beneficiaryId) {
+    const beneficiary = state.beneficiaries.find((item) => Number(item.id || item.beneficiaryId || 0) === Number(beneficiaryId));
+    if (!beneficiary) {
+      showToast('Beneficiary record not found.', 'error');
+      return;
+    }
+    const payer = responsiblePayerForBeneficiary(beneficiary);
+    const repayment = beneficiary.repayment || {};
+
+    openModal(overviewModalShell({
+      eyebrow: 'Beneficiary Oversight',
+      title: payer.name || beneficiary.name || 'Beneficiary',
+      subtitle: `${beneficiary.businessName || '--'} | ${beneficiary.barangay || '--'}`,
+      pills: [
+        oversightPill(beneficiary.programStatus || beneficiary.beneficiaryStatus || 'Active', 'primary'),
+        oversightPill(beneficiary.assignedPdo || 'Unassigned PDO'),
+      ].join(''),
+      body: `
+        <section class="admin-record-sheet__section admin-record-sheet__section--violet">
+          <div class="admin-record-sheet__section-head"><span>Beneficiary Profile</span></div>
+          <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
+            ${oversightField('Original Beneficiary', beneficiary.name)}
+            ${oversightField('Current Payer', payer.name)}
+            ${oversightField('Assigned PDO', beneficiary.assignedPdo || 'Unassigned')}
+            ${oversightField('Repayment State', repayment.label || 'No Upload Yet')}
+            ${oversightField('Service Type', beneficiary.serviceType || beneficiary.businessType)}
+            ${oversightField('Sector', beneficiary.sector || '--')}
+            ${oversightField('Gender', beneficiary.gender)}
+            ${oversightField('Age Group', beneficiary.ageGroup)}
+            ${oversightField('Verified Amount', money(repayment.paidAmount || repayment.verifiedAmount || 0))}
+            ${oversightField('Repayment Rate', Number.isFinite(Number(repayment.repaymentRate)) ? `${Number(repayment.repaymentRate)}%` : '0%')}
+            ${oversightField('Address', beneficiary.address, true)}
+          </div>
+        </section>
+      `,
+    }));
+  }
+
+  function openCoMakerRecord(registrationId) {
+    const item = state.coMakers.find((record) => Number(record.id || 0) === Number(registrationId));
+    if (!item) {
+      showToast('Co-maker registration not found.', 'error');
+      return;
+    }
+
+    openModal(overviewModalShell({
+      eyebrow: 'Co-maker Oversight',
+      title: item.name || 'Co-maker',
+      subtitle: `${item.primaryBeneficiaryName || '--'} | ${labelize(item.registrationStatus || 'inactive')}`,
+      pills: [
+        oversightPill(labelize(item.registrationStatus || 'inactive'), 'primary'),
+        oversightPill(item.assignedPdo?.name || 'Unassigned PDO'),
+      ].join(''),
+      body: `
+        <section class="admin-record-sheet__section admin-record-sheet__section--violet">
+          <div class="admin-record-sheet__section-head"><span>Registration Details</span></div>
+          <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
+            ${oversightField('Email', item.email)}
+            ${oversightField('Contact Number', item.contactNumber)}
+            ${oversightField('Age', item.age || '--')}
+            ${oversightField('Gender', item.gender || '--')}
+            ${oversightField('Relationship', item.relationshipToPrimaryBeneficiary)}
+            ${oversightField('Assigned PDO', item.assignedPdo?.name || 'Unassigned')}
+            ${oversightField('Primary Beneficiary', item.primaryBeneficiaryName || '--')}
+            ${oversightField('Business', item.primaryBusinessName || '--')}
+            ${oversightField('Address', item.primaryAddress || '--', true)}
+          </div>
+        </section>
+        <section class="admin-record-sheet__section admin-record-sheet__section--aqua">
+          <div class="admin-record-sheet__section-head"><span>Uploaded Files</span></div>
+          <div class="validation-upload-grid">
+            ${uploadCard('Valid ID', item.validId)}
+            ${uploadCard('Relationship Document', item.relationshipDocument)}
+          </div>
+        </section>
+      `,
+    }));
+  }
+
+  function openRepaymentRecord(repaymentId) {
+    const record = state.repayments.find((item) => Number(item.id || 0) === Number(repaymentId));
+    if (!record) {
+      showToast('Repayment record not found.', 'error');
+      return;
+    }
+    const beneficiary = beneficiaryForRepayment(record);
+    const payer = responsiblePayerForBeneficiary(beneficiary, record.beneficiaryName);
+
+    const assignedPdo = beneficiary?.assignedPdo || record.assignedPdo?.name || record.assignedPdoName || '--';
+    openModal(overviewModalShell({
+      eyebrow: 'Repayment Oversight',
+      title: payer.name || 'Current Payer',
+      subtitle: `${record.beneficiaryName || payer.originalName || '--'} | ${record.statusLabel || labelize(record.status || 'No Upload Yet')}`,
+      pills: [
+        oversightPill(record.statusLabel || labelize(record.status || 'No Upload Yet'), 'primary'),
+        oversightPill(assignedPdo),
+      ].join(''),
+      body: `
+        <section class="admin-record-sheet__section admin-record-sheet__section--amber">
+          <div class="admin-record-sheet__section-head"><span>Repayment Record</span></div>
+          <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
+            ${oversightField('Beneficiary', record.beneficiaryName || payer.originalName || '--')}
+            ${oversightField('Current Payer', payer.name || '--')}
+            ${oversightField('Assigned PDO', assignedPdo)}
+            ${oversightField('Business', record.beneficiaryBusiness || '--')}
+            ${oversightField('Barangay', record.beneficiaryBarangay || beneficiary?.barangay || '--')}
+            ${oversightField('Coverage Month', record.month || record.coverageFrom || '--')}
+            ${oversightField('Payment Date', formatDate(record.paymentDate || record.submittedAt))}
+            ${oversightField('Amount', money(record.amount || 0))}
+            ${oversightField('Verified Amount', money(record.verifiedAmount || 0))}
+            ${oversightField('OR Number', record.orNumber || '--')}
+            ${oversightField('Hard Copy Status', hardCopyStatusLabel(record.hardCopyOfficeStatus))}
+            ${oversightField('Last Updated', formatDate(record.updatedAt || record.submittedAt || record.paymentDate || ''))}
+          </div>
+        </section>
+      `,
+    }));
+  }
+
   async function openCase(applicationId) {
     if (!applicationId) return;
     openModal(`
@@ -519,25 +1434,52 @@
     }
   }
 
+  // Open the applicant case modal in read-only oversight mode.
   function renderCaseModal(application) {
-    openModal(`
-      <div class="sw-modal__header">
-        <div>
-          <span class="admin-section-eyebrow">Application Case</span>
-          <h2>${escapeHtml(application.applicantName || 'Applicant')}</h2>
-          <p>${escapeHtml(application.businessName || 'No business name yet')} | ${escapeHtml(application.barangay || '--')}</p>
-        </div>
-        <button type="button" class="sw-modal__close" data-close-modal aria-label="Close">&times;</button>
-      </div>
-      <div class="sw-modal__body sw-modal__body--correction-only">
-        ${renderApplicantDataCorrectionForm(application)}
-      </div>
-      <div class="sw-modal__footer">
-        <button type="button" class="app-btn-outline" data-close-modal>Close</button>
-      </div>
-    `);
+    const requirements = Array.isArray(application.requirements) ? application.requirements : [];
+    const requirementList = requirements.length
+      ? requirements.map((item) => `
+          <article class="validation-record-card">
+            <span class="validation-record-card__label">${escapeHtml(item.label || item.name || 'Requirement')}</span>
+            <strong>${escapeHtml(labelize(item.reviewStatus || item.status || 'submitted'))}</strong>
+            ${(item.fileUrl || item.url) ? `<a href="${escapeHtml(item.fileUrl || item.url)}" class="app-btn-outline validation-upload-card__link" target="_blank" rel="noopener">Open file</a>` : ''}
+          </article>
+        `).join('')
+      : '<p class="sw-empty">No requirement files were attached to this application.</p>';
 
-    document.querySelector('[data-applicant-correction-form]')?.addEventListener('submit', saveApplicantDataCorrection);
+    const assignedPdo = application.assignedPdo?.name || application.assignedPdoName || application.assignedPdo || '--';
+    openModal(overviewModalShell({
+      eyebrow: 'Application Case',
+      title: application.applicantName || 'Applicant',
+      subtitle: `${application.businessName || 'No business name yet'} | ${application.barangay || '--'}`,
+      pills: [
+        oversightPill(application.status || '--', 'primary'),
+        oversightPill(assignedPdo),
+      ].join(''),
+      body: `
+        <section class="admin-record-sheet__section admin-record-sheet__section--violet">
+          <div class="admin-record-sheet__section-head"><span>Applicant Information</span></div>
+          <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
+            ${oversightField('Applicant Name', application.applicantName)}
+            ${oversightField('Email', application.email)}
+            ${oversightField('Contact Number', application.contactNumber)}
+            ${oversightField('Assigned PDO', assignedPdo)}
+            ${oversightField('Status', application.status || '--')}
+            ${oversightField('Submitted', formatDate(application.submittedAt || application.updatedAt))}
+            ${oversightField('Barangay', application.barangay || '--')}
+            ${oversightField('Service Type', application.livelihoodCategory || application.livelihood || '--')}
+            ${oversightField('Sector', application.sector || '--')}
+            ${oversightField('Address', application.address || '--', true)}
+          </div>
+        </section>
+        <section class="admin-record-sheet__section admin-record-sheet__section--aqua">
+          <div class="admin-record-sheet__section-head"><span>Submitted Requirements</span></div>
+          <div class="validation-upload-grid">
+            ${requirementList}
+          </div>
+        </section>
+      `,
+    }));
   }
 
   function renderApplicantDataCorrectionForm(application) {
@@ -617,6 +1559,7 @@
     }
   }
 
+  // Launch a repayment correction flow for records that still allow Social Worker intervention.
   function openRepaymentCorrection(repaymentId) {
     const repayment = state.repayments.find((record) => Number(record.id || 0) === Number(repaymentId));
     if (!repayment) {
@@ -624,12 +1567,18 @@
       return;
     }
 
+    const beneficiary = beneficiaryForRepayment(repayment);
+    const payer = responsiblePayerForBeneficiary(beneficiary, repayment.beneficiaryName);
+    const contextLine = payer.isCoMakerTakeover
+      ? `Current payer for ${payer.originalName || 'deceased beneficiary'}`
+      : (repayment.beneficiaryBusiness || 'No business name');
+
     openModal(`
       <div class="sw-modal__header">
         <div>
           <span class="admin-section-eyebrow">Repayment Input Correction</span>
-          <h2>${escapeHtml(repayment.beneficiaryName || 'Beneficiary')}</h2>
-          <p>${escapeHtml(repayment.beneficiaryBusiness || 'No business name')} | ${escapeHtml(repayment.beneficiaryBarangay || '--')}</p>
+          <h2>${escapeHtml(payer.name || 'Beneficiary')}</h2>
+          <p>${escapeHtml(contextLine)} | ${escapeHtml(repayment.beneficiaryBarangay || '--')}</p>
         </div>
         <button type="button" class="sw-modal__close" data-close-modal aria-label="Close">&times;</button>
       </div>
@@ -649,14 +1598,10 @@
               ${textInput('paymentDate', 'Payment date', repayment.paymentDate, 'date')}
               ${textInput('amount', 'Submitted amount', repayment.amount, 'number', 'min="1" step="0.01"')}
               ${textInput('orNumber', 'OR number', repayment.orNumber)}
-              <label>
+              <article class="sw-readonly-field">
                 <span>Hard copy office status</span>
-                <select name="hardCopyOfficeStatus">
-                  ${hardCopyOption('not_submitted', 'Not Submitted', repayment.hardCopyOfficeStatus)}
-                  ${hardCopyOption('submitted_to_office', 'Submitted to Office', repayment.hardCopyOfficeStatus)}
-                  ${hardCopyOption('confirmed_by_office', 'Confirmed by Office', repayment.hardCopyOfficeStatus)}
-                </select>
-              </label>
+                <strong>${escapeHtml(hardCopyStatusLabel(repayment.hardCopyOfficeStatus))}</strong>
+              </article>
               <label class="full">
                 <span>Correction reason</span>
                 <textarea name="correctionReason" rows="3" required minlength="10" placeholder="Explain what was wrong and why this repayment correction is being made."></textarea>
@@ -677,8 +1622,13 @@
     document.querySelector('[data-repayment-correction-form]')?.addEventListener('submit', saveRepaymentDataCorrection);
   }
 
-  function hardCopyOption(value, label, selectedValue) {
-    return `<option value="${escapeHtml(value)}"${String(selectedValue || '') === value ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  function hardCopyStatusLabel(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return ({
+      not_submitted: 'Not Submitted',
+      submitted_to_office: 'Submitted to Office',
+      confirmed_by_office: 'Confirmed by Office',
+    })[normalized] || 'Not Submitted';
   }
 
   async function saveRepaymentDataCorrection(event) {
@@ -694,7 +1644,6 @@
       paymentDate: data.get('paymentDate') || '',
       amount: data.get('amount') || '',
       orNumber: data.get('orNumber') || '',
-      hardCopyOfficeStatus: data.get('hardCopyOfficeStatus') || '',
       correctionReason: data.get('correctionReason') || '',
     };
 
@@ -758,8 +1707,8 @@
     `).join('');
   }
 
+  // Initialize the help-desk ticket list and bind the message composer for oversight support work.
   function initSupport() {
-    document.getElementById('swSupportRefresh')?.addEventListener('click', loadSupportTickets);
     document.addEventListener('click', (event) => {
       const button = event.target.closest('[data-open-ticket]');
       if (button) openTicket(Number(button.dataset.openTicket || 0));
@@ -802,12 +1751,15 @@
       ${closed ? '<p class="sw-empty">This concern is closed.</p>' : `
         <form class="sw-ticket-reply" data-ticket-reply data-ticket-id="${Number(ticket.id || 0)}">
           <textarea name="message" rows="4" required placeholder="Write a public reply to the applicant or beneficiary."></textarea>
-          <select name="nextStatus">
-            <option value="">Keep current status</option>
-            <option value="In Review">In Review</option>
-            <option value="Resolved">Resolved</option>
-            <option value="Closed">Closed</option>
-          </select>
+          <label class="sw-ticket-status-field">
+            <span>Ticket status after reply</span>
+            <select name="nextStatus">
+              <option value="">Keep current status</option>
+              <option value="In Review">In Review</option>
+              <option value="Resolved">Resolved</option>
+              <option value="Closed">Closed</option>
+            </select>
+          </label>
           <p class="sw-inline-error" data-ticket-error></p>
           <div class="sw-ticket-reply__actions">
             <button type="submit" class="app-btn-primary">Send Reply</button>
@@ -1158,10 +2110,12 @@
 
   function initRefresh() {
     document.getElementById('swRefreshButton')?.addEventListener('click', async () => {
-      await Promise.allSettled([loadApplications(), loadSupportTickets()]);
-      await loadRepayments();
-      renderBeneficiaries();
-      showToast('Social Worker workspace refreshed.', 'success');
+      try {
+        await Promise.allSettled([loadOverviewData(), loadApplications(), loadRepayments()]);
+        showToast('Social Worker oversight data refreshed.', 'success');
+      } catch (error) {
+        console.warn('Social worker refresh encountered an issue', error);
+      }
     });
   }
 
@@ -1170,15 +2124,51 @@
     initSidebar();
     initAccountMenu();
     initLogout();
+    initValidationFilters();
     initApplicationFilters();
     initBeneficiaryFilters();
-    initSupport();
+    initCoMakerFilters();
+    initRepaymentFilters();
     initRefresh();
+    renderOverviewMetrics();
+    renderValidation();
     renderApplications();
     renderBeneficiaries();
+    renderCoMakers();
+    renderRepayments();
     renderDashboardSummary();
     setSection('dashboard');
+    loadOverviewData();
     loadApplications();
     loadRepayments();
+  });
+
+  window.addEventListener('pageshow', () => {
+    clearSelectState('swApplicationStatus');
+    clearSelectState('swRepaymentStatus');
+    forceDefaultSelects([
+      'swApplicationStatus',
+      'swRepaymentStatus',
+    ]);
+    state.validationTab = 'pending';
+    state.beneficiaryFilters = {
+      search: '',
+      barangay: '',
+      pdo: '',
+      repayment: '',
+    };
+    state.coMakerFilters = {
+      search: '',
+      status: '',
+      pdo: '',
+    };
+    syncBeneficiaryFilterControls();
+    syncCoMakerFilterControls();
+
+    renderValidation();
+    renderApplications();
+    renderBeneficiaries();
+    renderCoMakers();
+    renderRepayments();
   });
 })();

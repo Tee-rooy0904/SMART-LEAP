@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -10,33 +9,44 @@ class ReportService
 {
     private const REPAYMENT_PLAN_MONTHS = 24;
     private const MONTHLY_REPAYMENT_AMOUNT = 625.00;
+    private const FIXED_TARGET_BENEFICIARY_CAPACITY = BeneficiaryProfileService::BASE_BATCH_CAPACITY;
+    private ?array $applicantProfileColumns = null;
 
     public function build(array $filters = []): array
     {
-        (new BeneficiaryProfileService())->synchronizeSystemInactivityStatuses();
-        $normalizedFilters = $this->normalizeFilters($filters);
-        $records = $this->fetchRecords();
-        $filteredRecords = $this->applyFilters($records, $normalizedFilters);
-        $repaymentAnalytics = $this->buildRepaymentAnalytics($filteredRecords, $normalizedFilters);
-
-        return [
-            'generatedAt' => date(DATE_ATOM),
-            'filters' => $normalizedFilters,
-            'options' => $this->buildOptions($records),
-            'records' => $filteredRecords,
-            'summary' => $this->buildSummary($filteredRecords, $repaymentAnalytics['summary'] ?? null),
-            'repaymentAnalytics' => $repaymentAnalytics,
-        ];
+        return $this->buildScopedReport($filters);
     }
 
     public function buildForBeneficiaryIds(array $beneficiaryIds, array $filters = []): array
     {
+        return $this->buildScopedReport($filters, [
+            'beneficiaryIds' => $beneficiaryIds,
+        ]);
+    }
+
+    public function buildForProjectOfficer(array $actor, array $filters = []): array
+    {
+        $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
+        if ($staffProfileId === null) {
+            return $this->emptyReportPayload($this->normalizeFilters($filters));
+        }
+
+        return $this->buildScopedReport($filters, [
+            'scopeStaffProfileId' => $staffProfileId,
+        ]);
+    }
+
+    private function buildScopedReport(array $filters, array $scope = []): array
+    {
         (new BeneficiaryProfileService())->synchronizeSystemInactivityStatuses();
         $normalizedFilters = $this->normalizeFilters($filters);
-        $scopedIds = array_values(array_unique(array_filter(array_map('intval', $beneficiaryIds))));
-        $records = $this->fetchRecords($scopedIds);
+        $records = $this->fetchRecords(
+            isset($scope['beneficiaryIds']) && is_array($scope['beneficiaryIds']) ? $scope['beneficiaryIds'] : null,
+            isset($scope['scopeStaffProfileId']) ? (int) $scope['scopeStaffProfileId'] : null
+        );
         $filteredRecords = $this->applyFilters($records, $normalizedFilters);
         $repaymentAnalytics = $this->buildRepaymentAnalytics($filteredRecords, $normalizedFilters);
+        $trainingAnalytics = $this->buildTrainingAnalytics($this->beneficiaryIdsFromRecords($filteredRecords), $normalizedFilters);
 
         return [
             'generatedAt' => date(DATE_ATOM),
@@ -45,10 +55,26 @@ class ReportService
             'records' => $filteredRecords,
             'summary' => $this->buildSummary($filteredRecords, $repaymentAnalytics['summary'] ?? null),
             'repaymentAnalytics' => $repaymentAnalytics,
+            'trainingAnalytics' => $trainingAnalytics,
         ];
     }
 
-    private function fetchRecords(?array $beneficiaryIds = null): array
+    private function emptyReportPayload(array $normalizedFilters): array
+    {
+        $repaymentAnalytics = $this->buildRepaymentAnalytics([], $normalizedFilters);
+
+        return [
+            'generatedAt' => date(DATE_ATOM),
+            'filters' => $normalizedFilters,
+            'options' => $this->buildOptions([]),
+            'records' => [],
+            'summary' => $this->buildSummary([], $repaymentAnalytics['summary'] ?? null),
+            'repaymentAnalytics' => $repaymentAnalytics,
+            'trainingAnalytics' => $this->emptyTrainingAnalytics($normalizedFilters),
+        ];
+    }
+
+    private function fetchRecords(?array $beneficiaryIds = null, ?int $scopeStaffProfileId = null): array
     {
         if (is_array($beneficiaryIds) && $beneficiaryIds === []) {
             return [];
@@ -56,41 +82,76 @@ class ReportService
 
         try {
             $params = [];
-            $scopeCondition = '';
+            $joins = [];
+            $conditions = [];
             if (is_array($beneficiaryIds)) {
                 $placeholders = implode(',', array_fill(0, count($beneficiaryIds), '?'));
-                $scopeCondition = ' AND beneficiary_profiles.id IN (' . $placeholders . ')';
+                $conditions[] = 'beneficiary_profiles.id IN (' . $placeholders . ')';
                 $params = $beneficiaryIds;
             }
+            if ($scopeStaffProfileId !== null && $scopeStaffProfileId > 0) {
+                $joins[] = 'INNER JOIN staff_barangay_assignments AS scope_assignments
+                    ON scope_assignments.barangay_id = applicant_profiles.barangay_id
+                   AND scope_assignments.staff_profile_id = ?
+                   AND scope_assignments.ended_at IS NULL';
+                $params[] = $scopeStaffProfileId;
+            }
+
+            $whereSql = $conditions === [] ? '' : 'WHERE ' . implode(' AND ', $conditions);
 
             $statement = db()->prepare(
                 'SELECT
-                    beneficiary_profiles.id,
+                    applicant_profiles.id AS applicant_profile_id,
+                    beneficiary_profiles.id AS beneficiary_profile_id,
                     beneficiary_profiles.beneficiary_status,
                     beneficiary_profiles.replacement_for_beneficiary_profile_id,
+                    COALESCE(beneficiary_profiles.approved_at, beneficiary_profiles.approval_date) AS approved_at,
                     beneficiary_profiles.approval_date,
-                    beneficiary_profiles.updated_at,
-                    beneficiary_users.full_name AS beneficiary_name,
-                    beneficiary_users.email AS beneficiary_email,
+                    beneficiary_profiles.updated_at AS beneficiary_updated_at,
+                    applicant_users.full_name AS applicant_name,
+                    applicant_users.email AS applicant_email,
                     applicant_profiles.business_name,
                     applicant_profiles.contact_number,
                     applicant_profiles.birthdate,
                     applicant_profiles.age,
+                    applicant_profiles.address_line,
+                    applicant_profiles.is_4ps,
                     applicant_profiles.livelihood_type,
+                    ' . $this->selectApplicantLivelihoodCategorySql() . ',
                     applicant_profiles.sector,
+                    ' . $this->selectApplicantSectorOtherSpecifySql() . ',
                     applicant_profiles.gender,
+                    ' . $this->selectApplicantEducationalAttainmentSql() . ',
+                    applicant_profiles.updated_at AS profile_updated_at,
                     barangays.name AS barangay_name,
-                    assigned_users.full_name AS assigned_pdo_name
-                 FROM beneficiary_profiles
-                 INNER JOIN users AS beneficiary_users ON beneficiary_users.id = beneficiary_profiles.user_id
-                 LEFT JOIN applicant_profiles ON applicant_profiles.id = beneficiary_profiles.applicant_profile_id
+                    barangays.district AS district_name,
+                    assigned_users.full_name AS assigned_pdo_name,
+                    latest_applications.updated_at AS application_updated_at,
+                    LOWER(COALESCE(stage_one.validation_status, "")) AS stage_one_status
+                 FROM applicant_profiles
+                 INNER JOIN users AS applicant_users ON applicant_users.id = applicant_profiles.user_id
                  LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
-                 LEFT JOIN staff_profiles AS assigned_staff ON assigned_staff.id = beneficiary_profiles.assigned_staff_profile_id
+                 LEFT JOIN (
+                    SELECT applications.*
+                    FROM applications
+                    INNER JOIN (
+                        SELECT applicant_profile_id, MAX(id) AS latest_id
+                        FROM applications
+                        GROUP BY applicant_profile_id
+                    ) latest_application ON latest_application.latest_id = applications.id
+                 ) AS latest_applications ON latest_applications.applicant_profile_id = applicant_profiles.id
+                 LEFT JOIN staff_profiles AS assigned_staff ON assigned_staff.id = latest_applications.assigned_staff_profile_id
                  LEFT JOIN users AS assigned_users ON assigned_users.id = assigned_staff.user_id
-                 WHERE beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
-                   AND beneficiary_profiles.approval_date IS NOT NULL
-                   ' . $scopeCondition . '
-                 ORDER BY beneficiary_profiles.updated_at DESC, beneficiary_profiles.id DESC'
+                 LEFT JOIN beneficiary_profiles
+                    ON beneficiary_profiles.applicant_profile_id = applicant_profiles.id
+                   AND beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
+                 LEFT JOIN stage_one_registrations AS stage_one
+                    ON LOWER(stage_one.email) COLLATE utf8mb4_unicode_ci
+                     = LOWER(applicant_users.email) COLLATE utf8mb4_unicode_ci
+                 ' . implode("\n", $joins) . '
+                 ' . $whereSql . '
+                 ORDER BY COALESCE(beneficiary_profiles.updated_at, latest_applications.updated_at, applicant_profiles.updated_at) DESC,
+                          applicant_profiles.id DESC'
             );
             $statement->execute($params);
             $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
@@ -104,68 +165,98 @@ class ReportService
         }
 
         $beneficiaryIds = array_values(array_filter(array_map(
-            static fn(array $row): int => (int) ($row['id'] ?? 0),
+            static fn(array $row): int => (int) ($row['beneficiary_profile_id'] ?? 0),
             $rows
         )));
         $repaymentMap = $this->beneficiaryRepaymentSummaries($beneficiaryIds);
 
-        return array_map(function (array $row) use ($repaymentMap): array {
-            $beneficiaryId = (int) ($row['id'] ?? 0);
+        $records = array_map(function (array $row) use ($repaymentMap): ?array {
+            $beneficiaryId = (int) ($row['beneficiary_profile_id'] ?? 0);
+            $applicantProfileId = (int) ($row['applicant_profile_id'] ?? 0);
+            $profileComplete = $this->isProfileCompleteRow($row);
+            $selected = in_array((string) ($row['stage_one_status'] ?? ''), ['selected', 'approved'], true);
+            $beneficiaryStatus = strtolower(trim((string) ($row['beneficiary_status'] ?? '')));
+            $isBeneficiary = $beneficiaryId > 0 && (
+                trim((string) ($row['approved_at'] ?? '')) !== ''
+                || trim((string) ($row['approval_date'] ?? '')) !== ''
+                || in_array($beneficiaryStatus, ['active', 'inactive', 'deceased'], true)
+            );
+
+            if (!$isBeneficiary && !($selected && $profileComplete)) {
+                return null;
+            }
+
             $repayment = $this->appendLifecycleMetrics(
                 $repaymentMap[$beneficiaryId] ?? $this->emptyRepaymentSummary(),
-                (string) ($row['approval_date'] ?? '')
+                $isBeneficiary ? (string) ($row['approval_date'] ?? '') : ''
             );
-            $serviceTypeSource = (string) ($row['livelihood_type'] ?: ($row['sector'] ?: ''));
+            $serviceTypeSource = (string) (($row['livelihood_category'] ?: ($row['livelihood_type'] ?: ($row['sector'] ?: ''))));
             $age = $this->resolveAge($row);
 
             return [
-                'id' => $beneficiaryId,
-                'name' => (string) ($row['beneficiary_name'] ?: 'Unnamed beneficiary'),
-                'email' => (string) ($row['beneficiary_email'] ?: ''),
+                'id' => $beneficiaryId > 0 ? $beneficiaryId : $applicantProfileId,
+                'applicantProfileId' => $applicantProfileId,
+                'beneficiaryId' => $beneficiaryId > 0 ? $beneficiaryId : null,
+                'isBeneficiary' => $isBeneficiary,
+                'profileComplete' => $profileComplete,
+                'selectedForBatch' => $selected,
+                'populationStage' => $isBeneficiary ? 'Beneficiary' : 'Selected / Profile Complete',
+                'populationStageKey' => $isBeneficiary ? 'beneficiary' : 'pipeline_ready',
+                'name' => (string) ($row['applicant_name'] ?: 'Unnamed person'),
+                'email' => (string) ($row['applicant_email'] ?: ''),
                 'contactNumber' => (string) ($row['contact_number'] ?: ''),
                 'businessName' => (string) ($row['business_name'] ?: 'No business name'),
                 'age' => $age,
                 'ageGroup' => $this->resolveAgeGroupFromAge($age),
                 'gender' => $this->normalizeGenderLabel((string) ($row['gender'] ?? '')),
                 'barangay' => (string) ($row['barangay_name'] ?: 'Unassigned'),
+                'district' => (string) ($row['district_name'] ?: 'Unassigned'),
                 'assignedPdo' => (string) ($row['assigned_pdo_name'] ?: 'Unassigned'),
                 'serviceType' => $this->normalizeServiceType($serviceTypeSource),
                 'businessType' => $serviceTypeSource !== '' ? $serviceTypeSource : 'Not set',
-                'sector' => $this->labelizeStatus((string) ($row['sector'] ?: 'Not Set')),
-                'programStatus' => $this->labelizeStatus((string) ($row['beneficiary_status'] ?? 'active')),
+                'sector' => $this->resolveSectorLabel((string) ($row['sector'] ?? ''), (string) ($row['sector_other_specify'] ?? '')),
+                'programStatus' => $isBeneficiary
+                    ? $this->labelizeStatus((string) ($row['beneficiary_status'] ?? 'active'))
+                    : 'Selected / Profile Complete',
                 'approvalDate' => (string) ($row['approval_date'] ?? ''),
                 'lastActivity' => max(
-                    (string) ($row['updated_at'] ?? ''),
+                    (string) ($row['beneficiary_updated_at'] ?? ''),
+                    (string) ($row['application_updated_at'] ?? ''),
+                    (string) ($row['profile_updated_at'] ?? ''),
                     (string) ($repayment['latestActivity'] ?? '')
                 ),
                 'repayment' => $repayment,
             ];
         }, $rows);
+
+        return array_values(array_filter($records, static fn(?array $record): bool => is_array($record)));
     }
 
     private function normalizeFilters(array $filters): array
     {
         $now = new \DateTimeImmutable('today');
-        $currentMonth = $now->format('Y-m');
         $currentYear = (int) $now->format('Y');
-        $currentQuarter = 1;
+        $availableYears = $this->reportYearOptions();
         $period = strtolower(trim((string) ($filters['period'] ?? 'monthly')));
         if (!in_array($period, ['monthly', 'quarterly', 'yearly', 'custom'], true)) {
             $period = 'monthly';
         }
 
-        $month = trim((string) ($filters['month'] ?? $currentMonth));
+        $defaultCycleMonth = sprintf('%04d-05', $currentYear);
+        $month = trim((string) ($filters['month'] ?? $defaultCycleMonth));
         if (!preg_match('/^\d{4}-\d{2}$/', $month)) {
-            $month = $currentMonth;
+            $month = $defaultCycleMonth;
         }
 
-        $quarter = (int) ($filters['quarter'] ?? $currentQuarter);
+        $quarter = (int) ($filters['quarter'] ?? 1);
         if ($quarter < 1 || $quarter > 4) {
-            $quarter = $currentQuarter;
+            $quarter = 1;
         }
+
+        $repaymentYear = $this->normalizePositiveBoundedInt($filters['repaymentYear'] ?? 1, 1, 2);
 
         $year = (int) ($filters['year'] ?? $currentYear);
-        if ($year < 2000 || $year > ($currentYear + 10)) {
+        if (!in_array($year, $availableYears, true)) {
             $year = $currentYear;
         }
 
@@ -174,6 +265,7 @@ class ReportService
             $month,
             $quarter,
             $year,
+            $repaymentYear,
             trim((string) ($filters['from'] ?? '')),
             trim((string) ($filters['to'] ?? ''))
         );
@@ -183,6 +275,7 @@ class ReportService
             'to' => trim((string) ($filters['to'] ?? '')),
             'effectiveFrom' => $effectiveFrom,
             'effectiveTo' => $effectiveTo,
+            'district' => $this->normalizeValue($filters['district'] ?? ''),
             'barangay' => $this->normalizeValue($filters['barangay'] ?? ''),
             'serviceType' => $this->normalizeValue($filters['serviceType'] ?? ($filters['businessType'] ?? '')),
             'businessType' => $this->normalizeValue($filters['businessType'] ?? ($filters['serviceType'] ?? '')),
@@ -196,46 +289,43 @@ class ReportService
             'month' => $month,
             'quarter' => $quarter,
             'year' => $year,
+            'repaymentYear' => $repaymentYear,
+            'trainingSession' => $this->normalizePositiveBoundedInt($filters['trainingSession'] ?? 0, 1, 3),
+            'trainingGroup' => $this->normalizePositiveBoundedInt($filters['trainingGroup'] ?? 0, 1, 3),
         ];
     }
 
     private function applyFilters(array $records, array $filters): array
     {
         return array_values(array_filter($records, function (array $record) use ($filters): bool {
-            return ($filters['barangay'] === '' || $this->normalizeValue($record['barangay'] ?? 'Unassigned') === $filters['barangay'])
+            return ($filters['district'] === '' || $this->normalizeValue($record['district'] ?? 'Unassigned') === $filters['district'])
+                && ($filters['barangay'] === '' || $this->normalizeValue($record['barangay'] ?? 'Unassigned') === $filters['barangay'])
                 && ($filters['serviceType'] === '' || $this->normalizeValue($record['serviceType'] ?? '') === $filters['serviceType'])
                 && ($filters['sector'] === '' || $this->normalizeValue($record['sector'] ?? 'Not Set') === $filters['sector'])
                 && ($filters['gender'] === '' || $this->normalizeValue($record['gender'] ?? 'Not Set') === $filters['gender'])
                 && ($filters['ageGroup'] === '' || $this->normalizeValue($record['ageGroup'] ?? 'Not Set') === $filters['ageGroup'])
                 && ($filters['pdo'] === '' || $this->normalizeValue($record['assignedPdo'] ?? 'Unassigned') === $filters['pdo'])
-                && ($filters['repayment'] === '' || $this->normalizeValue($record['repayment']['key'] ?? 'no_upload') === $filters['repayment']);
+                && (
+                    $filters['repayment'] === ''
+                    || (
+                        (bool) ($record['isBeneficiary'] ?? false)
+                        && $this->normalizeValue($record['repayment']['key'] ?? 'no_upload') === $filters['repayment']
+                    )
+                );
         }));
     }
 
     private function buildOptions(array $records): array
     {
-        $years = [];
-        foreach ($records as $record) {
-            $approvalDate = trim((string) ($record['approvalDate'] ?? ''));
-            if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $approvalDate)) {
-                $years[(int) substr($approvalDate, 0, 4)] = true;
-            }
-        }
-        $currentYear = (int) date('Y');
-        for ($year = $currentYear - 2; $year <= $currentYear + 1; $year++) {
-            $years[$year] = true;
-        }
-        $yearValues = array_keys($years);
-        rsort($yearValues, SORT_NUMERIC);
-
         return [
+            'districts' => $this->uniqueValues($records, 'district'),
             'barangays' => $this->uniqueValues($records, 'barangay'),
             'serviceTypes' => $this->uniqueValues($records, 'serviceType'),
             'sectors' => $this->uniqueValues($records, 'sector'),
             'genders' => $this->uniqueValues($records, 'gender'),
             'ageGroups' => $this->uniqueValues($records, 'ageGroup'),
             'pdos' => $this->uniqueValues($records, 'assignedPdo'),
-            'years' => array_values($yearValues),
+            'years' => $this->reportYearOptions(),
             'repaymentStates' => [
                 ['key' => 'no_upload', 'label' => 'No Upload Yet'],
                 ['key' => 'under_review', 'label' => 'Under Review'],
@@ -248,8 +338,14 @@ class ReportService
 
     private function buildSummary(array $records, ?array $repaymentRate = null): array
     {
+        $beneficiaryCount = count(array_filter($records, static fn(array $record): bool => (bool) ($record['isBeneficiary'] ?? false)));
+        $pipelineOnlyCount = count(array_filter($records, static fn(array $record): bool => !((bool) ($record['isBeneficiary'] ?? false))));
+
         return [
-            'totalBeneficiaries' => count($records),
+            'totalPeople' => count($records),
+            'totalBeneficiaries' => $beneficiaryCount,
+            'beneficiaryCount' => $beneficiaryCount,
+            'pipelineOnlyCount' => $pipelineOnlyCount,
             'serviceTypeDistribution' => $this->distribution($records, 'serviceType'),
             'sectorDistribution' => $this->distribution($records, 'sector'),
             'genderDistribution' => $this->distribution($records, 'gender'),
@@ -263,10 +359,7 @@ class ReportService
 
     private function buildRepaymentAnalytics(array $records, array $filters): array
     {
-        $beneficiaryIds = array_values(array_filter(array_map(
-            static fn(array $record): int => (int) ($record['id'] ?? 0),
-            $records
-        )));
+        $beneficiaryIds = $this->beneficiaryIdsFromRecords($records);
 
         $repaymentRows = $this->fetchRepaymentRows($beneficiaryIds);
         $obligations = $this->buildRepaymentObligations($records, $repaymentRows);
@@ -277,8 +370,232 @@ class ReportService
             'summary' => $this->summarizeRepaymentObligations($filteredObligations, $filters),
             'periodMetrics' => $this->summarizeRepaymentObligations($filteredObligations, $filters),
             'breakdown' => $this->buildRepaymentBreakdown($filteredObligations, $filters),
-            'monthlyBreakdown' => $this->buildRepaymentMonthlyBreakdown($filteredObligations),
+            'monthlyBreakdown' => $this->buildRepaymentMonthlyBreakdown($filteredObligations, $filters),
         ];
+    }
+
+    private function buildTrainingAnalytics(?array $beneficiaryIds, array $filters): array
+    {
+        if (is_array($beneficiaryIds) && $beneficiaryIds === []) {
+            return $this->emptyTrainingAnalytics($filters);
+        }
+
+        $rows = $this->fetchTrainingAttendanceRows($beneficiaryIds, $filters);
+        $completionMap = $this->deriveTrainingCompletionMap($rows);
+        $sessionFilter = (int) ($filters['trainingSession'] ?? 0);
+        $breakdown = [
+            1 => $this->emptyTrainingSessionBreakdown(1),
+            2 => $this->emptyTrainingSessionBreakdown(2),
+            3 => $this->emptyTrainingSessionBreakdown(3),
+        ];
+
+        foreach ($rows as $row) {
+            $session = (int) ($row['sessionNumber'] ?? 0);
+            if ($session < 1 || $session > 3) {
+                continue;
+            }
+            if ($sessionFilter > 0 && $session !== $sessionFilter) {
+                continue;
+            }
+
+            $status = $this->normalizeTrainingAttendanceStatus((string) ($row['status'] ?? ''));
+            if ($status === 'present') {
+                $breakdown[$session]['present']++;
+            } elseif ($status === 'absent') {
+                $breakdown[$session]['absent']++;
+            } elseif ($status === 'excused') {
+                $breakdown[$session]['excused']++;
+            }
+
+            $applicantProfileId = (int) ($row['applicantProfileId'] ?? 0);
+            if ($session === 3 && $applicantProfileId > 0 && ($completionMap[$applicantProfileId] ?? false)) {
+                $breakdown[$session]['completed']++;
+            }
+        }
+
+        $visibleBreakdown = array_values(array_filter($breakdown, static function (array $item) use ($sessionFilter): bool {
+            return $sessionFilter <= 0 || (int) ($item['session'] ?? 0) === $sessionFilter;
+        }));
+
+        $summary = [
+            'participants' => 0,
+            'present' => 0,
+            'absent' => 0,
+            'excused' => 0,
+            'completed' => 0,
+        ];
+        foreach ($visibleBreakdown as $item) {
+            $summary['present'] += (int) ($item['present'] ?? 0);
+            $summary['absent'] += (int) ($item['absent'] ?? 0);
+            $summary['excused'] += (int) ($item['excused'] ?? 0);
+            $summary['completed'] += (int) ($item['completed'] ?? 0);
+        }
+        $participantIds = [];
+        foreach ($rows as $row) {
+            $session = (int) ($row['sessionNumber'] ?? 0);
+            if ($sessionFilter > 0 && $session !== $sessionFilter) {
+                continue;
+            }
+            $applicantProfileId = (int) ($row['applicantProfileId'] ?? 0);
+            if ($applicantProfileId > 0) {
+                $participantIds[$applicantProfileId] = true;
+            }
+        }
+        $summary['participants'] = count($participantIds);
+
+        return [
+            'summary' => $summary,
+            'breakdown' => $visibleBreakdown,
+            'filters' => [
+                'year' => $this->trainingAnalyticsYear($filters),
+                'session' => $sessionFilter,
+                'group' => (int) ($filters['trainingGroup'] ?? 0),
+            ],
+        ];
+    }
+
+    private function fetchTrainingAttendanceRows(?array $beneficiaryIds, array $filters): array
+    {
+        try {
+            $conditions = [
+                'training_programs.training_round_number BETWEEN 1 AND 3',
+                'YEAR(training_programs.starts_at) = ?',
+            ];
+            $params = [$this->trainingAnalyticsYear($filters)];
+
+            if (is_array($beneficiaryIds)) {
+                $placeholders = implode(',', array_fill(0, count($beneficiaryIds), '?'));
+                $applicantPlaceholders = implode(',', array_fill(0, count($beneficiaryIds), '?'));
+                $conditions[] = '(training_invitees.beneficiary_profile_id IN (' . $placeholders . ')
+                    OR training_invitees.applicant_profile_id IN (
+                        SELECT beneficiary_profiles.applicant_profile_id
+                        FROM beneficiary_profiles
+                        WHERE beneficiary_profiles.id IN (' . $applicantPlaceholders . ')
+                    ))';
+                $params = array_merge($params, $beneficiaryIds, $beneficiaryIds);
+            }
+
+            $group = (int) ($filters['trainingGroup'] ?? 0);
+            if ($group >= 1 && $group <= 3) {
+                $conditions[] = 'COALESCE(training_invitees.batch_group_number, training_programs.target_group_number, 0) = ?';
+                $params[] = $group;
+            }
+
+            $statement = db()->prepare(
+                'SELECT training_invitees.applicant_profile_id,
+                        training_invitees.beneficiary_profile_id,
+                        training_programs.training_round_number,
+                        COALESCE(training_invitees.batch_group_number, training_programs.target_group_number) AS group_number,
+                        COALESCE(attendance_records.attendance_status, training_invitees.invite_status) AS attendance_status
+                 FROM training_invitees
+                 INNER JOIN training_programs ON training_programs.id = training_invitees.training_program_id
+                 LEFT JOIN attendance_records ON attendance_records.training_invitee_id = training_invitees.id
+                 WHERE ' . implode(' AND ', $conditions) . '
+                 ORDER BY training_programs.training_round_number ASC, group_number ASC, training_invitees.id ASC'
+            );
+            $statement->execute($params);
+            $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $exception) {
+            log_database_query_failure('reports.training_attendance_rows', $exception);
+            return [];
+        }
+
+        return array_map(static function (array $row): array {
+            return [
+                'applicantProfileId' => (int) ($row['applicant_profile_id'] ?? 0),
+                'beneficiaryProfileId' => (int) ($row['beneficiary_profile_id'] ?? 0),
+                'sessionNumber' => (int) ($row['training_round_number'] ?? 0),
+                'groupNumber' => $row['group_number'] !== null ? (int) $row['group_number'] : null,
+                'status' => (string) ($row['attendance_status'] ?? ''),
+            ];
+        }, $rows);
+    }
+
+    private function deriveTrainingCompletionMap(array $rows): array
+    {
+        $presentRounds = [];
+        foreach ($rows as $row) {
+            if ($this->normalizeTrainingAttendanceStatus((string) ($row['status'] ?? '')) !== 'present') {
+                continue;
+            }
+            $applicantProfileId = (int) ($row['applicantProfileId'] ?? 0);
+            $session = (int) ($row['sessionNumber'] ?? 0);
+            if ($applicantProfileId <= 0 || $session < 1 || $session > 3) {
+                continue;
+            }
+            $presentRounds[$applicantProfileId][$session] = true;
+        }
+
+        $completed = [];
+        foreach ($presentRounds as $applicantProfileId => $rounds) {
+            $completed[$applicantProfileId] = isset($rounds[1], $rounds[2], $rounds[3]);
+        }
+
+        return $completed;
+    }
+
+    private function normalizeTrainingAttendanceStatus(string $status): string
+    {
+        $value = strtolower(trim($status));
+        return match ($value) {
+            'attended', 'completed', 'present' => 'present',
+            'missed', 'absent' => 'absent',
+            'excused' => 'excused',
+            default => 'pending',
+        };
+    }
+
+    private function emptyTrainingAnalytics(array $filters): array
+    {
+        $sessionFilter = (int) ($filters['trainingSession'] ?? 0);
+        $items = [
+            $this->emptyTrainingSessionBreakdown(1),
+            $this->emptyTrainingSessionBreakdown(2),
+            $this->emptyTrainingSessionBreakdown(3),
+        ];
+        if ($sessionFilter >= 1 && $sessionFilter <= 3) {
+            $items = [$this->emptyTrainingSessionBreakdown($sessionFilter)];
+        }
+
+        return [
+            'summary' => [
+                'participants' => 0,
+                'present' => 0,
+                'absent' => 0,
+                'excused' => 0,
+                'completed' => 0,
+            ],
+            'breakdown' => $items,
+            'filters' => [
+                'year' => $this->trainingAnalyticsYear($filters),
+                'session' => $sessionFilter,
+                'group' => (int) ($filters['trainingGroup'] ?? 0),
+            ],
+        ];
+    }
+
+    private function emptyTrainingSessionBreakdown(int $session): array
+    {
+        return [
+            'session' => $session,
+            'label' => 'Session ' . $session,
+            'present' => 0,
+            'absent' => 0,
+            'excused' => 0,
+            'completed' => 0,
+        ];
+    }
+
+    private function trainingAnalyticsYear(array $filters): int
+    {
+        if (($filters['period'] ?? '') === 'monthly') {
+            $month = (string) ($filters['month'] ?? '');
+            if (preg_match('/^(\d{4})-\d{2}$/', $month, $matches)) {
+                return (int) $matches[1];
+            }
+        }
+
+        return (int) ($filters['year'] ?? date('Y'));
     }
 
     private function fetchRepaymentRows(array $beneficiaryIds): array
@@ -369,8 +686,8 @@ class ReportService
                     'dueYear' => substr($dueMonth, 0, 4),
                     'dueDate' => $dueDate,
                     'installmentNumber' => $installmentNumber,
-                    'repaymentQuarter' => (int) ceil($installmentNumber / 3),
                     'repaymentYearNumber' => (int) ceil($installmentNumber / 12),
+                    'repaymentQuarter' => (int) floor(((($installmentNumber - 1) % 12) / 3)) + 1,
                     'expectedAmount' => self::MONTHLY_REPAYMENT_AMOUNT,
                     'barangay' => (string) ($record['barangay'] ?? 'Unassigned'),
                     'assignedPdo' => (string) ($record['assignedPdo'] ?? 'Unassigned'),
@@ -398,14 +715,7 @@ class ReportService
         $effectiveFrom = trim((string) ($filters['effectiveFrom'] ?? ($filters['from'] ?? '')));
         $effectiveTo = trim((string) ($filters['effectiveTo'] ?? ($filters['to'] ?? '')));
         return array_values(array_filter($obligations, function (array $obligation) use ($filters, $effectiveFrom, $effectiveTo): bool {
-            $period = (string) ($filters['period'] ?? 'monthly');
-            $periodMatches = match ($period) {
-                'yearly' => (int) ($obligation['repaymentYearNumber'] ?? 0) === 1,
-                'quarterly' => (int) ($obligation['repaymentYearNumber'] ?? 0) === 1
-                    && (int) ($obligation['repaymentQuarter'] ?? 0) === (int) ($filters['quarter'] ?? 1),
-                default => $this->inDateRange((string) ($obligation['dueDate'] ?? ''), $effectiveFrom, $effectiveTo),
-            };
-
+            $periodMatches = $this->inDateRange((string) ($obligation['dueDate'] ?? ''), $effectiveFrom, $effectiveTo);
             return $periodMatches
                 && ($filters['barangay'] === '' || $this->normalizeValue($obligation['barangay'] ?? 'Unassigned') === $filters['barangay'])
                 && ($filters['serviceType'] === '' || $this->normalizeValue($obligation['serviceType'] ?? 'Unclassified') === $filters['serviceType'])
@@ -418,7 +728,6 @@ class ReportService
 
     private function summarizeRepaymentObligations(array $obligations, array $filters = []): array
     {
-        $targetAmount = 0.0;
         $actualCollectedAmount = 0.0;
         $statusCounts = [
             'paid_on_time' => 0,
@@ -430,7 +739,6 @@ class ReportService
         $beneficiaryIds = [];
 
         foreach ($obligations as $obligation) {
-            $targetAmount += (float) ($obligation['expectedAmount'] ?? self::MONTHLY_REPAYMENT_AMOUNT);
             $status = (string) ($obligation['status'] ?? 'overdue_unpaid');
             if (!isset($statusCounts[$status])) {
                 $status = 'overdue_unpaid';
@@ -442,11 +750,7 @@ class ReportService
             }
         }
 
-        $periodTargetMonths = $this->repaymentTargetMonthsForPeriod((string) ($filters['period'] ?? 'monthly'));
-        if ($periodTargetMonths !== null) {
-            $targetAmount = count(array_filter(array_keys($beneficiaryIds))) * $periodTargetMonths * self::MONTHLY_REPAYMENT_AMOUNT;
-        }
-
+        $targetAmount = $this->fixedRepaymentTargetAmount((string) ($filters['period'] ?? 'monthly'), $filters);
         $gapAmount = $targetAmount - $actualCollectedAmount;
         $roiPercent = $targetAmount > 0 ? round(($actualCollectedAmount / $targetAmount) * 100, 2) : 0.0;
 
@@ -460,46 +764,30 @@ class ReportService
             'gapAmount' => round($gapAmount, 2),
             'varianceAmount' => round($gapAmount, 2),
             'roiPercent' => $roiPercent,
-            'obligationCount' => $periodTargetMonths !== null
-                ? count(array_filter(array_keys($beneficiaryIds))) * $periodTargetMonths
-                : count($obligations),
+            'obligationCount' => count($obligations),
             'scopedBeneficiaries' => count(array_filter(array_keys($beneficiaryIds))),
             'statusCounts' => $statusCounts,
         ];
     }
 
-    private function repaymentTargetMonthsForPeriod(string $period): ?int
-    {
-        return match ($period) {
-            'monthly' => 1,
-            'quarterly' => 3,
-            'yearly' => 12,
-            default => null,
-        };
-    }
-
     private function buildRepaymentBreakdown(array $obligations, array $filters): array
     {
-        $periods = [];
         $period = (string) ($filters['period'] ?? 'monthly');
+        $periods = $this->seedRepaymentBreakdownPeriods($filters);
 
         foreach ($obligations as $obligation) {
-            $dueMonth = (string) ($obligation['dueMonth'] ?? '');
             $periodKey = $period === 'yearly'
-                ? sprintf('repayment-Q%d', (int) ($obligation['repaymentQuarter'] ?? 0))
-                : $dueMonth;
-
-            if ($periodKey === '' || $periodKey === 'repayment-Q0') {
+                ? (string) ($filters['year'] ?? '')
+                : $this->repaymentBreakdownKey($obligation, $period);
+            if ($periodKey === '') {
                 continue;
             }
 
             if (!isset($periods[$periodKey])) {
                 $periods[$periodKey] = [
                     'period' => $periodKey,
-                    'label' => $period === 'yearly'
-                        ? sprintf('Q%d', (int) ($obligation['repaymentQuarter'] ?? 0))
-                        : $this->formatRepaymentPeriodLabel($periodKey, 'monthly'),
-                    'targetAmount' => 0.0,
+                    'label' => $this->formatRepaymentPeriodLabel($periodKey, $period),
+                    'targetAmount' => $this->fixedRepaymentTargetAmount($period, $filters, $periodKey),
                     'actualCollectedAmount' => 0.0,
                     'gapAmount' => 0.0,
                     'roiPercent' => 0.0,
@@ -507,7 +795,6 @@ class ReportService
             }
 
             $status = (string) ($obligation['status'] ?? 'overdue_unpaid');
-            $periods[$periodKey]['targetAmount'] += (float) ($obligation['expectedAmount'] ?? self::MONTHLY_REPAYMENT_AMOUNT);
             if (in_array($status, ['paid_on_time', 'partial_delayed'], true)) {
                 $periods[$periodKey]['actualCollectedAmount'] += (float) ($obligation['amountRepresented'] ?? 0.0);
             }
@@ -526,44 +813,9 @@ class ReportService
         }, array_values($periods));
     }
 
-    private function buildRepaymentMonthlyBreakdown(array $obligations): array
+    private function buildRepaymentMonthlyBreakdown(array $obligations, array $filters): array
     {
-        $periods = [];
-
-        foreach ($obligations as $obligation) {
-            $dueMonth = (string) ($obligation['dueMonth'] ?? '');
-            if ($dueMonth === '') {
-                continue;
-            }
-
-            if (!isset($periods[$dueMonth])) {
-                $periods[$dueMonth] = [
-                    'period' => $dueMonth,
-                    'label' => $this->formatRepaymentPeriodLabel($dueMonth, 'monthly'),
-                    'targetAmount' => 0.0,
-                    'actualCollectedAmount' => 0.0,
-                    'gapAmount' => 0.0,
-                    'roiPercent' => 0.0,
-                ];
-            }
-
-            $periods[$dueMonth]['targetAmount'] += (float) ($obligation['expectedAmount'] ?? self::MONTHLY_REPAYMENT_AMOUNT);
-            if (in_array((string) ($obligation['status'] ?? 'overdue_unpaid'), ['paid_on_time', 'partial_delayed'], true)) {
-                $periods[$dueMonth]['actualCollectedAmount'] += (float) ($obligation['amountRepresented'] ?? 0.0);
-            }
-        }
-
-        ksort($periods, SORT_STRING);
-
-        return array_map(static function (array $period): array {
-            $period['targetAmount'] = round((float) ($period['targetAmount'] ?? 0.0), 2);
-            $period['actualCollectedAmount'] = round((float) ($period['actualCollectedAmount'] ?? 0.0), 2);
-            $period['gapAmount'] = round($period['targetAmount'] - $period['actualCollectedAmount'], 2);
-            $period['roiPercent'] = $period['targetAmount'] > 0
-                ? round(($period['actualCollectedAmount'] / $period['targetAmount']) * 100, 2)
-                : 0.0;
-            return $period;
-        }, array_values($periods));
+        return $this->buildRepaymentBreakdown($obligations, $filters + ['period' => 'monthly']);
     }
 
     private function repaymentStackedStatuses(): array
@@ -605,8 +857,8 @@ class ReportService
         if ($period === 'yearly') {
             return $periodKey;
         }
-        if ($period === 'quarterly' && preg_match('/^(\d{4})-Q([1-4])$/', $periodKey, $matches)) {
-            return sprintf('Q%s %s', $matches[2], $matches[1]);
+        if ($period === 'quarterly' && preg_match('/(?:^|-)Q([1-4])$/', $periodKey, $matches)) {
+            return sprintf('Q%s', $matches[1]);
         }
 
         try {
@@ -614,6 +866,89 @@ class ReportService
         } catch (\Throwable $exception) {
             return $periodKey;
         }
+    }
+
+    private function seedRepaymentBreakdownPeriods(array $filters): array
+    {
+        $period = (string) ($filters['period'] ?? 'monthly');
+        $year = (int) ($filters['year'] ?? date('Y'));
+        $repaymentYear = (int) ($filters['repaymentYear'] ?? 1);
+        $periods = [];
+
+        if ($period === 'monthly') {
+            [$cycleStartMonth, ] = $this->repaymentCycleMonthRange($year, $repaymentYear);
+            for ($month = 0; $month < 12; $month++) {
+                $key = (string) ($this->shiftMonth($cycleStartMonth, $month) ?? '');
+                if ($key === '') {
+                    continue;
+                }
+                $periods[$key] = [
+                    'period' => $key,
+                    'label' => $this->formatRepaymentPeriodLabel($key, 'monthly'),
+                    'targetAmount' => $this->fixedRepaymentTargetAmount('monthly', $filters, $key),
+                    'actualCollectedAmount' => 0.0,
+                    'gapAmount' => 0.0,
+                    'roiPercent' => 0.0,
+                ];
+            }
+            return $periods;
+        }
+
+        if ($period === 'quarterly') {
+            for ($quarter = 1; $quarter <= 4; $quarter++) {
+                $key = sprintf('RY%d-Q%d', $repaymentYear, $quarter);
+                $periods[$key] = [
+                    'period' => $key,
+                    'label' => $this->formatRepaymentPeriodLabel($key, 'quarterly'),
+                    'targetAmount' => $this->fixedRepaymentTargetAmount('quarterly', $filters, $key),
+                    'actualCollectedAmount' => 0.0,
+                    'gapAmount' => 0.0,
+                    'roiPercent' => 0.0,
+                ];
+            }
+            return $periods;
+        }
+
+        if ($period === 'yearly') {
+            $key = (string) $year;
+            $periods[$key] = [
+                'period' => $key,
+                'label' => $key,
+                'targetAmount' => $this->fixedRepaymentTargetAmount('yearly', $filters, $key),
+                'actualCollectedAmount' => 0.0,
+                'gapAmount' => 0.0,
+                'roiPercent' => 0.0,
+            ];
+        }
+
+        return $periods;
+    }
+
+    private function repaymentBreakdownKey(array $obligation, string $period): string
+    {
+        $dueMonth = (string) ($obligation['dueMonth'] ?? '');
+        if (!preg_match('/^\d{4}-\d{2}$/', $dueMonth)) {
+            return '';
+        }
+
+        if ($period === 'monthly' || $period === 'custom') {
+            return $dueMonth;
+        }
+
+        if ($period === 'quarterly') {
+            $quarterNumber = (int) ($obligation['repaymentQuarter'] ?? 0);
+            $repaymentYear = (int) ($obligation['repaymentYearNumber'] ?? 1);
+            if ($quarterNumber < 1 || $quarterNumber > 4) {
+                return '';
+            }
+            return sprintf('RY%d-Q%d', max(1, $repaymentYear), $quarterNumber);
+        }
+
+        if ($period === 'yearly') {
+            return '';
+        }
+
+        return $dueMonth;
     }
 
     private function deriveRepaymentStartMonth(array $record, array $knownMonths): ?string
@@ -917,8 +1252,13 @@ class ReportService
     {
         $targetAmount = 0.0;
         $actualCollectedAmount = 0.0;
+        $beneficiaryCount = 0;
 
         foreach ($records as $record) {
+            if (!((bool) ($record['isBeneficiary'] ?? false))) {
+                continue;
+            }
+            $beneficiaryCount++;
             $repayment = $record['repayment'] ?? [];
             $targetAmount += (float) ($repayment['expectedToDateAmount'] ?? 0.0);
             $actualCollectedAmount += (float) ($repayment['paidAmountToDate'] ?? 0.0);
@@ -934,37 +1274,47 @@ class ReportService
             'varianceAmount' => round($gapAmount, 2),
             'roiPercent' => $targetAmount > 0 ? round(($actualCollectedAmount / $targetAmount) * 100, 2) : 0.0,
             'obligationCount' => array_sum(array_map(
-                static fn(array $record): int => (int) (($record['repayment']['monthsPassed'] ?? 0)),
+                static fn(array $record): int => (bool) ($record['isBeneficiary'] ?? false)
+                    ? (int) (($record['repayment']['monthsPassed'] ?? 0))
+                    : 0,
                 $records
             )),
-            'scopedBeneficiaries' => count($records),
+            'scopedBeneficiaries' => $beneficiaryCount,
         ];
     }
 
-    private function resolvePeriodRange(string $period, string $month, int $quarter, int $year, string $from, string $to): array
+    private function resolvePeriodRange(string $period, string $month, int $quarter, int $year, int $repaymentYear, string $from, string $to): array
     {
         if ($period === 'monthly') {
-            $start = $month . '-01';
-            $end = $this->monthEndDate($month);
-            return [$start, $end, $this->formatRepaymentPeriodLabel($month, 'monthly')];
+            [$cycleStartMonth, $cycleEndMonth] = $this->repaymentCycleMonthRange($year, $repaymentYear);
+            $selectedMonth = preg_match('/^\d{4}-\d{2}$/', $month) ? $month : $cycleStartMonth;
+            if (strcmp($selectedMonth, $cycleStartMonth) < 0 || strcmp($selectedMonth, $cycleEndMonth) > 0) {
+                $selectedMonth = $cycleStartMonth;
+            }
+
+            return [$selectedMonth . '-01', $this->monthEndDate($selectedMonth), $this->formatRepaymentPeriodLabel($selectedMonth, 'monthly')];
         }
 
         if ($period === 'quarterly') {
-            $startMonthNumber = (($quarter - 1) * 3) + 1;
-            $startMonth = sprintf('%04d-%02d', $year, $startMonthNumber);
-            $endMonth = sprintf('%04d-%02d', $year, $startMonthNumber + 2);
+            [$startMonth, $endMonth] = $this->repaymentQuarterMonthRange($year, $repaymentYear, $quarter);
             return [
                 $startMonth . '-01',
                 $this->monthEndDate($endMonth),
-                sprintf('Q%d %d', $quarter, $year),
+                sprintf(
+                    'Q%d - Year %d (%s)',
+                    $quarter,
+                    $repaymentYear,
+                    $this->formatRepaymentWindowLabel($startMonth, $endMonth)
+                ),
             ];
         }
 
         if ($period === 'yearly') {
+            [$startMonth, $endMonth] = $this->repaymentCycleMonthRange($year, $repaymentYear);
             return [
-                sprintf('%04d-01-01', $year),
-                sprintf('%04d-12-31', $year),
-                (string) $year,
+                $startMonth . '-01',
+                $this->monthEndDate($endMonth),
+                sprintf('Year %d (%s)', $repaymentYear, $this->formatRepaymentWindowLabel($startMonth, $endMonth)),
             ];
         }
 
@@ -990,6 +1340,78 @@ class ReportService
             return (new \DateTimeImmutable($month . '-01'))->modify('last day of this month')->format('Y-m-d');
         } catch (\Throwable $exception) {
             return $month . '-28';
+        }
+    }
+
+    private function repaymentCycleMonthRange(int $year, int $repaymentYear = 1): array
+    {
+        $cycleStartYear = $year + max($repaymentYear - 1, 0);
+        $startMonth = sprintf('%04d-05', $cycleStartYear);
+        $endMonth = (string) ($this->shiftMonth($startMonth, 11) ?? sprintf('%04d-04', $cycleStartYear + 1));
+
+        return [$startMonth, $endMonth];
+    }
+
+    private function repaymentQuarterMonthRange(int $year, int $repaymentYear, int $quarter): array
+    {
+        [$cycleStartMonth, ] = $this->repaymentCycleMonthRange($year, $repaymentYear);
+        $quarterIndex = min(max($quarter, 1), 4) - 1;
+        $startMonth = (string) ($this->shiftMonth($cycleStartMonth, $quarterIndex * 3) ?? $cycleStartMonth);
+        $endMonth = (string) ($this->shiftMonth($startMonth, 2) ?? $startMonth);
+
+        return [$startMonth, $endMonth];
+    }
+
+    private function reportYearOptions(): array
+    {
+        $currentYear = (int) date('Y');
+        return [$currentYear];
+    }
+
+    private function fixedRepaymentTargetAmount(string $period, array $filters = [], ?string $periodKey = null): float
+    {
+        $monthlyTarget = self::FIXED_TARGET_BENEFICIARY_CAPACITY * self::MONTHLY_REPAYMENT_AMOUNT;
+
+        return round($monthlyTarget * $this->fixedRepaymentTargetMonths($period, $filters, $periodKey), 2);
+    }
+
+    private function fixedRepaymentTargetMonths(string $period, array $filters = [], ?string $periodKey = null): int
+    {
+        if ($period === 'monthly') {
+            return 1;
+        }
+
+        if ($period === 'quarterly') {
+            return 3;
+        }
+
+        if ($period === 'yearly') {
+            return 12;
+        }
+
+        if ($period === 'custom') {
+            $effectiveFrom = substr((string) ($filters['effectiveFrom'] ?? ($filters['from'] ?? '')), 0, 7);
+            $effectiveTo = substr((string) ($filters['effectiveTo'] ?? ($filters['to'] ?? '')), 0, 7);
+            if (preg_match('/^\d{4}-\d{2}$/', $effectiveFrom) && preg_match('/^\d{4}-\d{2}$/', $effectiveTo)) {
+                return max($this->countMonthsInclusive($effectiveFrom, $effectiveTo), 1);
+            }
+        }
+
+        if ($periodKey !== null && preg_match('/^\d{4}-\d{2}$/', $periodKey)) {
+            return 1;
+        }
+
+        return 1;
+    }
+
+    private function formatRepaymentWindowLabel(string $startMonth, string $endMonth): string
+    {
+        try {
+            $start = new \DateTimeImmutable($startMonth . '-01');
+            $end = new \DateTimeImmutable($endMonth . '-01');
+            return sprintf('%s - %s', $start->format('M Y'), $end->format('M Y'));
+        } catch (\Throwable $exception) {
+            return $startMonth . ' - ' . $endMonth;
         }
     }
 
@@ -1129,6 +1551,12 @@ class ReportService
         return strtolower(trim((string) $value));
     }
 
+    private function normalizePositiveBoundedInt(mixed $value, int $min, int $max): int
+    {
+        $number = (int) $value;
+        return $number >= $min && $number <= $max ? $number : 0;
+    }
+
     private function inDateRange(string $value, string $from, string $to): bool
     {
         $date = $this->parseDate($value);
@@ -1217,20 +1645,41 @@ class ReportService
         if (str_contains($text, 'buy') || str_contains($text, 'sell')) {
             return 'Buy and Sell';
         }
-        if (str_contains($text, 'home')) {
-            return 'Homemade';
+        if (str_contains($text, 'food') || str_contains($text, 'beverage') || str_contains($text, 'balut') || str_contains($text, 'snack') || str_contains($text, 'eatery') || str_contains($text, 'carinderia')) {
+            return 'Food and Beverages';
         }
         if (str_contains($text, 'livestock') || str_contains($text, 'animal') || str_contains($text, 'poultry') || str_contains($text, 'hog')) {
             return 'Livestock';
         }
-        if (str_contains($text, 'service')) {
-            return 'Services';
-        }
-        if (str_contains($text, 'establishment') || str_contains($text, 'store') || str_contains($text, 'shop')) {
+        if (
+            str_contains($text, 'paluwagan')
+            || str_contains($text, 'microenterprise')
+            || str_contains($text, 'micro enterprise')
+            || str_contains($text, 'micro-enterprise')
+            || str_contains($text, 'service')
+            || str_contains($text, 'establishment')
+            || str_contains($text, 'store')
+            || str_contains($text, 'shop')
+            || str_contains($text, 'home')
+            || str_contains($text, 'production')
+            || str_contains($text, 'homemade')
+            || str_contains($text, 'processing')
+        ) {
             return 'Establishment';
         }
 
         return ucwords($text);
+    }
+
+    private function resolveSectorLabel(string $sector, string $otherSectorSpecify): string
+    {
+        $base = $this->labelizeStatus($sector);
+        if (strcasecmp(trim($sector), 'Other') !== 0) {
+            return $base;
+        }
+
+        $detail = trim($otherSectorSpecify);
+        return $detail !== '' ? 'Other - ' . $this->labelizeStatus($detail) : $base;
     }
 
     private function normalizeGenderLabel(string $value): string
@@ -1257,6 +1706,125 @@ class ReportService
     {
         $status = trim(str_replace('_', ' ', $status));
         return $status !== '' ? ucwords(strtolower($status)) : 'Not Set';
+    }
+
+    private function beneficiaryIdsFromRecords(array $records): array
+    {
+        return array_values(array_filter(array_map(
+            static fn(array $record): int => (int) ($record['beneficiaryId'] ?? 0),
+            $records
+        )));
+    }
+
+    private function isProfileCompleteRow(array $row): bool
+    {
+        $required = [
+            'birthdate' => $this->isValidDateValue($row['birthdate'] ?? null),
+            'gender' => $this->hasTextValue($row['gender'] ?? null),
+            'contactNumber' => $this->isValidContactNumber($row['contact_number'] ?? null),
+            'address' => $this->hasTextValue($row['address_line'] ?? null),
+            'barangay' => $this->hasTextValue($row['barangay_name'] ?? null),
+            'is4ps' => ($row['is_4ps'] ?? null) !== null && trim((string) ($row['is_4ps'] ?? '')) !== '',
+            'sector' => $this->hasTextValue($row['sector'] ?? null),
+            'livelihood' => $this->hasTextValue(($row['livelihood_category'] ?? null) ?: ($row['livelihood_type'] ?? null)),
+            'businessName' => $this->hasTextValue($row['business_name'] ?? null),
+        ];
+
+        if (in_array('educational_attainment', $this->applicantProfileColumns(), true)) {
+            $required['educationalAttainment'] = $this->hasTextValue($row['educational_attainment'] ?? null);
+        }
+        if (strcasecmp(trim((string) ($row['sector'] ?? '')), 'Other') === 0) {
+            $required['sectorOtherSpecify'] = $this->hasTextValue($row['sector_other_specify'] ?? null);
+        }
+
+        foreach ($required as $isComplete) {
+            if (!$isComplete) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function hasTextValue(mixed $value): bool
+    {
+        return trim((string) $value) !== '';
+    }
+
+    private function isValidDateValue(mixed $value): bool
+    {
+        $date = trim((string) $value);
+        return $date !== '' && strtotime($date) !== false;
+    }
+
+    private function isValidContactNumber(mixed $value): bool
+    {
+        $digits = preg_replace('/\D+/', '', (string) $value);
+        $length = strlen($digits);
+
+        return $length >= 10 && $length <= 13;
+    }
+
+    private function applicantProfileColumns(): array
+    {
+        if (is_array($this->applicantProfileColumns)) {
+            return $this->applicantProfileColumns;
+        }
+
+        try {
+            $rows = db()->query('SHOW COLUMNS FROM applicant_profiles')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $exception) {
+            log_database_query_failure('reports.applicant_profile_columns', $exception);
+            $this->applicantProfileColumns = [];
+            return $this->applicantProfileColumns;
+        }
+
+        $this->applicantProfileColumns = array_values(array_filter(array_map(
+            static fn(array $row): string => (string) ($row['Field'] ?? ''),
+            $rows
+        )));
+
+        return $this->applicantProfileColumns;
+    }
+
+    private function selectApplicantEducationalAttainmentSql(): string
+    {
+        return in_array('educational_attainment', $this->applicantProfileColumns(), true)
+            ? 'applicant_profiles.educational_attainment AS educational_attainment'
+            : 'NULL AS educational_attainment';
+    }
+
+    private function selectApplicantLivelihoodCategorySql(): string
+    {
+        return in_array('livelihood_category', $this->applicantProfileColumns(), true)
+            ? 'applicant_profiles.livelihood_category AS livelihood_category'
+            : 'NULL AS livelihood_category';
+    }
+
+    private function selectApplicantSectorOtherSpecifySql(): string
+    {
+        return in_array('sector_other_specify', $this->applicantProfileColumns(), true)
+            ? 'applicant_profiles.sector_other_specify AS sector_other_specify'
+            : 'NULL AS sector_other_specify';
+    }
+
+    private function findStaffProfileIdForUser(int $userId): ?int
+    {
+        if ($userId <= 0) {
+            return null;
+        }
+
+        try {
+            $statement = db()->prepare('SELECT id FROM staff_profiles WHERE user_id = :user_id LIMIT 1');
+            $statement->execute(['user_id' => $userId]);
+            $value = $statement->fetchColumn();
+        } catch (\Throwable $exception) {
+            log_database_query_failure('reports.staff_profile_id', $exception, ['user_id' => $userId]);
+            return null;
+        }
+
+        $staffProfileId = (int) $value;
+        return $staffProfileId > 0 ? $staffProfileId : null;
     }
 
     private function normalizeRepaymentStage(string $status, string $verificationStatus): string

@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -12,6 +11,7 @@ class StageOneRegistrationService
     public const STATUS_PENDING = 'pending';
     public const STATUS_SELECTED = 'selected';
     public const STATUS_SAVED = 'saved_next_batch';
+    public const STATUS_ARCHIVED = 'archived';
 
     public function submit(array $input, array $files): array
     {
@@ -124,6 +124,7 @@ class StageOneRegistrationService
     public function validationState(): array
     {
         $this->ensureSchema();
+        $this->syncLegacySelectedApplicants();
         $this->syncOverflowRegistrationsToSaved();
 
         $rows = db()->query(
@@ -132,6 +133,7 @@ class StageOneRegistrationService
                 reviewers.full_name AS reviewed_by_name
              FROM stage_one_registrations
              LEFT JOIN users AS reviewers ON reviewers.id = stage_one_registrations.validated_by_user_id
+             WHERE stage_one_registrations.validation_status <> "archived"
              ORDER BY stage_one_registrations.created_at DESC, stage_one_registrations.id DESC'
         )->fetchAll(PDO::FETCH_ASSOC) ?: [];
 
@@ -146,6 +148,7 @@ class StageOneRegistrationService
                 'pending' => count($pending),
                 'selected' => count($selected),
                 'saved' => count($saved),
+                'selectionEmailFailures' => count(array_filter($selected, static fn (array $row): bool => (bool) ($row['selectionEmailNeedsResend'] ?? false))),
                 'remaining' => max(0, $this->currentBatchCapacity() - count($selected)),
             ],
             'pending' => $pending,
@@ -223,6 +226,8 @@ class StageOneRegistrationService
         $emailSent = true;
         if ($targetStatus === self::STATUS_SELECTED && is_array($updatedRegistration)) {
             $emailSent = $this->sendSelectionEmail($updatedRegistration);
+            $this->persistSelectionEmailStatus($registrationId, (string) ($updatedRegistration['email'] ?? ''), $emailSent);
+            $updatedRegistration = $this->getRegistrationDetail($registrationId);
         }
 
         return [
@@ -230,11 +235,42 @@ class StageOneRegistrationService
             'message' => $targetStatus === self::STATUS_SELECTED
                 ? ($emailSent
                     ? 'Stage 1 applicant selected for the current batch. Email notice sent.'
-                    : 'Stage 1 applicant selected for the current batch, but the email notice could not be sent.')
+                    : 'Stage 1 applicant selected for the current batch, but the email notice could not be sent. Please resend the Stage 2 signup email before telling the applicant to proceed.')
                 : 'Stage 1 applicant saved for the next SMART LEAP batch.',
             'registration' => $updatedRegistration,
             'state' => $this->validationState(),
             'emailSent' => $emailSent,
+            'requiresEmailResend' => $targetStatus === self::STATUS_SELECTED && !$emailSent,
+        ];
+    }
+
+    public function resendSelectionEmail(int $registrationId, array $actor = []): array
+    {
+        $this->ensureSchema();
+
+        $registration = $this->getRegistrationDetail($registrationId);
+        if ($registration === null) {
+            return ['ok' => false, 'message' => 'Stage 1 registration not found.'];
+        }
+
+        if (($registration['statusKey'] ?? '') !== self::STATUS_SELECTED) {
+            return ['ok' => false, 'message' => 'Only selected registrants can receive the Stage 2 signup email.'];
+        }
+
+        $emailSent = $this->sendSelectionEmail($registration);
+        $this->persistSelectionEmailStatus($registrationId, (string) ($registration['email'] ?? ''), $emailSent);
+        $updatedRegistration = $this->getRegistrationDetail($registrationId);
+
+        return [
+            'ok' => $emailSent,
+            'message' => $emailSent
+                ? 'Stage 2 signup email resent successfully.'
+                : 'Unable to resend the Stage 2 signup email right now. Please review the mail configuration or try again.',
+            'registration' => $updatedRegistration,
+            'state' => $this->validationState(),
+            'emailSent' => $emailSent,
+            'requiresEmailResend' => !$emailSent,
+            'actorId' => (int) ($actor['id'] ?? 0),
         ];
     }
 
@@ -249,6 +285,7 @@ class StageOneRegistrationService
                 'pending' => 0,
                 'selected' => 0,
                 'saved' => 0,
+                'selectionEmailFailures' => 0,
                 'remaining' => $this->currentBatchCapacity(),
             ];
         }
@@ -311,6 +348,11 @@ class StageOneRegistrationService
                 self::STATUS_SAVED => 'Saved for Next Batch',
                 default => 'Pending Validation',
             },
+            'selectionEmailSentAt' => (string) ($row['selection_email_sent_at'] ?? ''),
+            'selectionEmailFailedAt' => (string) ($row['selection_email_failed_at'] ?? ''),
+            'selectionEmailError' => (string) ($row['selection_email_error'] ?? ''),
+            'selectionEmailReady' => $statusKey === self::STATUS_SELECTED && (string) ($row['selection_email_sent_at'] ?? '') !== '',
+            'selectionEmailNeedsResend' => $statusKey === self::STATUS_SELECTED && (string) ($row['selection_email_sent_at'] ?? '') === '',
             'submittedAt' => (string) ($row['created_at'] ?? ''),
             'validatedAt' => (string) ($row['validated_at'] ?? ''),
             'reviewedByName' => (string) ($row['reviewed_by_name'] ?? ''),
@@ -347,6 +389,7 @@ class StageOneRegistrationService
         return match (strtolower(trim($status))) {
             self::STATUS_SELECTED, 'approved', 'selected' => self::STATUS_SELECTED,
             self::STATUS_SAVED, 'saved', 'held', 'deferred' => self::STATUS_SAVED,
+            self::STATUS_ARCHIVED, 'archived' => self::STATUS_ARCHIVED,
             default => self::STATUS_PENDING,
         };
     }
@@ -380,6 +423,136 @@ class StageOneRegistrationService
         return (new BeneficiaryProfileService())->activeBatchCapacity();
     }
 
+    private function syncLegacySelectedApplicants(): void
+    {
+        static $synced = false;
+        if ($synced) {
+            return;
+        }
+
+        $pdo = db();
+
+        try {
+            $rows = $pdo->query(
+                'SELECT
+                    applicant_profiles.id AS applicant_profile_id,
+                    users.full_name,
+                    users.email,
+                    applicant_profiles.contact_number,
+                    applicant_profiles.address_line,
+                    latest_applications.created_at AS application_created_at,
+                    applicant_profiles.updated_at AS profile_updated_at
+                 FROM applicant_profiles
+                 INNER JOIN users ON users.id = applicant_profiles.user_id
+                 INNER JOIN (
+                    SELECT applications.*
+                    FROM applications
+                    INNER JOIN (
+                        SELECT applicant_profile_id, MAX(id) AS latest_id
+                        FROM applications
+                        GROUP BY applicant_profile_id
+                    ) latest_application ON latest_application.latest_id = applications.id
+                 ) AS latest_applications ON latest_applications.applicant_profile_id = applicant_profiles.id
+                 LEFT JOIN stage_one_registrations AS stage_one
+                    ON LOWER(stage_one.email) COLLATE utf8mb4_unicode_ci
+                     = LOWER(users.email) COLLATE utf8mb4_unicode_ci
+                 LEFT JOIN beneficiary_profiles
+                    ON beneficiary_profiles.applicant_profile_id = applicant_profiles.id
+                   AND beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
+                 WHERE stage_one.id IS NULL
+                   AND (
+                        beneficiary_profiles.id IS NULL
+                        OR (
+                            COALESCE(beneficiary_profiles.approved_at, beneficiary_profiles.approval_date) IS NULL
+                            AND LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) NOT IN ("active", "inactive", "deceased")
+                        )
+                   )
+                 ORDER BY latest_applications.created_at ASC, applicant_profiles.id ASC'
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (Throwable $exception) {
+            log_database_query_failure('stage_one_registration.sync_legacy_selected.fetch', $exception);
+            return;
+        }
+
+        if ($rows === []) {
+            $synced = true;
+            return;
+        }
+
+        $pdo->beginTransaction();
+
+        try {
+            $statement = $pdo->prepare(
+                'INSERT INTO stage_one_registrations
+                 (reference_code, first_name, middle_name, last_name, full_name, email, contact_number, complete_address,
+                  business_photo_path, business_photo_original_name, business_photo_mime_type, business_photo_file_size,
+                  valid_id_path, valid_id_original_name, valid_id_mime_type, valid_id_file_size,
+                  validation_status, validated_by_user_id, validated_at, selection_email_sent_at, created_at, updated_at)
+                 VALUES
+                 (:reference_code, :first_name, :middle_name, :last_name, :full_name, :email, :contact_number, :complete_address,
+                  :business_photo_path, :business_photo_original_name, :business_photo_mime_type, :business_photo_file_size,
+                  :valid_id_path, :valid_id_original_name, :valid_id_mime_type, :valid_id_file_size,
+                  :validation_status, NULL, :validated_at, :selection_email_sent_at, :created_at, :updated_at)'
+            );
+
+            foreach ($rows as $row) {
+                $nameParts = $this->splitNameParts((string) ($row['full_name'] ?? ''));
+                $createdAt = (string) ($row['application_created_at'] ?? '') !== ''
+                    ? (string) $row['application_created_at']
+                    : date('Y-m-d H:i:s');
+                $updatedAt = (string) ($row['profile_updated_at'] ?? '') !== ''
+                    ? (string) $row['profile_updated_at']
+                    : $createdAt;
+
+                $statement->execute([
+                    'reference_code' => $this->generateReferenceCode($pdo),
+                    'first_name' => $nameParts['firstName'],
+                    'middle_name' => $nameParts['middleName'] !== '' ? $nameParts['middleName'] : null,
+                    'last_name' => $nameParts['lastName'],
+                    'full_name' => (string) ($row['full_name'] ?? ''),
+                    'email' => strtolower(trim((string) ($row['email'] ?? ''))),
+                    'contact_number' => (string) ($row['contact_number'] ?? ''),
+                    'complete_address' => (string) ($row['address_line'] ?? ''),
+                    'business_photo_path' => '',
+                    'business_photo_original_name' => '',
+                    'business_photo_mime_type' => null,
+                    'business_photo_file_size' => null,
+                    'valid_id_path' => '',
+                    'valid_id_original_name' => '',
+                    'valid_id_mime_type' => null,
+                    'valid_id_file_size' => null,
+                    'validation_status' => self::STATUS_SELECTED,
+                    'validated_at' => $createdAt,
+                    'selection_email_sent_at' => $createdAt,
+                    'created_at' => $createdAt,
+                    'updated_at' => $updatedAt,
+                ]);
+            }
+
+            $pdo->commit();
+            $synced = true;
+        } catch (Throwable $exception) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            log_database_query_failure('stage_one_registration.sync_legacy_selected.insert', $exception);
+        }
+    }
+
+    private function splitNameParts(string $fullName): array
+    {
+        $parts = array_values(array_filter(preg_split('/\s+/', trim($fullName)) ?: [], static fn (string $value): bool => $value !== ''));
+        $firstName = $parts[0] ?? 'Legacy';
+        $lastName = count($parts) > 1 ? (string) array_pop($parts) : 'Applicant';
+        $middleName = count($parts) > 1 ? trim(implode(' ', array_slice($parts, 1))) : '';
+
+        return [
+            'firstName' => $firstName,
+            'middleName' => $middleName,
+            'lastName' => $lastName,
+        ];
+    }
+
     private function sendSelectionEmail(array $registration): bool
     {
         $recipient = trim((string) ($registration['email'] ?? ''));
@@ -389,23 +562,62 @@ class StageOneRegistrationService
 
         $name = htmlspecialchars((string) ($registration['fullName'] ?? 'Applicant'), ENT_QUOTES);
         $signupUrl = htmlspecialchars(app_url('signup'), ENT_QUOTES);
-        $portalUrl = htmlspecialchars(app_url('portal'), ENT_QUOTES);
+        $portalLoginUrl = htmlspecialchars(app_url('portal-login'), ENT_QUOTES);
         $subject = 'SMART LEAP Registration Approved';
         $body = sprintf(
             '<p>Hello %s,</p>'
             . '<p>Your SMART LEAP registration has been selected for the current batch.</p>'
             . '<p>You may now create your SMART LEAP portal account using this link:</p>'
             . '<p><a href="%s">%s</a></p>'
-            . '<p>After creating your account, continue your application in the portal.</p>'
-            . '<p>Portal: <a href="%s">%s</a></p>',
+            . '<p>After creating your account, sign in through the applicant portal to continue your application.</p>'
+            . '<p>Applicant Portal Login: <a href="%s">%s</a></p>',
             $name,
             $signupUrl,
             $signupUrl,
-            $portalUrl,
-            $portalUrl
+            $portalLoginUrl,
+            $portalLoginUrl
         );
 
         return (new MailService())->send($recipient, $subject, $body, null);
+    }
+
+    private function persistSelectionEmailStatus(int $registrationId, string $recipientEmail, bool $emailSent): void
+    {
+        if ($registrationId <= 0) {
+            return;
+        }
+
+        $errorMessage = null;
+        if (!$emailSent) {
+            $statement = db()->prepare(
+                'SELECT error_message
+                 FROM email_logs
+                 WHERE recipient_email = :recipient_email
+                   AND subject = :subject
+                 ORDER BY id DESC
+                 LIMIT 1'
+            );
+            $statement->execute([
+                'recipient_email' => $recipientEmail,
+                'subject' => 'SMART LEAP Registration Approved',
+            ]);
+            $errorMessage = $statement->fetchColumn();
+            $errorMessage = is_string($errorMessage) ? trim($errorMessage) : null;
+        }
+
+        db()->prepare(
+            'UPDATE stage_one_registrations
+             SET selection_email_sent_at = :selection_email_sent_at,
+                 selection_email_failed_at = :selection_email_failed_at,
+                 selection_email_error = :selection_email_error,
+                 updated_at = NOW()
+             WHERE id = :id'
+        )->execute([
+            'selection_email_sent_at' => $emailSent ? date('Y-m-d H:i:s') : null,
+            'selection_email_failed_at' => $emailSent ? null : date('Y-m-d H:i:s'),
+            'selection_email_error' => $emailSent ? null : ($errorMessage !== '' ? $errorMessage : 'Email delivery failed.'),
+            'id' => $registrationId,
+        ]);
     }
 
     private function emailExistsInPortalUsers(string $email): bool
@@ -472,6 +684,9 @@ class StageOneRegistrationService
                 validation_status VARCHAR(40) NOT NULL DEFAULT "pending",
                 validated_by_user_id BIGINT UNSIGNED NULL,
                 validated_at DATETIME NULL,
+                selection_email_sent_at DATETIME NULL,
+                selection_email_failed_at DATETIME NULL,
+                selection_email_error TEXT NULL,
                 created_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 CONSTRAINT fk_stage_one_registrations_reviewer FOREIGN KEY (validated_by_user_id) REFERENCES users(id),
@@ -481,6 +696,60 @@ class StageOneRegistrationService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
 
+        $this->ensureNullableDateColumn('stage_one_registrations', 'selection_email_sent_at', 'validated_at');
+        $this->ensureNullableDateColumn('stage_one_registrations', 'selection_email_failed_at', 'selection_email_sent_at');
+        $this->ensureNullableTextColumn('stage_one_registrations', 'selection_email_error', 'selection_email_failed_at');
+
         $ready = true;
+    }
+
+    private function ensureNullableDateColumn(string $table, string $column, string $afterColumn): void
+    {
+        $statement = db()->prepare(
+            'SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = :table_name
+               AND column_name = :column_name'
+        );
+        $statement->execute([
+            'table_name' => $table,
+            'column_name' => $column,
+        ]);
+
+        if ((int) $statement->fetchColumn() > 0) {
+            return;
+        }
+
+        db()->exec(sprintf(
+            'ALTER TABLE %s ADD COLUMN %s DATETIME NULL AFTER %s',
+            $table,
+            $column,
+            $afterColumn
+        ));
+    }
+
+    private function ensureNullableTextColumn(string $table, string $column, string $afterColumn): void
+    {
+        $statement = db()->prepare(
+            'SELECT COUNT(*) FROM information_schema.columns
+             WHERE table_schema = DATABASE()
+               AND table_name = :table_name
+               AND column_name = :column_name'
+        );
+        $statement->execute([
+            'table_name' => $table,
+            'column_name' => $column,
+        ]);
+
+        if ((int) $statement->fetchColumn() > 0) {
+            return;
+        }
+
+        db()->exec(sprintf(
+            'ALTER TABLE %s ADD COLUMN %s TEXT NULL AFTER %s',
+            $table,
+            $column,
+            $afterColumn
+        ));
     }
 }

@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Dashboard script for a pp li ca nt p ro fi le.
+ * Controls one role-specific workspace page, including its live state, interactions, and any page-owned modals or drawers.
+ */
 (function () {
     const REQUIRED_FILES = [
         { key: 'validId', label: 'Valid ID' },

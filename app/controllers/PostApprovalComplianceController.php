@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Applicant and beneficiary post-approval form controller.
+ * Handles save, submit, show, and upload actions for availment and related compliance form payloads inside the post-approval workspace.
+ */
 
 declare(strict_types=1);
 

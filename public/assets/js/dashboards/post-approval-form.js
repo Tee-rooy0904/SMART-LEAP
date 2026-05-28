@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Dashboard script for p os t a pp ro va l f or m.
+ * Controls one role-specific workspace page, including its live state, interactions, and any page-owned modals or drawers.
+ */
 (function () {
     const FIELD_OWNER_APPLICANT = 'applicant';
     const FIELD_OWNER_STAFF = 'staff';

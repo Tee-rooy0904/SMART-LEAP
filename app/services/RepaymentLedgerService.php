@@ -1,5 +1,6 @@
 <?php
 
+
 declare(strict_types=1);
 
 namespace App\Services;
@@ -199,9 +200,10 @@ class RepaymentLedgerService
         $paymentDate = trim((string) ($payload['paymentDate'] ?? $repayment['payment_date'] ?? ''));
         $orNumber = $this->sanitizeOrNumber((string) ($payload['orNumber'] ?? $payload['officialReceiptNumber'] ?? $repayment['official_receipt_number'] ?? ''));
         $coverageMonth = trim((string) ($payload['month'] ?? $payload['coverageMonth'] ?? ''));
+        $currentHardCopyOfficeStatus = $this->normalizeHardCopyOfficeStatus((string) ($repayment['hard_copy_office_status'] ?? '')) ?? 'not_submitted';
         $hardCopyOfficeStatus = array_key_exists('hardCopyOfficeStatus', $payload)
             ? $this->normalizeHardCopyOfficeStatus((string) $payload['hardCopyOfficeStatus'])
-            : ($this->normalizeHardCopyOfficeStatus((string) ($repayment['hard_copy_office_status'] ?? '')) ?? 'not_submitted');
+            : $currentHardCopyOfficeStatus;
 
         if ($amount <= 0) {
             return ['ok' => false, 'message' => 'Repayment amount must be greater than zero.'];
@@ -221,6 +223,10 @@ class RepaymentLedgerService
 
         if ($hardCopyOfficeStatus === null) {
             return ['ok' => false, 'message' => 'Unsupported hard copy office status.'];
+        }
+
+        if (str_contains($role, 'social') && !str_contains($role, 'admin') && $hardCopyOfficeStatus !== $currentHardCopyOfficeStatus) {
+            return ['ok' => false, 'message' => 'Social Workers can correct repayment input data, but cannot update repayment or office status fields.'];
         }
 
         $beneficiaryProfileId = (int) ($repayment['beneficiary_profile_id'] ?? 0);
@@ -1172,13 +1178,7 @@ class RepaymentLedgerService
 
     private function findAssignedBarangayIds(int $staffProfileId): array
     {
-        $statement = db()->prepare(
-            'SELECT barangay_id
-             FROM staff_barangay_assignments
-             WHERE staff_profile_id = :staff_profile_id'
-        );
-        $statement->execute(['staff_profile_id' => $staffProfileId]);
-        return array_values(array_filter(array_map(static fn($value): int => (int) $value, $statement->fetchAll(PDO::FETCH_COLUMN) ?: [])));
+        return (new BarangayAssignmentService())->activeBarangayIdsForStaffProfileId($staffProfileId);
     }
 
     private function ensureHardCopyOfficeStatusColumn(): void

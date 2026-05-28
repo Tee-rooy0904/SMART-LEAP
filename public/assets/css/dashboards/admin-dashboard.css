@@ -73,6 +73,13 @@
   color: #102347;
 }
 
+.admin-v1-kpi-card__meta {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #5b6f88;
+  line-height: 1.25;
+}
+
 .admin-v1-kpi-card--applications {
   border-color: rgba(59, 130, 246, 0.26);
 }

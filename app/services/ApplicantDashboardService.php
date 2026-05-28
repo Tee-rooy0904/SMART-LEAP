@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Applicant dashboard state service.
+ * Builds the private applicant workspace payload: profile progress, application review state, requirement summaries, training progress, post-approval summary, and next-step guidance.
+ */
 
 declare(strict_types=1);
 
@@ -42,11 +47,7 @@ class ApplicantDashboardService
             return null;
         }
 
-        $complete = $application !== null && in_array(
-            (string) ($application['status'] ?? ''),
-            APPLICATION_ALLOWED_STATUSES,
-            true
-        );
+        $completion = $this->calculateProfileCompletion($profile);
 
         return [
             'id' => (int) $profile['id'],
@@ -64,9 +65,72 @@ class ApplicantDashboardService
             'is4ps' => $profile['is4ps'],
             'batchNo' => $this->formatBatchNo($profile['batchNo'] ?? ''),
             'status' => $profile['status'],
-            'completionPercent' => $complete ? 100 : 70,
-            'completionLabel' => $complete ? 'Complete' : 'Needs updates',
+            'completionPercent' => $completion['percent'],
+            'completionLabel' => $completion['label'],
+            'completionSummary' => sprintf('%d/%d required fields complete', $completion['completed'], $completion['total']),
+            'applicationReady' => $application !== null && in_array(
+                (string) ($application['status'] ?? ''),
+                APPLICATION_ALLOWED_STATUSES,
+                true
+            ),
         ];
+    }
+
+    private function calculateProfileCompletion(array $profile): array
+    {
+        $requiredFields = [
+            'birthdate' => fn (mixed $value): bool => $this->isValidDateValue($value),
+            'gender' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'contactNumber' => fn (mixed $value): bool => $this->isValidContactNumber($value),
+            'address' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'barangay' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'is4ps' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'educationalAttainment' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'sector' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'livelihood' => fn (mixed $value): bool => $this->hasTextValue($value),
+            'businessName' => fn (mixed $value): bool => $this->hasTextValue($value),
+        ];
+
+        if (strcasecmp(trim((string) ($profile['sector'] ?? '')), 'Other') === 0) {
+            $requiredFields['sectorOtherSpecify'] = fn (mixed $value): bool => $this->hasTextValue($value);
+        }
+
+        $total = count($requiredFields);
+        $completed = 0;
+
+        foreach ($requiredFields as $field => $isComplete) {
+            if ($isComplete($profile[$field] ?? null)) {
+                $completed++;
+            }
+        }
+
+        $percent = $total > 0 ? (int) round(($completed / $total) * 100) : 0;
+
+        return [
+            'completed' => $completed,
+            'total' => $total,
+            'percent' => $percent,
+            'label' => $completed >= $total ? 'Complete' : 'In progress',
+        ];
+    }
+
+    private function hasTextValue(mixed $value): bool
+    {
+        return trim((string) $value) !== '';
+    }
+
+    private function isValidDateValue(mixed $value): bool
+    {
+        $date = trim((string) $value);
+        return $date !== '' && strtotime($date) !== false;
+    }
+
+    private function isValidContactNumber(mixed $value): bool
+    {
+        $digits = preg_replace('/\D+/', '', (string) $value);
+        $length = strlen($digits);
+
+        return $length >= 10 && $length <= 13;
     }
 
     private function formatBatchNo(?string $batchNo): string

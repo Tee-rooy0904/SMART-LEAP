@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Shared training data module for SMART LEAP dashboards.
  * Handles session scheduling, attendance, and roster statistics with a shared storage layer.
  */

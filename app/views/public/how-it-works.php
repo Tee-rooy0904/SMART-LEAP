@@ -1,4 +1,9 @@
 <?php /** @var string $baseUrl */ ?>
+/**
+ * SMART LEAP FILE GUIDE
+ * Public portal view for h ow i t w or ks.
+ * Defines one public-facing SMART LEAP page used before or outside the private applicant or beneficiary dashboards.
+ */
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -43,18 +48,18 @@
             <section class="content-hero">
                 <div class="container content-hero__inner">
                     <span class="section-kicker">How it works</span>
-                    <h1 class="section-title">Follow the SMART LEAP service flow from account creation to beneficiary continuation.</h1>
-                    <p class="page-intro">Dinhi ibutang ang pasabot sa proseso, lahi sa home page nga naka-focus sa sign-in.</p>
+                    <h1 class="section-title">Follow the SMART LEAP service flow from public registration to beneficiary continuation.</h1>
+                    <p class="page-intro">This page explains the real two-stage process: public registration first, then private applicant portal access for batch-approved registrants.</p>
                 </div>
             </section>
             <section class="content-section">
                 <div class="container timeline-list">
-                    <article class="timeline-item is-active" tabindex="0" data-timeline-item data-detail-title="Create Account" data-detail-copy="Register using an active email address. Use the same account for applicant access and beneficiary continuation."><span class="timeline-item__number">1</span><div><h2>Create Account</h2><p>Register using an active email address.</p></div></article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Kompletoha ang Aplikasyon" data-detail-copy="Kompletoha una ang personal nga impormasyon, dayon i-upload ang required initial documents sulod sa applicant portal."><span class="timeline-item__number">2</span><div><h2>Kompletoha ang Aplikasyon</h2><p>Pun-i ang imong detalye ug i-upload ang required files.</p></div></article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Review sa Aplikasyon" data-detail-copy="Susihon sa CSWDD ang imong uploaded files ug submitted records. Kung kinahanglan ug corrections, makita sa portal ang sunod nga action."><span class="timeline-item__number">3</span><div><h2>Review sa Aplikasyon</h2><p>Susihon sa CSWDD ang imong submitted details ug uploads.</p></div></article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Pahibalo sa Training" data-detail-copy="Ang qualified applicants makadawat ug official training schedules, notices, ug instructions pinaagi sa ilang account ug registered email."><span class="timeline-item__number">4</span><div><h2>Pahibalo sa Training</h2><p>Ang qualified applicants makadawat ug official training instructions.</p></div></article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Post-Training Compliance" data-detail-copy="At this stage, the portal may unlock fill-up form requirements such as Availment Form, Validation Form, Mungkahing Proyekto, Business Plan, and Buhat sa Pagpanumpa."><span class="timeline-item__number">5</span><div><h2>Post-Training Compliance</h2><p>Kompletoha ang follow-up forms o required portal tasks.</p></div></article>
-                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Benepisyaryo Access" data-detail-copy="Once approved, the same portal continues to serve as the beneficiary entry point for training and post-approval tasks."><span class="timeline-item__number">6</span><div><h2>Benepisyaryo Access</h2><p>Continue inside the same portal as a beneficiary.</p></div></article>
+                    <article class="timeline-item is-active" tabindex="0" data-timeline-item data-detail-title="Stage 1 Public Registration" data-detail-copy="Start from the public portal by submitting your basic registration details, valid ID, and proof of existing microbusiness."><span class="timeline-item__number">1</span><div><h2>Stage 1 Public Registration</h2><p>Submit your basic registration details and initial proof files.</p></div></article>
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Admin Batch Validation" data-detail-copy="CSWDD reviews Stage 1 registrants and validates who can move into the active SMART LEAP batch."><span class="timeline-item__number">2</span><div><h2>Admin Batch Validation</h2><p>CSWDD reviews Stage 1 registrants for batch selection.</p></div></article>
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Current Batch or Next Batch" data-detail-copy="Selected registrants proceed to the current batch, while others may be saved for the next batch when the active batch is already full."><span class="timeline-item__number">3</span><div><h2>Current Batch or Next Batch</h2><p>Validated registrants are assigned either to the active batch or the next one.</p></div></article>
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Email Invitation" data-detail-copy="If selected for the current batch, you receive an official email invitation with the link for Stage 2 account creation."><span class="timeline-item__number">4</span><div><h2>Email Invitation</h2><p>Selected registrants receive the Stage 2 access link through email.</p></div></article>
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Stage 2 Private Applicant Portal" data-detail-copy="Batch-approved registrants create their account and enter the private SMART LEAP applicant portal using the official invitation."><span class="timeline-item__number">5</span><div><h2>Stage 2 Private Applicant Portal</h2><p>Create your account and enter the private applicant portal.</p></div></article>
+                    <article class="timeline-item" tabindex="0" data-timeline-item data-detail-title="Complete the Full Application" data-detail-copy="Inside the private applicant portal, complete your profile, upload requirements, monitor status updates, and check training schedules and official notices."><span class="timeline-item__number">6</span><div><h2>Complete the Full Application</h2><p>Upload requirements, monitor status, and check your training schedules inside the portal.</p></div></article>
                 </div>
             </section>
         </main>

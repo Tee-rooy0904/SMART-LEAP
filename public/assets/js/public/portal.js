@@ -1,3 +1,8 @@
+/*
+ * SMART LEAP FILE GUIDE
+ * Public portal script for p or ta l.
+ * Handles browser-side behavior for one public SMART LEAP page or account-access flow.
+ */
 (function () {
     const AUTH_LOADER_MIN_MS = 2400;
     const MAX_PUBLIC_FILE_BYTES = 2 * 1024 * 1024;
@@ -167,13 +172,21 @@
     }
 
     function setupAuth() {
-        const form = document.getElementById('authForm');
+        const form = document.getElementById('authForm') || document.getElementById('loginForm');
         const email = document.getElementById('email');
         const password = document.getElementById('password');
-        const authError = document.querySelector('.auth-error');
-        const signInBtn = document.getElementById('signInBtn');
+        let authError = form?.querySelector('.auth-error, .auth-feedback') || document.querySelector('.auth-error, .auth-feedback');
+        const signInBtn = document.getElementById('signInBtn') || form?.querySelector('button[type="submit"]');
         const entryPoint = form?.querySelector('input[name="entryPoint"]');
         const capsHint = document.getElementById('capsHint');
+
+        if (form && !authError) {
+            authError = document.createElement('p');
+            authError.className = 'auth-error auth-inline-alert';
+            authError.hidden = true;
+            authError.setAttribute('role', 'alert');
+            form.appendChild(authError);
+        }
 
         document.querySelectorAll('[data-action="open-auth"]').forEach((button) => {
             button.addEventListener('click', (event) => {
@@ -186,7 +199,8 @@
             });
         });
 
-        document.querySelector('[data-action="toggle-password"]')?.addEventListener('click', (event) => {
+        const togglePasswordButton = document.querySelector('[data-action="toggle-password"], #showPassword');
+        togglePasswordButton?.addEventListener('click', (event) => {
             event.preventDefault();
             if (!password) return;
             const show = password.type === 'password';

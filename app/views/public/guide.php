@@ -1,4 +1,9 @@
 <?php /** @var string $baseUrl */ ?>
+/**
+ * SMART LEAP FILE GUIDE
+ * Public portal view for g ui de.
+ * Defines one public-facing SMART LEAP page used before or outside the private applicant or beneficiary dashboards.
+ */
 <!DOCTYPE html>
 <html lang="en">
 <head>

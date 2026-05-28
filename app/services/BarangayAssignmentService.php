@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -19,6 +18,10 @@ class BarangayAssignmentService
 
         $cleanBarangayIds = array_values(array_unique(array_filter(array_map(static fn ($id): int => (int) $id, $barangayIds))));
         $validBarangayIds = $this->filterExistingBarangayIds($cleanBarangayIds);
+        $assignedDistricts = $this->districtNamesForBarangayIds($validBarangayIds);
+        if (count($assignedDistricts) > 1) {
+            return ['ok' => false, 'errors' => ['barangayIds' => 'A PDO can only be assigned to one district at a time.']];
+        }
         $existingBarangayIds = $this->currentAssignmentBarangayIds((int) $staff['staff_profile_id']);
         $affectedBarangayIds = array_values(array_unique(array_merge($existingBarangayIds, $validBarangayIds)));
 
@@ -102,16 +105,16 @@ class BarangayAssignmentService
             return [];
         }
 
-        $statement = db()->prepare(
-            'SELECT barangays.id, barangays.name, barangays.district
-             FROM staff_barangay_assignments
-             INNER JOIN barangays ON barangays.id = staff_barangay_assignments.barangay_id
-             WHERE staff_barangay_assignments.staff_profile_id = :staff_profile_id
-               AND staff_barangay_assignments.ended_at IS NULL
-             ORDER BY barangays.name ASC'
-        );
-        $statement->execute(['staff_profile_id' => (int) $staff['staff_profile_id']]);
-        $rows = $statement->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        return $this->activeAssignmentsForStaffProfileId((int) $staff['staff_profile_id']);
+    }
+
+    public function activeAssignmentsForStaffProfileId(int $staffProfileId): array
+    {
+        if ($staffProfileId <= 0) {
+            return [];
+        }
+
+        $rows = $this->normalizeSingleDistrictScope($staffProfileId);
 
         return array_map(
             static fn (array $row): array => [
@@ -121,6 +124,14 @@ class BarangayAssignmentService
             ],
             $rows
         );
+    }
+
+    public function activeBarangayIdsForStaffProfileId(int $staffProfileId): array
+    {
+        return array_values(array_map(
+            static fn (array $row): int => (int) ($row['id'] ?? 0),
+            $this->activeAssignmentsForStaffProfileId($staffProfileId)
+        ));
     }
 
     private function findStaffProfile(int $userId): ?array
@@ -164,6 +175,108 @@ class BarangayAssignmentService
         $statement->execute(['staff_profile_id' => $staffProfileId]);
 
         return array_map('intval', $statement->fetchAll(\PDO::FETCH_COLUMN) ?: []);
+    }
+
+    private function normalizeSingleDistrictScope(int $staffProfileId): array
+    {
+        $statement = db()->prepare(
+            'SELECT staff_barangay_assignments.id AS assignment_id,
+                    staff_barangay_assignments.assigned_at,
+                    barangays.id,
+                    barangays.name,
+                    barangays.district
+             FROM staff_barangay_assignments
+             INNER JOIN barangays ON barangays.id = staff_barangay_assignments.barangay_id
+             WHERE staff_barangay_assignments.staff_profile_id = :staff_profile_id
+               AND staff_barangay_assignments.ended_at IS NULL
+             ORDER BY staff_barangay_assignments.assigned_at DESC, staff_barangay_assignments.id DESC, barangays.name ASC'
+        );
+        $statement->execute(['staff_profile_id' => $staffProfileId]);
+        $rows = $statement->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        if ($rows === []) {
+            return [];
+        }
+
+        $districtBuckets = [];
+        foreach ($rows as $row) {
+            $districtKey = strtolower(trim((string) ($row['district'] ?? '')));
+            $districtBuckets[$districtKey][] = $row;
+        }
+
+        if (count($districtBuckets) <= 1) {
+            usort($rows, static fn (array $left, array $right): int => strcmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
+            return $rows;
+        }
+
+        $preferredDistrictKey = '';
+        foreach ($rows as $row) {
+            $candidate = strtolower(trim((string) ($row['district'] ?? '')));
+            if ($candidate !== '') {
+                $preferredDistrictKey = $candidate;
+                break;
+            }
+        }
+        if ($preferredDistrictKey === '') {
+            $preferredDistrictKey = array_key_first($districtBuckets) ?: '';
+        }
+
+        $keepRows = $districtBuckets[$preferredDistrictKey] ?? [];
+        $removeBarangayIds = [];
+        foreach ($districtBuckets as $districtKey => $districtRows) {
+            if ($districtKey === $preferredDistrictKey) {
+                continue;
+            }
+            foreach ($districtRows as $districtRow) {
+                $removeBarangayIds[] = (int) ($districtRow['id'] ?? 0);
+            }
+        }
+        $removeBarangayIds = array_values(array_filter(array_unique($removeBarangayIds)));
+
+        if ($removeBarangayIds !== []) {
+            try {
+                $placeholders = implode(',', array_fill(0, count($removeBarangayIds), '?'));
+                $update = db()->prepare(
+                    "UPDATE staff_barangay_assignments
+                     SET ended_at = NOW(), updated_at = NOW()
+                     WHERE staff_profile_id = ?
+                       AND ended_at IS NULL
+                       AND barangay_id IN ($placeholders)"
+                );
+                $update->bindValue(1, $staffProfileId, \PDO::PARAM_INT);
+                foreach ($removeBarangayIds as $index => $barangayId) {
+                    $update->bindValue($index + 2, $barangayId, \PDO::PARAM_INT);
+                }
+                $update->execute();
+                $this->refreshAssignedStaffForBarangays($removeBarangayIds);
+            } catch (\Throwable $exception) {
+                log_database_query_failure('team.normalize_single_district_scope', $exception, [
+                    'staff_profile_id' => $staffProfileId,
+                    'remove_barangay_ids' => $removeBarangayIds,
+                ]);
+            }
+        }
+
+        usort($keepRows, static fn (array $left, array $right): int => strcmp((string) ($left['name'] ?? ''), (string) ($right['name'] ?? '')));
+        return $keepRows;
+    }
+
+    private function districtNamesForBarangayIds(array $barangayIds): array
+    {
+        if ($barangayIds === []) {
+            return [];
+        }
+
+        $placeholders = implode(',', array_fill(0, count($barangayIds), '?'));
+        $statement = db()->prepare("SELECT DISTINCT COALESCE(district, '') FROM barangays WHERE id IN ($placeholders)");
+        foreach ($barangayIds as $index => $barangayId) {
+            $statement->bindValue($index + 1, $barangayId, \PDO::PARAM_INT);
+        }
+        $statement->execute();
+
+        return array_values(array_filter(array_map(
+            static fn ($value): string => trim((string) $value),
+            $statement->fetchAll(\PDO::FETCH_COLUMN) ?: []
+        )));
     }
 
     private function reassignApplicationsForBarangays(array $barangayIds): void

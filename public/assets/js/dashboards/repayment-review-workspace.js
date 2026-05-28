@@ -1,4 +1,5 @@
 (function () {
+  // Shared repayment math used by both Admin and PDO review workspaces.
   const MONTHLY_EXPECTED = 625;
   const TOTAL_MONTHS = 24;
   const TOTAL_EXPECTED = MONTHLY_EXPECTED * TOTAL_MONTHS;
@@ -123,10 +124,22 @@
     const normalized = normalizeFilterValue(value);
     if (!normalized) return '--';
     if (normalized.includes('buy') || normalized.includes('sell')) return 'Buy and Sell';
-    if (normalized.includes('home')) return 'Homemade';
+    if (normalized.includes('food') || normalized.includes('beverage') || normalized.includes('balut') || normalized.includes('snack') || normalized.includes('eatery') || normalized.includes('carinderia')) return 'Food and Beverages';
     if (normalized.includes('livestock') || normalized.includes('animal') || normalized.includes('poultry') || normalized.includes('hog')) return 'Livestock';
-    if (normalized.includes('service')) return 'Services';
-    if (normalized.includes('establishment') || normalized.includes('store') || normalized.includes('shop')) return 'Establishment';
+    if (
+      normalized.includes('paluwagan')
+      || normalized.includes('microenterprise')
+      || normalized.includes('micro enterprise')
+      || normalized.includes('micro-enterprise')
+      || normalized.includes('service')
+      || normalized.includes('establishment')
+      || normalized.includes('store')
+      || normalized.includes('shop')
+      || normalized.includes('home')
+      || normalized.includes('production')
+      || normalized.includes('homemade')
+      || normalized.includes('processing')
+    ) return 'Establishment';
     return text(value) || '--';
   }
 
@@ -200,6 +213,44 @@
       partial_paid: 'warning',
       fully_paid: 'success',
     })[key] || 'muted';
+  }
+
+  function isDeceasedStatus(value) {
+    return normalizeFilterValue(value).replace(/[^a-z]/g, '') === 'deceased';
+  }
+
+  function activeCoMaker(meta) {
+    const registration = meta?.coMakerRegistration;
+    if (!registration || typeof registration !== 'object') return null;
+    const status = normalizeFilterValue(registration.registrationStatus || '');
+    if (!['active', 'approved'].includes(status)) return null;
+    const name = text(registration.name);
+    return name ? registration : null;
+  }
+
+  function resolveResponsiblePayer(meta, fallbackName) {
+    const originalName = text(meta?.name || fallbackName || 'Unnamed beneficiary');
+    const coMaker = isDeceasedStatus(meta?.programStatus || meta?.beneficiaryStatus || meta?.status)
+      ? activeCoMaker(meta)
+      : null;
+    if (!coMaker) {
+      return {
+        name: originalName,
+        originalName,
+        isCoMakerTakeover: false,
+        relationship: '',
+        email: '',
+        contactNumber: '',
+      };
+    }
+    return {
+      name: text(coMaker.name) || originalName,
+      originalName,
+      isCoMakerTakeover: true,
+      relationship: text(coMaker.relationshipToPrimaryBeneficiary),
+      email: text(coMaker.email),
+      contactNumber: text(coMaker.contactNumber),
+    };
   }
 
   function chipMarkup(label, tone) {
@@ -437,11 +488,18 @@
       const rosterLabel = rosterStateLabel(rosterState);
       const pendingCount = records.filter((record) => ['uploaded', 'under_review'].includes(record.stage)).length;
       const latestRecord = records[0] || null;
+      const payer = resolveResponsiblePayer(meta, latestRecord?.beneficiaryName);
 
       return {
         key: entry.key,
         beneficiaryId: entry.beneficiaryId || Number(meta.id || 0) || 0,
-        name: text(meta.name || latestRecord?.beneficiaryName || 'Unnamed beneficiary'),
+        name: payer.name,
+        originalBeneficiaryName: payer.originalName,
+        responsiblePayerName: payer.name,
+        isCoMakerTakeover: payer.isCoMakerTakeover,
+        responsiblePayerRelationship: payer.relationship,
+        responsiblePayerEmail: payer.email,
+        responsiblePayerContactNumber: payer.contactNumber,
         email: text(meta.email || latestRecord?.beneficiaryEmail),
         businessName: text(meta.businessName || latestRecord?.beneficiaryBusiness || 'No business name'),
         barangay: text(meta.barangay || latestRecord?.beneficiaryBarangay || 'Unassigned'),
@@ -533,11 +591,13 @@
     openFile(source, false);
   }
 
+  // Build one reusable repayment workspace instance for a staff page by wiring IDs to shared roster and modal logic.
   function createWorkspace(config) {
     const ids = config.ids || {};
     const initialPayments = Array.isArray(config.initialPayments)
       ? config.initialPayments.map(normalizePayment).filter(Boolean)
       : [];
+    // Local workspace state for the current staff page's roster, filters, and modal selection.
     const state = {
       payments: initialPayments,
       roster: [],
@@ -576,6 +636,7 @@
       }
     }
 
+    // Pull the live beneficiary source records from whichever staff dashboard is hosting the workspace.
     function beneficiaryRecords() {
       if (typeof config.beneficiaryRecordsProvider !== 'function') return [];
       const records = config.beneficiaryRecordsProvider();
@@ -586,6 +647,7 @@
       return state.roster.find((entry) => entry.key === state.selectedBeneficiaryKey) || null;
     }
 
+    // Prefer the active upload under review, falling back to the first actionable repayment record.
     function activeRecord(beneficiary) {
       if (!beneficiary) return null;
       if (state.activeRecordId > 0) {
@@ -694,12 +756,15 @@
           entry.businessName,
           entry.barangay,
           entry.assignedPdo,
+          entry.originalBeneficiaryName,
+          entry.responsiblePayerRelationship,
           entry.records.map((record) => record.orNumber).join(' '),
         ].join(' ');
         return normalizeFilterValue(haystack).includes(search);
       });
     }
 
+    // Paint the filtered beneficiary roster and attach the Open Repayments button state for the active row.
     function renderRosterTable() {
       const body = byId(ids.rosterBody);
       const countNode = byId(ids.rosterCount);
@@ -720,8 +785,9 @@
           <tr class="${isActive ? 'is-active' : ''}">
             <td>
               <div class="admin-repayment-person">
-                <strong>${escapeHtml(entry.name)}</strong>
-                <span>${escapeHtml(entry.businessName || 'No business name')}</span>
+                <strong>${escapeHtml(entry.responsiblePayerName || entry.name)}</strong>
+                <span>${entry.isCoMakerTakeover ? `Current payer for ${escapeHtml(entry.originalBeneficiaryName || 'deceased beneficiary')}` : escapeHtml(entry.businessName || 'No business name')}</span>
+                ${entry.isCoMakerTakeover && entry.responsiblePayerRelationship ? `<span>${escapeHtml(entry.responsiblePayerRelationship)}</span>` : ''}
               </div>
             </td>
             <td>${escapeHtml(entry.gender || '--')}</td>
@@ -742,6 +808,7 @@
       }).join('');
     }
 
+    // Show every recorded month for the selected beneficiary and highlight whichever upload is under active review.
     function renderHistory(beneficiary, currentRecord) {
       const body = byId(ids.historyBody);
       if (!body) return;
@@ -779,6 +846,7 @@
       }).join('');
     }
 
+    // Enable or lock review buttons depending on verification progress and hard-copy office confirmation.
     function renderDecisionState(beneficiary, record) {
       const remarksField = byId(ids.remarks);
       const hardCopyInput = byId(ids.hardCopyInput);
@@ -883,6 +951,7 @@
       noteNode.textContent = 'No office receipt yet. Use Verify Partial while this remains upload-only.';
     }
 
+    // Sync every repayment modal panel from the selected beneficiary and the currently focused upload record.
     function renderModal() {
       const beneficiary = selectedBeneficiary();
       const record = activeRecord(beneficiary);
@@ -897,10 +966,13 @@
         beneficiary.barangay || '--',
         beneficiary.assignedPdo || '--',
       ].filter((value, index) => index === 0 ? Boolean(text(value)) : true);
-      setText(ids.modalTitle, beneficiary.name || 'Beneficiary repayment review');
+      if (beneficiary.isCoMakerTakeover) {
+        subtitleParts.unshift(`Original beneficiary: ${beneficiary.originalBeneficiaryName || '--'}`);
+      }
+      setText(ids.modalTitle, beneficiary.responsiblePayerName || beneficiary.name || 'Beneficiary repayment review');
       setText(ids.modalSubtitle, subtitleParts.join(' | '));
       setText(ids.modalStatus, record ? submissionStatusLabel(record) : beneficiary.repayment.label);
-      setText(ids.beneficiaryName, beneficiary.name || '--');
+      setText(ids.beneficiaryName, beneficiary.isCoMakerTakeover ? `${beneficiary.responsiblePayerName || beneficiary.name} (co-maker)` : (beneficiary.name || '--'));
       setText(ids.business, beneficiary.businessName || '--');
       setText(ids.barangay, beneficiary.barangay || '--');
       setText(ids.assignedPdo, beneficiary.assignedPdo || '--');
@@ -918,7 +990,7 @@
 
       setText(ids.orNumber, record?.orNumber || '--');
       setText(ids.paymentDate, formatDate(record?.paymentDate));
-      setText(ids.submittedBy, beneficiary.name || '--');
+      setText(ids.submittedBy, beneficiary.responsiblePayerName || beneficiary.name || '--');
       setText(ids.submissionType, deriveSubmissionType(record));
       setText(ids.coverage, deriveCoverageLabel(record));
       setText(ids.amount, formatCurrency(record?.amount || 0));
@@ -1037,6 +1109,7 @@
       renderRosterTable();
     }
 
+    // Recompute the roster after any search, barangay, PDO, repayment-state, or date-range change.
     function applyFilters() {
       state.filters.search = text(byId(ids.search)?.value);
       state.filters.barangay = normalizeFilterValue(byId(ids.barangayFilter)?.value);
@@ -1108,7 +1181,6 @@
         selectBeneficiary(trigger.getAttribute('data-repayment-open') || '');
       });
 
-      byId(ids.applyFilters)?.addEventListener('click', applyFilters);
       byId(ids.resetFilters)?.addEventListener('click', resetFilters);
 
       [ids.search, ids.barangayFilter, ids.pdoFilter, ids.stateFilter, ids.fromDateFilter, ids.toDateFilter]

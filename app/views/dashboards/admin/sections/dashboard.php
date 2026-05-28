@@ -15,25 +15,17 @@
             <div class="admin-v1-kpi-card__eyebrow">Repayments</div>
             <div class="admin-v1-kpi-card__body">
                 <div class="admin-v1-kpi-card__copy">
-                    <strong class="admin-v1-kpi-card__value" id="adminKpiPendingRepayments"><?= (int) (($repaymentSummary['fullyPaid'] ?? $repaymentSummary['fully_paid'] ?? 0) + ($repaymentSummary['partialPaid'] ?? $repaymentSummary['partial_paid'] ?? 0) + ($repaymentSummary['underReview'] ?? $repaymentSummary['under_review'] ?? 0) + ($repaymentSummary['noUploadYet'] ?? $repaymentSummary['no_upload_yet'] ?? 0)) ?></strong>
+                    <strong class="admin-v1-kpi-card__value" id="adminKpiPendingRepayments"><?= (int) (($repaymentSummary['fullyPaid'] ?? $repaymentSummary['fully_paid'] ?? 0) + ($repaymentSummary['partialPaid'] ?? $repaymentSummary['partial_paid'] ?? 0) + ($repaymentSummary['underReview'] ?? $repaymentSummary['under_review'] ?? 0) + ($repaymentSummary['needsCorrection'] ?? $repaymentSummary['needs_correction'] ?? 0)) ?></strong>
                 </div>
                 <span class="admin-v1-kpi-card__icon" aria-hidden="true"><i class="fas fa-receipt"></i></span>
-            </div>
-        </article>
-        <article class="admin-v1-kpi-card admin-v1-kpi-card--training">
-            <div class="admin-v1-kpi-card__eyebrow">Training</div>
-            <div class="admin-v1-kpi-card__body">
-                <div class="admin-v1-kpi-card__copy">
-                    <strong class="admin-v1-kpi-card__value" id="adminKpiUpcomingTrainings"><?= (int) ($trainingSummary['scheduled'] ?? $trainingSummary['total'] ?? 0) ?></strong>
-                </div>
-                <span class="admin-v1-kpi-card__icon" aria-hidden="true"><i class="fas fa-graduation-cap"></i></span>
             </div>
         </article>
         <article class="admin-v1-kpi-card admin-v1-kpi-card--staff">
             <div class="admin-v1-kpi-card__eyebrow">Staffs</div>
             <div class="admin-v1-kpi-card__body">
                 <div class="admin-v1-kpi-card__copy">
-                    <strong class="admin-v1-kpi-card__value" id="adminKpiActiveStaff"><?= (int) (($staffSummary['socialWorker'] ?? $staffSummary['social_worker'] ?? 0) + ($staffSummary['pdo'] ?? $staffSummary['projectOfficer'] ?? $staffSummary['project_officer'] ?? 0)) ?></strong>
+                    <strong class="admin-v1-kpi-card__value" id="adminKpiActiveStaff"><?= (int) (($staffSummary['socialWorker'] ?? $staffSummary['socialWorkers'] ?? $staffSummary['social_worker'] ?? 0) + ($staffSummary['pdo'] ?? $staffSummary['projectOfficer'] ?? $staffSummary['project_officer'] ?? 0)) ?></strong>
+                    <span class="admin-v1-kpi-card__meta" id="adminKpiActiveStaffMeta">SW <?= (int) ($staffSummary['socialWorker'] ?? $staffSummary['socialWorkers'] ?? $staffSummary['social_worker'] ?? 0) ?> | PDO <?= (int) ($staffSummary['pdo'] ?? $staffSummary['projectOfficer'] ?? $staffSummary['project_officer'] ?? 0) ?></span>
                 </div>
                 <span class="admin-v1-kpi-card__icon" aria-hidden="true"><i class="fas fa-user-tie"></i></span>
             </div>

@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Stage 2 private account creation page.
+ * Lets selected registrants create a private applicant account, and also supports co-maker account creation when accessed from a co-maker invitation flow.
+ */
 /** @var string $baseUrl */
 /** @var string[] $butuanBarangays */
 /** @var string $signupMode */
@@ -26,44 +31,7 @@ $signupJsVersion = @filemtime(base_path('public/assets/js/public/signup.js')) ?:
 </head>
 <body class="portal-page portal-page--signup">
     <div class="page-shell">
-        <header class="site-header" id="top">
-            <div class="container header-shell">
-                <div class="header-main">
-                    <a class="brand" href="<?= $baseUrl ?>/portal" aria-label="SMART LEAP home">
-                        <div class="brand-logo" aria-hidden="true">
-                            <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="">
-                        </div>
-                        <div class="brand-copy">
-                            <strong class="brand-wordmark">SMART LEAP</strong>
-                        </div>
-                    </a>
-
-                    <nav class="primary-nav" aria-label="Primary navigation">
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal">Home</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/about-smart-leap">About SMART LEAP</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/how-to-apply">How to Apply</a>
-                        <a class="nav-link" href="<?= $baseUrl ?>/portal/beneficiary-guide">Beneficiary Guide</a>
-                    </nav>
-
-                    <div class="header-actions">
-                        <button id="menuBtn" class="menu-btn" aria-controls="mobileNav" aria-expanded="false" aria-label="Open navigation">
-                            <span class="menu-btn__line"></span>
-                            <span class="menu-btn__line"></span>
-                            <span class="menu-btn__line"></span>
-                        </button>
-                    </div>
-                </div>
-
-                <div id="mobileNav" class="mobile-nav" hidden>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal">Home</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/about-smart-leap">About SMART LEAP</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/how-to-apply">How to Apply</a>
-                    <a class="mobile-link" href="<?= $baseUrl ?>/portal/beneficiary-guide">Beneficiary Guide</a>
-                </div>
-            </div>
-        </header>
+        <?php require __DIR__ . '/../layouts/public-flow-header.php'; ?>
 
         <main class="page" id="content">
             <section class="signup-page">
@@ -82,6 +50,7 @@ $signupJsVersion = @filemtime(base_path('public/assets/js/public/signup.js')) ?:
                             <input type="hidden" id="signupRegistrationMode" name="registrationMode" value="<?= $isCoMakerMode ? 'co-maker' : 'applicant' ?>">
                             <?php if ($isCoMakerMode): ?>
                                 <input type="hidden" id="signupBeneficiaryProfileId" name="beneficiaryProfileId" value="<?= (int) ($coMakerContext['beneficiaryProfileId'] ?? 0) ?>">
+                                <input type="hidden" id="signupInviteToken" name="inviteToken" value="<?= htmlspecialchars((string) ($coMakerContext['inviteToken'] ?? ''), ENT_QUOTES) ?>">
                             <?php endif; ?>
 
                             <?php if ($signupError !== ''): ?>
@@ -137,7 +106,7 @@ $signupJsVersion = @filemtime(base_path('public/assets/js/public/signup.js')) ?:
 
                                     <label class="field">
                                         <span>Email address</span>
-                                        <input type="email" id="signupEmail" name="email" autocomplete="email" required>
+                                        <input type="email" id="signupEmail" name="email" autocomplete="email" value="<?= htmlspecialchars((string) ($coMakerContext['invitedEmail'] ?? ''), ENT_QUOTES) ?>" required>
                                         <small data-error-for="signupEmail"></small>
                                     </label>
                                 </div>
@@ -281,7 +250,8 @@ $signupJsVersion = @filemtime(base_path('public/assets/js/public/signup.js')) ?:
 
                                         <label class="field field--full">
                                             <span>Complete address</span>
-                                            <textarea id="signupAddress" name="address" rows="3" placeholder="House no., street, city" required></textarea>
+                                            <textarea id="signupAddress" class="field-textarea field-textarea--address" name="address" rows="2" placeholder="House no., purok/sitio, street, subdivision" required></textarea>
+                                            <small class="field-helper">Enter your house number and street details here. You will choose your barangay separately below.</small>
                                             <small data-error-for="signupAddress"></small>
                                         </label>
 
@@ -364,32 +334,10 @@ $signupJsVersion = @filemtime(base_path('public/assets/js/public/signup.js')) ?:
             </section>
         </main>
 
-        <footer class="site-footer" aria-label="Footer">
-            <div class="container footer-grid">
-                <div class="footer-brand">
-                    <strong>SMART LEAP</strong>
-                    <p>City Government of Butuan</p>
-                    <p>City Social Welfare and Development Department (CSWDD)</p>
-                </div>
-                <div class="footer-column">
-                    <strong>Portal Pages</strong>
-                    <a href="<?= $baseUrl ?>/portal">Home</a>
-                    <a href="<?= $baseUrl ?>/portal/about-smart-leap">About SMART LEAP</a>
-                    <a href="<?= $baseUrl ?>/portal/requirements">Requirements</a>
-                    <a href="<?= $baseUrl ?>/portal/how-to-apply">How to Apply</a>
-                    <a href="<?= $baseUrl ?>/portal/beneficiary-guide">Beneficiary Guide</a>
-                </div>
-                <div class="footer-column">
-                    <strong>Contact</strong>
-                    <a href="mailto:cswdd@butuan.gov.ph">cswdd@butuan.gov.ph</a>
-                    <span>Office hours: Mon-Fri, 8:00 AM-5:00 PM</span>
-                </div>
-                <div class="footer-column">
-                    <strong>Privacy and Notice</strong>
-                    <p>Portal records and personal information are handled under RA 10173, or the Data Privacy Act of 2012.</p>
-                </div>
-            </div>
-        </footer>
+        <?php
+        $publicFooterVariant = 'flow';
+        require __DIR__ . '/../layouts/public-footer.php';
+        ?>
 
         <div class="auth-loading-screen" id="authLoadingScreen" hidden aria-live="polite" aria-label="Loading">
             <div class="auth-loading-screen__orb" aria-hidden="true"></div>

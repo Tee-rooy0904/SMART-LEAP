@@ -2,7 +2,7 @@
   // Official barangays list from SMART LEAP system (47 barangays)
   const BARANGAYS = [
     'Ag-ao',
-    'Agusan Pequeño',
+    'Agusan PequeÃ±o',
     'Ambago',
     'Ampayon',
     'Anticala',
@@ -44,7 +44,7 @@
     'Pianing',
     'San Mateo',
     'San Vicente',
-    'Sto Niño',
+    'Sto NiÃ±o',
     'Sumilihon',
     'Tagabaca',
     'Taguibo',
@@ -55,7 +55,7 @@
   ];
 
   const OFFICIAL_BARANGAYS = [
-    'Agao Pob.', 'Agusan Pequeño', 'Ambago', 'Amparo', 'Ampayon', 'Anticala', 'Antongalon', 'Aupagan',
+    'Agao Pob.', 'Agusan PequeÃ±o', 'Ambago', 'Amparo', 'Ampayon', 'Anticala', 'Antongalon', 'Aupagan',
     'Baan KM 3', 'Babag', 'Bading Pob.', 'Bancasi', 'Banza', 'Baobaoan', 'Basag', 'Bayanihan Pob.',
     'Bilay', 'Bit-os', 'Bitan-agan', 'Bobon', 'Bonbon', 'Bugabus', 'Buhangin Pob.', 'Cabcabon',
     'Camayahan', 'Baan Riverside Pob.', 'Dankias', 'Imadejas Pob.', 'Diego Silang Pob.', 'Doongan',
@@ -67,7 +67,7 @@
     'Sikatuna Pob.', 'Silongan Pob.', 'Sumilihon', 'Tagabaca', 'Taguibo', 'Taligaman',
     'Tandang Sora Pob.', 'Tiniwisan', 'Tungao', 'Urduja Pob.', 'Villa Kananga', 'Obrero Pob.',
     'Bugsukan', 'De Oro', 'Dulag', 'Florida', 'Nong-nong', 'Pagatpatan', 'Pangabugan', 'Salvacion',
-    'Santo Niño', 'Sumile', 'Don Francisco', 'Pigdaulan'
+    'Santo NiÃ±o', 'Sumile', 'Don Francisco', 'Pigdaulan'
   ];
 
   // Business categories (as per task requirements)
@@ -102,7 +102,7 @@
       id: 'b-002',
       name: 'Joel Paglinawan',
       gender: 'Male',
-      barangay: 'Agusan Pequeño',
+      barangay: 'Agusan PequeÃ±o',
       sector: 'Senior Citizen',
       businessType: 'Establishment',
       status: 'Active',

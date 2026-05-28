@@ -11,6 +11,14 @@
   const formatCurrency = format.formatCurrency || ((value) => `PHP ${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
   const formatDate = format.formatDate || ((value) => value ? new Date(value).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : '--');
   const formatPercent = format.formatPercent || ((value) => `${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`);
+  const formatChartCurrencyLabel = (value) => {
+    const amount = Number(value || 0);
+    if (!Number.isFinite(amount)) return '₱0';
+    if (Math.abs(amount) >= 100000) {
+      return `₱${amount.toLocaleString('en-PH', { notation: 'compact', maximumFractionDigits: 2 }).replace(/\s+/g, '')}`;
+    }
+    return formatCurrency(amount).replace(/^PHP\s?/, '\u20b1');
+  };
 
   const baseUrl = (window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
   const chartPalette = ['#2563eb', '#16a34a', '#f97316', '#dc2626', '#7c3aed', '#0891b2', '#eab308', '#be185d', '#475569', '#65a30d'];
@@ -20,6 +28,45 @@
     { value: '3', label: 'Q3' },
     { value: '4', label: 'Q4' },
   ];
+  const repaymentCycleStartMonth = 5;
+
+  const padMonth = (value) => String(value).padStart(2, '0');
+  const shiftMonthValue = (monthValue, offset) => {
+    const parsed = new Date(`${monthValue}-01T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) return monthValue;
+    parsed.setMonth(parsed.getMonth() + Number(offset || 0));
+    return `${parsed.getFullYear()}-${padMonth(parsed.getMonth() + 1)}`;
+  };
+  const buildRepaymentCycleMonths = (yearValue) => {
+    const baseYear = Number.parseInt(yearValue, 10) || Number.parseInt(currentYear, 10);
+    const startMonth = `${baseYear}-${padMonth(repaymentCycleStartMonth)}`;
+    return Array.from({ length: 12 }, (_, index) => shiftMonthValue(startMonth, index));
+  };
+  const labelCycleMonth = (monthValue) => {
+    const [yearValue, monthNumber] = String(monthValue || '').split('-').map(Number);
+    if (!yearValue || !monthNumber) return monthValue;
+    return new Date(yearValue, monthNumber - 1, 1).toLocaleDateString('en-PH', { month: 'short', year: 'numeric' });
+  };
+  const deriveRepaymentQuarter = (monthValue) => {
+    const [, monthNumberRaw] = String(monthValue || '').split('-');
+    const monthNumber = Number.parseInt(monthNumberRaw, 10);
+    if (!monthNumber) return '1';
+    const normalized = (monthNumber - repaymentCycleStartMonth + 12) % 12;
+    return String(Math.floor(normalized / 3) + 1);
+  };
+  const niceAxisStep = (rawMax) => {
+    const safeMax = Math.max(Number(rawMax) || 0, 1);
+    const roughStep = safeMax / 5;
+    const magnitude = 10 ** Math.floor(Math.log10(roughStep || 1));
+    const normalized = roughStep / magnitude;
+    let niceNormalized = 1;
+    if (normalized <= 1) niceNormalized = 1;
+    else if (normalized <= 2) niceNormalized = 2;
+    else if (normalized <= 2.5) niceNormalized = 2.5;
+    else if (normalized <= 5) niceNormalized = 5;
+    else niceNormalized = 10;
+    return niceNormalized * magnitude;
+  };
 
   let bound = false;
   let reportData = null;
@@ -28,19 +75,24 @@
   let requestId = 0;
 
   const today = new Date();
-  const currentMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
   const currentYear = String(today.getFullYear());
-  const currentQuarter = '1';
+  const currentCycleMonth = `${currentYear}-${padMonth(today.getMonth() + 1)}`;
+  const defaultCycleMonth = (() => {
+    const cycleMonths = buildRepaymentCycleMonths(currentYear);
+    return cycleMonths.includes(currentCycleMonth) ? currentCycleMonth : cycleMonths[0];
+  })();
 
   const state = app.state;
   state.filters = state.filters || {};
   state.filters.reports = {
     period: 'monthly',
-    month: currentMonth,
-    quarter: currentQuarter,
+    month: defaultCycleMonth,
+    quarter: deriveRepaymentQuarter(defaultCycleMonth),
     year: currentYear,
+    repaymentYear: '1',
     from: '',
     to: '',
+    district: '',
     barangay: '',
     sector: '',
     serviceType: '',
@@ -62,6 +114,9 @@
   const routeUrl = (path) => `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
 
   const reportExportBase = () => {
+    if (window.SMARTLEAP_REPORT_EXPORT_BASE) {
+      return String(window.SMARTLEAP_REPORT_EXPORT_BASE);
+    }
     const path = window.location.pathname || '';
     return path.includes('social-worker') ? 'social-worker/reports/export' : 'admin/reports/export';
   };
@@ -99,8 +154,10 @@
       ['month', filters.month],
       ['quarter', filters.quarter],
       ['year', filters.year],
+      ['repaymentYear', filters.repaymentYear],
       ['from', filters.from],
       ['to', filters.to],
+      ['district', normalizeFilterValue(filters.district)],
       ['barangay', normalizeFilterValue(filters.barangay)],
       ['sector', normalizeFilterValue(filters.sector)],
       ['serviceType', normalizeFilterValue(filters.serviceType)],
@@ -159,9 +216,12 @@
   };
 
   const currentSummary = (items) => ({
-    totalBeneficiaries: items.length,
+    totalPeople: items.length,
+    beneficiaryCount: items.filter((record) => !!record.isBeneficiary).length,
+    pipelineOnlyCount: items.filter((record) => !record.isBeneficiary).length,
     genderDistribution: countBy(items, (record) => record.gender),
     serviceTypeDistribution: countBy(items, (record) => record.serviceType || record.businessType),
+    sectorDistribution: countBy(items, (record) => record.sector),
     barangayDistribution: countBy(items, (record) => record.barangay),
   });
 
@@ -170,45 +230,13 @@
     const options = reportData?.options || {};
     const period = filters.period || 'monthly';
     const years = optionList(options.years).length ? optionList(options.years) : [currentYear];
+    const repaymentYear = String(filters.repaymentYear || '1');
+    const cycleBaseYear = String((Number.parseInt(filters.year || currentYear, 10) || Number.parseInt(currentYear, 10)) + (repaymentYear === '2' ? 1 : 0));
+    const cycleMonths = buildRepaymentCycleMonths(cycleBaseYear);
+    const selectedMonth = cycleMonths.includes(filters.month) ? filters.month : cycleMonths[0];
 
-    const periodControls = period === 'monthly'
+    const periodControls = period === 'custom'
       ? `
-        <div class="reports-field">
-          <span class="reports-label">Month</span>
-          <input type="month" id="reports-month" value="${escapeHtml(filters.month || currentMonth)}">
-        </div>
-        <div class="reports-field">
-          <span class="reports-label">Year</span>
-          <select id="reports-year">
-            ${years.map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.year || currentYear, value)}>${escapeHtml(value)}</option>`).join('')}
-          </select>
-        </div>
-      `
-      : period === 'quarterly'
-        ? `
-          <div class="reports-field">
-            <span class="reports-label">Repayment Quarter</span>
-            <select id="reports-quarter">
-              ${quarterLabels.map((item) => `<option value="${item.value}" ${selectedAttr(filters.quarter || currentQuarter, item.value)}>${item.label}</option>`).join('')}
-            </select>
-          </div>
-          <div class="reports-field">
-            <span class="reports-label">Year</span>
-            <select id="reports-year">
-              ${years.map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.year || currentYear, value)}>${escapeHtml(value)}</option>`).join('')}
-            </select>
-          </div>
-        `
-        : period === 'yearly'
-          ? `
-            <div class="reports-field">
-              <span class="reports-label">Year</span>
-              <select id="reports-year">
-                ${years.map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.year || currentYear, value)}>${escapeHtml(value)}</option>`).join('')}
-              </select>
-            </div>
-          `
-          : `
             <div class="reports-field">
               <span class="reports-label">From</span>
               <input type="date" id="reports-from" value="${escapeHtml(filters.from)}">
@@ -217,7 +245,38 @@
               <span class="reports-label">To</span>
               <input type="date" id="reports-to" value="${escapeHtml(filters.to)}">
             </div>
-          `;
+          `
+      : `
+        <div class="reports-field">
+          <span class="reports-label">Year</span>
+          <select id="reports-year">
+            ${years.map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.year || currentYear, value)}>${escapeHtml(value)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="reports-field">
+          <span class="reports-label">Repayment Cycle</span>
+          <select id="reports-repayment-year">
+            <option value="1" ${selectedAttr(repaymentYear, '1')}>Year 1</option>
+            <option value="2" ${selectedAttr(repaymentYear, '2')}>Year 2</option>
+          </select>
+        </div>
+        ${period === 'monthly' ? `
+          <div class="reports-field">
+            <span class="reports-label">Repayment Month</span>
+            <select id="reports-month">
+              ${cycleMonths.map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(selectedMonth, value)}>${escapeHtml(labelCycleMonth(value))}</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+        ${period === 'quarterly' ? `
+          <div class="reports-field">
+            <span class="reports-label">Repayment Quarter</span>
+            <select id="reports-quarter">
+              ${quarterLabels.map((item) => `<option value="${escapeHtml(item.value)}" ${selectedAttr(filters.quarter || '1', item.value)}>${escapeHtml(item.label)} (${item.value === '1' ? 'May-Jul' : item.value === '2' ? 'Aug-Oct' : item.value === '3' ? 'Nov-Jan' : 'Feb-Apr'})</option>`).join('')}
+            </select>
+          </div>
+        ` : ''}
+      `;
 
     return `
       <div class="reports-toolbar reports-filter-card">
@@ -225,7 +284,7 @@
           <div class="reports-filter-group reports-search">
             <span class="reports-label">Search</span>
             <i class="fas fa-search" aria-hidden="true"></i>
-            <input type="search" id="reports-search" placeholder="Search beneficiary, barangay, business, or PDO" value="${escapeHtml(filters.search)}">
+            <input type="search" id="reports-search" placeholder="Search person, barangay, business, or PDO" value="${escapeHtml(filters.search)}">
           </div>
           <div class="reports-field">
             <span class="reports-label">View Type</span>
@@ -238,10 +297,24 @@
           </div>
           ${periodControls}
           <div class="reports-field">
+            <span class="reports-label">District</span>
+            <select id="reports-district">
+              <option value="" ${selectedAttr(filters.district, '')}>All districts</option>
+              ${optionList(options.districts).map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.district, value)}>${escapeHtml(value)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="reports-field">
             <span class="reports-label">Barangay</span>
             <select id="reports-barangay">
               <option value="" ${selectedAttr(filters.barangay, '')}>All barangays</option>
               ${optionList(options.barangays).map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.barangay, value)}>${escapeHtml(value)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="reports-field">
+            <span class="reports-label">Sector</span>
+            <select id="reports-sector">
+              <option value="" ${selectedAttr(filters.sector, '')}>All sectors</option>
+              ${optionList(options.sectors).map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.sector, value)}>${escapeHtml(value)}</option>`).join('')}
             </select>
           </div>
           <div class="reports-field">
@@ -265,18 +338,10 @@
               ${optionList(options.genders).map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.gender, value)}>${escapeHtml(value)}</option>`).join('')}
             </select>
           </div>
-          <div class="reports-field">
-            <span class="reports-label">Repayment State</span>
-            <select id="reports-repayment">
-              <option value="" ${selectedAttr(filters.repayment, '')}>All repayment states</option>
-              ${(options.repaymentStates || []).map((item) => `<option value="${escapeHtml(item.key)}" ${selectedAttr(filters.repayment, item.key)}>${escapeHtml(item.label)}</option>`).join('')}
-            </select>
-          </div>
         </div>
         <div class="reports-filter-actions">
           <span class="reports-result-count" id="reports-summary-chips"></span>
           <div class="reports-toolbar__actions">
-            <button class="app-btn-ghost" id="reports-clear" type="button">Clear</button>
             <button class="app-btn-outline" id="reports-refresh" type="button">Refresh</button>
             <button class="app-btn-outline" id="reports-export-csv" type="button">Export CSV</button>
             <button class="app-btn-outline" id="reports-export-pdf" type="button">Export PDF</button>
@@ -290,7 +355,7 @@
     const node = qs('#reports-summary-chips');
     if (!node) return;
     const label = metrics?.label || reportData?.filters?.periodLabel || 'Selected period';
-    node.textContent = `${items.length} ${items.length === 1 ? 'record' : 'records'} shown - ${label}`;
+    node.textContent = `${items.length} ${items.length === 1 ? 'unique person' : 'unique people'} shown - ${label}`;
   };
 
   const renderStatus = () => {
@@ -303,57 +368,108 @@
     status.innerHTML = errorMessage ? `<div class="admin-alert admin-alert--danger">${escapeHtml(errorMessage)}</div>` : '';
   };
 
-  const renderVerticalBars = (root, rows, options = {}) => {
-    if (!root) return;
-    const max = Math.max(...rows.map((row) => Number(row.count || row.value || 0)), 1);
-    root.innerHTML = `
-      <div class="reports-vertical-chart" role="img" aria-label="${escapeHtml(options.label || 'Vertical bar chart')}">
-        <div class="reports-vertical-chart__plot">
-          ${rows.length ? rows.map((row, index) => {
-            const value = Number(row.count || row.value || 0);
-            const height = Math.max(8, Math.round((value / max) * 100));
-            return `
-              <div class="reports-vertical-chart__item">
-                <span class="reports-vertical-chart__value">${escapeHtml(options.formatValue ? options.formatValue(value, row) : String(value))}</span>
-                <span class="reports-vertical-chart__bar" style="--bar-height:${height}%;--bar-color:${options.colors?.[index] || chartPalette[index % chartPalette.length]}"></span>
-                <span class="reports-vertical-chart__label">${escapeHtml(row.label)}</span>
-              </div>
-            `;
-          }).join('') : '<p class="reports-empty">No data available.</p>'}
-        </div>
-      </div>
+  const indicatorTextColor = () => '#ffffff';
+
+  const polarToCartesian = (cx, cy, radius, angleInDegrees) => {
+    const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
+    return {
+      x: cx + (radius * Math.cos(angleInRadians)),
+      y: cy + (radius * Math.sin(angleInRadians)),
+    };
+  };
+
+  const donutArcPath = (cx, cy, outerRadius, innerRadius, startAngle, endAngle) => {
+    const outerStart = polarToCartesian(cx, cy, outerRadius, endAngle);
+    const outerEnd = polarToCartesian(cx, cy, outerRadius, startAngle);
+    const innerStart = polarToCartesian(cx, cy, innerRadius, startAngle);
+    const innerEnd = polarToCartesian(cx, cy, innerRadius, endAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+
+    return [
+      `M ${outerStart.x} ${outerStart.y}`,
+      `A ${outerRadius} ${outerRadius} 0 ${largeArcFlag} 0 ${outerEnd.x} ${outerEnd.y}`,
+      `L ${innerStart.x} ${innerStart.y}`,
+      `A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 1 ${innerEnd.x} ${innerEnd.y}`,
+      'Z',
+    ].join(' ');
+  };
+
+  const sliceLabelMarkup = (slice, cx, cy, labelRadius, ringThickness) => {
+    const midAngle = slice.startAngle + ((slice.endAngle - slice.startAngle) / 2);
+    const point = polarToCartesian(cx, cy, labelRadius, midAngle);
+    const share = slice.endAngle - slice.startAngle;
+    const countFontSize = share <= 34 ? 13 : 16;
+    const percentFontSize = share <= 34 ? 10.5 : 12.5;
+    const percentText = `${slice.percentage.toFixed(1)}%`;
+    const dyOffset = Math.min(10, Math.max(7, ringThickness * 0.16));
+    return `
+      <text class="reports-donut__slice-label" x="${point.x.toFixed(2)}" y="${point.y.toFixed(2)}" fill="${slice.textColor}">
+        <tspan class="reports-donut__slice-count" x="${point.x.toFixed(2)}" dy="-${dyOffset}" style="font-size:${countFontSize}px;">${escapeHtml(String(slice.count))}</tspan>
+        <tspan class="reports-donut__slice-percent" x="${point.x.toFixed(2)}" dy="${dyOffset + 12}" style="font-size:${percentFontSize}px;">${escapeHtml(percentText)}</tspan>
+      </text>
     `;
   };
 
-  const renderPie = (root, rows) => {
+  const renderDistributionChart = (root, rows, options = {}) => {
     if (!root) return;
     const total = rows.reduce((sum, row) => sum + Number(row.count || 0), 0);
     if (!rows.length || total <= 0) {
       root.innerHTML = '<p class="reports-empty">No data available.</p>';
       return;
     }
+    const slices = rows.map((row, index) => {
+      const count = Number(row.count || 0);
+      const share = total > 0 ? (count / total) * 100 : 0;
+      const color = chartPalette[index % chartPalette.length];
+      const percentage = Number(share.toFixed(1));
+      return {
+        color,
+        textColor: indicatorTextColor(color),
+        count,
+        percentage,
+        label: row.label,
+        share,
+      };
+    });
 
-    let cumulative = 0;
-    const segments = rows.map((row, index) => {
-      const start = cumulative;
-      cumulative += (Number(row.count || 0) / total) * 100;
-      return `${chartPalette[index % chartPalette.length]} ${start}% ${cumulative}%`;
-    }).join(', ');
+    const cx = 160;
+    const cy = 160;
+    const outerRadius = 122;
+    const innerRadius = 66;
+    const ringThickness = outerRadius - innerRadius;
+    const labelRadius = innerRadius + (ringThickness / 2);
+    let runningAngle = 0;
+    const donutSlices = slices.map((slice) => {
+      const sweepAngle = total > 0 ? (slice.count / total) * 360 : 0;
+      const startAngle = runningAngle;
+      const endAngle = runningAngle + sweepAngle;
+      runningAngle = endAngle;
+      return {
+        ...slice,
+        startAngle,
+        endAngle,
+        path: donutArcPath(cx, cy, outerRadius, innerRadius, startAngle, endAngle),
+      };
+    });
 
     root.innerHTML = `
-      <div class="reports-pie-chart" role="img" aria-label="Gender distribution pie chart">
-        <div class="reports-pie-chart__graphic" style="background: conic-gradient(${segments});"></div>
-        <div class="reports-pie-chart__legend">
-          ${rows.map((row, index) => {
-            const count = Number(row.count || 0);
-            const percentage = total > 0 ? Math.round((count / total) * 100) : 0;
+      <div class="reports-donut" role="img" aria-label="${escapeHtml(options.label || 'Distribution chart')}">
+        <div class="reports-donut__chart-shell">
+          <svg class="reports-donut__svg" viewBox="0 0 320 320" aria-hidden="true">
+            <circle class="reports-donut__track" cx="${cx}" cy="${cy}" r="${outerRadius}"></circle>
+            ${donutSlices.map((slice) => `<path d="${slice.path}" fill="${slice.color}"></path>`).join('')}
+            ${donutSlices.map((slice) => sliceLabelMarkup(slice, cx, cy, labelRadius, ringThickness)).join('')}
+          </svg>
+        </div>
+        <div class="reports-donut__legend">
+          ${donutSlices.map((slice) => {
             return `
-              <span class="admin-v1-legend__item">
-                <span class="admin-v1-legend__dot" style="background:${chartPalette[index % chartPalette.length]};"></span>
-                <span>${escapeHtml(row.label)}</span>
-                <strong>${count}</strong>
-                <small>${percentage}%</small>
-              </span>
+              <div class="reports-donut__legend-row">
+                <span class="reports-donut__legend-swatch" style="--legend-color:${slice.color};"></span>
+                <span class="reports-donut__legend-label">${escapeHtml(slice.label)}</span>
+                <strong class="reports-donut__legend-count">${slice.count}</strong>
+                <span class="reports-donut__legend-percent">${slice.percentage.toFixed(1)}%</span>
+              </div>
             `;
           }).join('')}
         </div>
@@ -361,7 +477,7 @@
     `;
   };
 
-  const renderMonthlyPaymentChart = (root, rows) => {
+  const renderMonthlyPaymentChart = (root, rows, period = 'monthly') => {
     if (!root) return;
     if (!rows.length) {
       root.innerHTML = '<p class="reports-empty">No repayment records yet.</p>';
@@ -374,19 +490,17 @@
       { key: 'gapAmount', label: 'Gap', color: '#dc2626' },
     ];
     const rawMax = Math.max(...rows.flatMap((row) => series.map((item) => Number(row[item.key] || 0))), 1);
-    const step = rawMax <= 5000
-      ? 1000
-      : rawMax <= 20000
-        ? 5000
-        : 20000;
+    const step = niceAxisStep(rawMax);
     const maxValue = Math.max(step, Math.ceil(rawMax / step) * step);
     const ticks = [];
     for (let value = maxValue; value >= 0; value -= step) {
       ticks.push(value);
     }
 
+    const xAxisTitle = period === 'quarterly' ? 'Quarters' : period === 'yearly' ? 'Years' : 'Months';
+
     root.innerHTML = `
-      <div class="reports-monthly-payment-chart" role="img" aria-label="Monthly payments of SMART LEAP beneficiaries">
+      <div class="reports-monthly-payment-chart" role="img" aria-label="${escapeHtml(`Repayment performance by ${xAxisTitle.toLowerCase()}`)}">
         <div class="reports-monthly-payment-chart__body">
           <div class="reports-monthly-payment-chart__axis-title">Payments</div>
           <div class="reports-monthly-payment-chart__axis">
@@ -405,7 +519,7 @@
                       const height = maxValue > 0 ? Math.max(value > 0 ? 3 : 0, (value / maxValue) * 100) : 0;
                       return `
                         <span class="reports-monthly-payment-chart__bar" style="--bar-height:${height}%;--bar-color:${item.color};" title="${escapeHtml(item.label)}: ${formatCurrency(value)}">
-                          <strong>${escapeHtml(formatCurrency(value).replace(/^PHP\s?/, '₱'))}</strong>
+                          <strong>${escapeHtml(formatChartCurrencyLabel(value))}</strong>
                         </span>
                       `;
                     }).join('')}
@@ -419,18 +533,17 @@
             ${series.map((item) => `<span><i style="background:${item.color}"></i>${escapeHtml(item.label)}</span>`).join('')}
           </div>
         </div>
-        <div class="reports-monthly-payment-chart__x-title">Months</div>
+        <div class="reports-monthly-payment-chart__x-title">${escapeHtml(xAxisTitle)}</div>
       </div>
     `;
   };
 
   const buildPerformanceSection = (metrics) => `
-    <div class="charts-grid">
+    <div class="charts-grid" id="reports-performance-shell">
       <div class="chart-card chart-card--full">
         <div class="chart-card__header">
           <div>
             <h4>Repayment Performance</h4>
-            <p>Targeted collections, actual collected repayments, reporting gap, and ROI for the selected period.</p>
           </div>
         </div>
         <div class="reports-repayment-status-kpis">
@@ -449,22 +562,40 @@
         </div>
         <div class="chart-wrap reports-monthly-payment-chart-wrap" id="reports-performance-bars"></div>
       </div>
-      <div class="chart-card chart-card--narrow">
+      <div class="chart-card">
         <div class="chart-card__header">
           <h4>Gender Segregation</h4>
         </div>
-        <div class="chart-wrap" id="reports-gender-pie"></div>
+        <div class="chart-wrap" id="reports-gender-donut"></div>
       </div>
-      <div class="chart-card chart-card--wide">
+      <div class="chart-card">
         <div class="chart-card__header">
           <h4>Service Type Distribution</h4>
         </div>
-        <div class="chart-wrap tall" id="reports-business-bar"></div>
+        <div class="chart-wrap" id="reports-service-donut"></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-card__header">
+          <h4>Sector Distribution</h4>
+        </div>
+        <div class="chart-wrap" id="reports-sector-donut"></div>
       </div>
     </div>
   `;
 
-  const updateReportsView = () => {
+  const renderToolbarOnly = () => {
+    const content = qs('#reports-content');
+    if (!content) return;
+    let toolbar = qs('#reports-toolbar-shell', content);
+    if (!toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.id = 'reports-toolbar-shell';
+      content.appendChild(toolbar);
+    }
+    toolbar.innerHTML = buildToolbar();
+  };
+
+  const updateReportsView = ({ refreshToolbar = true } = {}) => {
     const content = qs('#reports-content');
     if (!content) return;
 
@@ -479,18 +610,30 @@
       scopedBeneficiaries: items.length,
       obligationCount: 0,
     };
-    const monthlyBreakdown = Array.isArray(reportData?.repaymentAnalytics?.monthlyBreakdown)
-      ? reportData.repaymentAnalytics.monthlyBreakdown
-      : [];
-
-    content.innerHTML = `${buildToolbar()}${buildPerformanceSection(metrics)}`;
+    const repaymentPeriod = reportData?.filters?.period || state.filters.reports.period || 'monthly';
+    const repaymentBreakdown = repaymentPeriod === 'monthly'
+      ? (Array.isArray(reportData?.repaymentAnalytics?.monthlyBreakdown) ? reportData.repaymentAnalytics.monthlyBreakdown : [])
+      : (Array.isArray(reportData?.repaymentAnalytics?.breakdown) ? reportData.repaymentAnalytics.breakdown : []);
+    if (refreshToolbar) {
+      renderToolbarOnly();
+    }
+    const performanceBody = qs('#reports-performance-body', content);
+    if (!performanceBody) return;
+    performanceBody.innerHTML = buildPerformanceSection(metrics);
     buildSummaryChips(items, metrics);
 
-    renderMonthlyPaymentChart(qs('#reports-performance-bars'), monthlyBreakdown);
-
-    renderPie(qs('#reports-gender-pie'), summary.genderDistribution || []);
-    renderVerticalBars(qs('#reports-business-bar'), summary.serviceTypeDistribution || [], {
-      label: 'Service type distribution',
+    renderMonthlyPaymentChart(qs('#reports-performance-bars'), repaymentBreakdown, repaymentPeriod);
+    renderDistributionChart(qs('#reports-gender-donut'), summary.genderDistribution || [], {
+      label: 'Gender distribution chart',
+      centerLabel: 'Gender',
+    });
+    renderDistributionChart(qs('#reports-service-donut'), summary.serviceTypeDistribution || [], {
+      label: 'Service type distribution chart',
+      centerLabel: 'Services',
+    });
+    renderDistributionChart(qs('#reports-sector-donut'), summary.sectorDistribution || [], {
+      label: 'Sector distribution chart',
+      centerLabel: 'Sectors',
     });
   };
 
@@ -502,34 +645,21 @@
     if (content) return;
     section.innerHTML = `
       <div id="reports-status"></div>
-      <div id="reports-content"></div>
+      <div id="reports-content">
+        <div id="reports-toolbar-shell"></div>
+        <div id="reports-performance-body"></div>
+      </div>
     `;
     renderStatus();
   };
 
   const exportReport = (formatType) => {
     const query = buildReportQuery();
+    if (formatType === 'pdf') {
+      query.set('autoprint', '1');
+    }
     const target = routeUrl(`${reportExportBase()}/${formatType}`);
     window.open(query.toString() ? `${target}?${query}` : target, '_blank', 'noopener');
-  };
-
-  const resetFilters = () => {
-    state.filters.reports = {
-      period: 'monthly',
-      month: currentMonth,
-      quarter: currentQuarter,
-      year: currentYear,
-      from: '',
-      to: '',
-      barangay: '',
-      sector: '',
-      serviceType: '',
-      gender: '',
-      ageGroup: '',
-      pdo: '',
-      repayment: '',
-      search: '',
-    };
   };
 
   const bindEvents = () => {
@@ -543,7 +673,7 @@
       const id = event.target?.id || '';
       if (id === 'reports-search') {
         state.filters.reports.search = event.target.value;
-        updateReportsView();
+        updateReportsView({ refreshToolbar: false });
       }
     });
 
@@ -552,34 +682,47 @@
       if (!id.startsWith('reports-')) return;
       if (id === 'reports-period') {
         state.filters.reports.period = event.target.value;
-        renderReportShell();
+        if (state.filters.reports.period === 'monthly') {
+          const cycleBaseYear = String((Number.parseInt(state.filters.reports.year || currentYear, 10) || Number.parseInt(currentYear, 10)) + (String(state.filters.reports.repaymentYear || '1') === '2' ? 1 : 0));
+          const cycleMonths = buildRepaymentCycleMonths(cycleBaseYear);
+          state.filters.reports.month = cycleMonths.includes(state.filters.reports.month) ? state.filters.reports.month : cycleMonths[0];
+        }
+        if (state.filters.reports.period === 'quarterly' && !quarterLabels.some((item) => item.value === String(state.filters.reports.quarter || ''))) {
+          state.filters.reports.quarter = '1';
+        }
+        renderToolbarOnly();
         updateReportsView();
         fetchReportData();
         return;
       }
-      if (id === 'reports-month') state.filters.reports.month = event.target.value;
+      if (id === 'reports-year') state.filters.reports.year = event.target.value;
+      else if (id === 'reports-repayment-year') state.filters.reports.repaymentYear = event.target.value;
+      else if (id === 'reports-month') state.filters.reports.month = event.target.value;
       else if (id === 'reports-quarter') state.filters.reports.quarter = event.target.value;
-      else if (id === 'reports-year') state.filters.reports.year = event.target.value;
       else if (id === 'reports-from') state.filters.reports.from = event.target.value;
       else if (id === 'reports-to') state.filters.reports.to = event.target.value;
+      else if (id === 'reports-district') state.filters.reports.district = event.target.value;
       else if (id === 'reports-barangay') state.filters.reports.barangay = event.target.value;
       else if (id === 'reports-pdo') state.filters.reports.pdo = event.target.value;
       else if (id === 'reports-sector') state.filters.reports.sector = event.target.value;
       else if (id === 'reports-service-type') state.filters.reports.serviceType = event.target.value;
       else if (id === 'reports-gender') state.filters.reports.gender = event.target.value;
-      else if (id === 'reports-repayment') state.filters.reports.repayment = event.target.value;
+      if (id === 'reports-year' || id === 'reports-repayment-year') {
+        const cycleBaseYear = String((Number.parseInt(state.filters.reports.year || currentYear, 10) || Number.parseInt(currentYear, 10)) + (String(state.filters.reports.repaymentYear || '1') === '2' ? 1 : 0));
+        const cycleMonths = buildRepaymentCycleMonths(cycleBaseYear);
+        if (!cycleMonths.includes(state.filters.reports.month)) {
+          state.filters.reports.month = cycleMonths[0];
+        }
+      }
+      if (id === 'reports-year' || id === 'reports-repayment-year' || id === 'reports-period') {
+        renderToolbarOnly();
+        updateReportsView();
+      }
       fetchReportData();
     });
 
     section.addEventListener('click', (event) => {
       const id = event.target?.id || '';
-      if (id === 'reports-clear') {
-        resetFilters();
-        renderReportShell();
-        updateReportsView();
-        fetchReportData();
-        return;
-      }
       if (id === 'reports-refresh') {
         fetchReportData();
         return;

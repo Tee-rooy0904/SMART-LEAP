@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Training eligibility evaluation service.
+ * Determines which applicants are ready for training based on application status, requirement approvals, staff assignment, and scope rules.
+ */
 
 declare(strict_types=1);
 

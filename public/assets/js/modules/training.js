@@ -341,7 +341,7 @@
           <button type="button" class="app-btn-ghost" data-training-action="back-overview">Back</button>
           <div class="po-training-session-shell__meta">
             <span class="po-panel-label">Round Workspace</span>
-            <strong>${escapeHtml(`Session ${program.roundNumber} • Group ${program.targetGroupNumber}`)}</strong>
+            <strong>${escapeHtml(`Session ${program.roundNumber} | Group ${program.targetGroupNumber}`)}</strong>
           </div>
           <button type="button" class="app-btn-outline" data-training-action="refresh-overview">Refresh</button>
         </div>

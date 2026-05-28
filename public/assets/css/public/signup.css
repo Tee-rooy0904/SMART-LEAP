@@ -9,6 +9,53 @@
     padding: 38px 0 48px;
 }
 
+.flow-header {
+    position: sticky;
+    top: 0;
+}
+
+.flow-header__shell {
+    padding-inline: 24px;
+}
+
+.flow-header__main {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 14px 0;
+}
+
+.flow-header__actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.flow-header__link {
+    min-width: 172px;
+}
+
+.flow-header__link--support {
+    background: rgba(44, 125, 196, 0.08);
+    border-color: rgba(74, 121, 182, 0.22);
+    color: #1b4c7c;
+}
+
+.flow-header .brand {
+    flex-shrink: 0;
+}
+
+.flow-header .brand-copy {
+    min-width: max-content;
+}
+
+.flow-header .brand-wordmark {
+    white-space: nowrap;
+}
+
 .signup-shell {
     display: grid;
     max-width: 980px;
@@ -84,6 +131,12 @@
     font: inherit;
     color: var(--ink);
     background: rgba(255, 255, 255, 0.96);
+}
+
+.field-textarea--address {
+    min-height: 88px;
+    max-height: 220px;
+    line-height: 1.55;
 }
 
 .field select {
@@ -488,8 +541,32 @@ body.signup-confirm-open {
         padding: 26px 0 38px;
     }
 
+    .flow-header__main {
+        align-items: center;
+        gap: 12px;
+    }
+
+    .flow-header__actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+        gap: 10px;
+    }
+
+    .flow-header__link {
+        width: 100%;
+        min-width: 0;
+        min-height: 44px;
+        padding-inline: 14px;
+        font-size: 0.95rem;
+    }
+
     .auth-grid {
         grid-template-columns: 1fr;
+    }
+
+    .field-textarea--address {
+        min-height: 82px;
     }
 
     .auth-grid--password {
@@ -545,6 +622,49 @@ body.signup-confirm-open {
 }
 
 @media (max-width: 560px) {
+    .flow-header__shell {
+        padding-inline: 14px;
+    }
+
+    .flow-header__main {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 10px 14px;
+    }
+
+    .flow-header__actions {
+        grid-template-columns: 1fr;
+        justify-self: stretch;
+    }
+
+    .flow-header__link {
+        min-height: 42px;
+        padding-inline: 12px;
+        font-size: 0.9rem;
+    }
+
+    .flow-header .brand {
+        gap: 10px;
+        min-width: 0;
+    }
+
+    .flow-header .brand-logo {
+        width: 48px;
+        height: 38px;
+        flex: 0 0 48px;
+    }
+
+    .flow-header .brand-wordmark {
+        font-size: 1.05rem;
+        line-height: 1;
+    }
+
+    .field-textarea--address {
+        min-height: 76px;
+        padding: 12px 14px;
+    }
+
     .signup-section {
         padding: 16px;
     }

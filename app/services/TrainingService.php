@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Training session and invitee workflow service.
+ * Builds training overviews, session detail payloads, invitee lists, notice state, attendance context, and training-related analytics.
+ */
 
 declare(strict_types=1);
 
@@ -512,17 +517,8 @@ class TrainingService
             return ['ok' => false, 'errors' => ['general' => $this->schemaError()]];
         }
 
-        if (!$this->isAdmin($actor) && !$this->isProjectOfficer($actor)) {
-            return ['ok' => false, 'errors' => ['general' => 'You are not allowed to send training notices.']];
-        }
-
-        if ($this->isProjectOfficer($actor)) {
-            $requestedIds = array_values(array_unique(array_filter(array_map('intval', $inviteeIds))));
-            $groupNumber = (int) ($options['groupNumber'] ?? 0);
-            $batchYear = (int) ($options['batchYear'] ?? 0);
-            if ($requestedIds === [] || $groupNumber > 0 || $batchYear > 0) {
-                return ['ok' => false, 'errors' => ['invitees' => 'PDO can resend notices for scoped participants only.']];
-            }
+        if (!$this->isAdmin($actor)) {
+            return ['ok' => false, 'errors' => ['general' => 'Only Admin can send or resend training notices.']];
         }
 
         $program = $this->findProgram($programId, $actor);
@@ -603,6 +599,10 @@ class TrainingService
         }
 
         $status = $this->normalizeStatus($status);
+        if (!in_array($status, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_MISSED, TRAINING_STATUS_EXCUSED], true)) {
+            return ['ok' => false, 'errors' => ['status' => 'Attendance can only be marked as Present, Absent, or Excused.']];
+        }
+
         $dateGate = $this->trainingAttendanceDateGate($invitee, $status);
         if (($dateGate['ok'] ?? false) !== true) {
             return ['ok' => false, 'errors' => ['status' => $dateGate['message'] ?? 'Attendance can only be marked on or after the training date.']];
@@ -800,10 +800,80 @@ class TrainingService
             $actor
         );
 
-        return array_values(array_filter($invitees, static function (array $invitee) use ($eligibilityMap): bool {
+        $invitees = array_map(static function (array $invitee) use ($eligibilityMap): array {
             $applicantProfileId = (int) ($invitee['applicantProfileId'] ?? 0);
-            return (bool) ($eligibilityMap[$applicantProfileId]['eligible'] ?? false);
-        }));
+            $snapshot = $eligibilityMap[$applicantProfileId] ?? null;
+            $invitee['currentEligibility'] = [
+                'eligible' => (bool) ($snapshot['eligible'] ?? false),
+                'reasons' => is_array($snapshot['reasons'] ?? null) ? array_values($snapshot['reasons']) : [],
+            ];
+            return $invitee;
+        }, $invitees);
+
+        return $this->appendCompletionHistory($invitees, $program);
+    }
+
+    private function appendCompletionHistory(array $invitees, array $program): array
+    {
+        $applicantProfileIds = array_values(array_unique(array_filter(array_map(
+            static fn (array $invitee): int => (int) ($invitee['applicantProfileId'] ?? 0),
+            $invitees
+        ))));
+        if ($applicantProfileIds === []) {
+            return $invitees;
+        }
+
+        $sessionYear = substr((string) ($program['startsAt'] ?? $program['date'] ?? ''), 0, 4);
+        if (!preg_match('/^\d{4}$/', $sessionYear)) {
+            $sessionYear = date('Y');
+        }
+
+        $placeholders = implode(',', array_fill(0, count($applicantProfileIds), '?'));
+        try {
+            $statement = db()->prepare(
+                'SELECT training_invitees.applicant_profile_id,
+                        training_programs.training_round_number,
+                        COALESCE(attendance_records.attendance_status, training_invitees.invite_status) AS attendance_status
+                 FROM training_invitees
+                 INNER JOIN training_programs ON training_programs.id = training_invitees.training_program_id
+                 LEFT JOIN attendance_records ON attendance_records.training_invitee_id = training_invitees.id
+                 WHERE training_invitees.applicant_profile_id IN (' . $placeholders . ')
+                   AND YEAR(training_programs.starts_at) = ?
+                   AND training_programs.training_round_number BETWEEN 1 AND 3'
+            );
+            $params = array_merge($applicantProfileIds, [(int) $sessionYear]);
+            $statement->execute($params);
+            $rows = $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $exception) {
+            log_database_query_failure('training.completion_history', $exception, ['program_id' => $program['id'] ?? null]);
+            return $invitees;
+        }
+
+        $presentRoundsByApplicant = [];
+        foreach ($rows as $row) {
+            $status = $this->normalizeStatus((string) ($row['attendance_status'] ?? ''));
+            if (!in_array($status, [TRAINING_STATUS_ATTENDED, TRAINING_STATUS_COMPLETED], true)) {
+                continue;
+            }
+            $applicantProfileId = (int) ($row['applicant_profile_id'] ?? 0);
+            $round = (int) ($row['training_round_number'] ?? 0);
+            if ($applicantProfileId <= 0 || $round < 1 || $round > 3) {
+                continue;
+            }
+            $presentRoundsByApplicant[$applicantProfileId][$round] = true;
+        }
+
+        $currentRound = (int) ($program['roundNumber'] ?? $program['training_round_number'] ?? 0);
+        return array_map(static function (array $invitee) use ($presentRoundsByApplicant, $currentRound): array {
+            $applicantProfileId = (int) ($invitee['applicantProfileId'] ?? 0);
+            $presentRounds = $presentRoundsByApplicant[$applicantProfileId] ?? [];
+            $presentSessionCount = count($presentRounds);
+            $isCompleted = $currentRound === 3 && isset($presentRounds[1], $presentRounds[2], $presentRounds[3]);
+            $invitee['presentSessionCount'] = $presentSessionCount;
+            $invitee['completedByAttendance'] = $isCompleted;
+            $invitee['completionStatus'] = $isCompleted ? TRAINING_STATUS_COMPLETED : 'Incomplete';
+            return $invitee;
+        }, $invitees);
     }
 
     private function emptyListing(): array
@@ -2304,12 +2374,7 @@ class TrainingService
             TRAINING_STATUS_ATTENDED,
             TRAINING_STATUS_EXCUSED,
             TRAINING_STATUS_MISSED,
-            TRAINING_STATUS_COMPLETED,
         ], true)) {
-            return ['ok' => true];
-        }
-
-        if ($this->isTrainingDateBypassApplicant((string) ($invitee['applicant_name'] ?? ''))) {
             return ['ok' => true];
         }
 
@@ -2327,18 +2392,6 @@ class TrainingService
             'ok' => false,
             'message' => 'Attendance can only be marked on or after the seminar date (' . date('M j, Y', strtotime($sessionDate)) . ').',
         ];
-    }
-
-    private function isTrainingDateBypassApplicant(string $name): bool
-    {
-        $normalized = strtolower(trim($name));
-        foreach (['lisadora', 'andrea', 'maria', 'mariel'] as $allowed) {
-            if ($normalized !== '' && str_contains($normalized, $allowed)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function normalizeStatus(string $status): string

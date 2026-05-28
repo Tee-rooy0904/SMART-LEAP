@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Service layer for C er ti fi ca te Se rv ic e.
+ * Contains the business rules, workflow orchestration, and data-shaping logic for this SMART LEAP feature area.
+ */
 
 declare(strict_types=1);
 

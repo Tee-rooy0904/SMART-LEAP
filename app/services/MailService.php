@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -17,30 +16,80 @@ class MailService
             return true;
         }
 
-        try {
-            $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
-            $mailer->isSMTP();
-            $mailer->Host = $config['host'];
-            $mailer->Port = $config['port'];
-            $mailer->SMTPAuth = $config['username'] !== '';
-            $mailer->Username = $config['username'];
-            $mailer->Password = $config['password'];
-            if ($config['encryption']) {
-                $mailer->SMTPSecure = $config['encryption'];
+        $lastException = null;
+
+        foreach ($this->candidateMailerConfigs($config) as $variant) {
+            try {
+                $mailer = $this->buildMailer($variant, $to, $subject, $html);
+                $sent = $mailer->send();
+                $this->storeEmailLog($userId, $to, $subject, $sent ? 'sent' : 'failed', $mailer->getLastMessageID() ?: null, null, $sent);
+                return $sent;
+            } catch (\Throwable $exception) {
+                $lastException = $exception;
+                if ($this->isRetriableMailFailure($exception)) {
+                    usleep(350000);
+                    continue;
+                }
+                break;
             }
-            $mailer->setFrom($config['from_address'], $config['from_name']);
-            $mailer->addAddress($to);
-            $mailer->Subject = $subject;
-            $mailer->isHTML(true);
-            $mailer->Body = $html;
-            $sent = $mailer->send();
-            $this->storeEmailLog($userId, $to, $subject, $sent ? 'sent' : 'failed', $mailer->getLastMessageID() ?: null, null, $sent);
-            return $sent;
-        } catch (\Throwable $exception) {
-            $this->storeEmailLog($userId, $to, $subject, 'failed', null, $exception->getMessage(), false);
-            log_database_query_failure('mail.send', $exception, ['recipient_email' => $to, 'subject' => $subject]);
-            return false;
         }
+
+        if ($lastException instanceof \Throwable) {
+            $this->storeEmailLog($userId, $to, $subject, 'failed', null, $lastException->getMessage(), false);
+            write_app_log('mail', 'Email delivery failed.', [
+                'operation' => 'mail.send',
+                'recipient_email' => $to,
+                'subject' => $subject,
+                'error' => $lastException->getMessage(),
+            ]);
+        }
+
+        return false;
+    }
+
+    private function candidateMailerConfigs(array $config): array
+    {
+        $variants = [$config];
+
+        if (!$this->isGmailConfig($config)) {
+            return $variants;
+        }
+
+        $normalizedPassword = preg_replace('/\s+/', '', (string) ($config['password'] ?? ''));
+        $originalPassword = (string) ($config['password'] ?? '');
+
+        if ($normalizedPassword !== '' && $normalizedPassword !== $originalPassword) {
+            $variants[] = array_merge($config, ['password' => $normalizedPassword]);
+        }
+
+        $port = (int) ($config['port'] ?? 587);
+        $encryption = strtolower(trim((string) ($config['encryption'] ?? '')));
+
+        if ($port === 587 && ($encryption === '' || $encryption === 'tls' || $encryption === 'starttls')) {
+            $sslVariant = array_merge($config, [
+                'port' => 465,
+                'encryption' => 'ssl',
+            ]);
+            $variants[] = $sslVariant;
+
+            if ($normalizedPassword !== '' && $normalizedPassword !== $originalPassword) {
+                $variants[] = array_merge($sslVariant, ['password' => $normalizedPassword]);
+            }
+        }
+
+        if ($port === 465 && ($encryption === '' || $encryption === 'ssl' || $encryption === 'smtps')) {
+            $tlsVariant = array_merge($config, [
+                'port' => 587,
+                'encryption' => 'tls',
+            ]);
+            $variants[] = $tlsVariant;
+
+            if ($normalizedPassword !== '' && $normalizedPassword !== $originalPassword) {
+                $variants[] = array_merge($tlsVariant, ['password' => $normalizedPassword]);
+            }
+        }
+
+        return $this->uniqueMailerConfigs($variants);
     }
 
     public function sendTrainingNotice(array $user, array $program, array $invitee): bool
@@ -63,6 +112,102 @@ class MailService
         );
 
         return $this->send((string) ($user['email'] ?? ''), $subject, $body, (int) ($user['id'] ?? 0));
+    }
+
+    private function buildMailer(array $config, string $to, string $subject, string $html): \PHPMailer\PHPMailer\PHPMailer
+    {
+        $host = trim((string) ($config['host'] ?? ''));
+        $username = trim((string) ($config['username'] ?? ''));
+        $password = trim((string) ($config['password'] ?? ''));
+        $fromAddress = trim((string) ($config['from_address'] ?? ''));
+        $fromName = trim((string) ($config['from_name'] ?? 'SMART LEAP'));
+        $encryption = strtolower(trim((string) ($config['encryption'] ?? '')));
+
+        $mailer = new \PHPMailer\PHPMailer\PHPMailer(true);
+        $mailer->isSMTP();
+        $mailer->Host = $host;
+        $mailer->Port = (int) ($config['port'] ?? 587);
+        $mailer->Timeout = 20;
+        $mailer->SMTPAuth = $username !== '';
+        $mailer->SMTPKeepAlive = false;
+        $mailer->SMTPAutoTLS = true;
+        $mailer->Username = $username;
+        $mailer->Password = $password;
+        $mailer->CharSet = 'UTF-8';
+        $mailer->Hostname = (string) parse_url((string) config('app.url', 'http://localhost'), PHP_URL_HOST);
+
+        if ($encryption !== '') {
+            $mailer->SMTPSecure = match ($encryption) {
+                'ssl', 'smtps' => \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_SMTPS,
+                default => \PHPMailer\PHPMailer\PHPMailer::ENCRYPTION_STARTTLS,
+            };
+        }
+
+        $mailer->setFrom($fromAddress, $fromName);
+        $mailer->addAddress(trim($to));
+        $mailer->Subject = $subject;
+        $mailer->isHTML(true);
+        $mailer->Body = $html;
+
+        return $mailer;
+    }
+
+    private function isTransientConnectionFailure(\Throwable $exception): bool
+    {
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'could not connect to smtp host')
+            || str_contains($message, 'failed to connect to server')
+            || str_contains($message, 'connection timed out')
+            || str_contains($message, 'network is unreachable')
+            || str_contains($message, 'connection refused');
+    }
+
+    private function isAuthenticationFailure(\Throwable $exception): bool
+    {
+        $message = strtolower($exception->getMessage());
+
+        return str_contains($message, 'could not authenticate')
+            || str_contains($message, 'username and password not accepted')
+            || str_contains($message, 'authentication failed');
+    }
+
+    private function isRetriableMailFailure(\Throwable $exception): bool
+    {
+        return $this->isTransientConnectionFailure($exception) || $this->isAuthenticationFailure($exception);
+    }
+
+    private function isGmailConfig(array $config): bool
+    {
+        $host = strtolower(trim((string) ($config['host'] ?? '')));
+        $username = strtolower(trim((string) ($config['username'] ?? '')));
+
+        return str_contains($host, 'gmail.com') || str_ends_with($username, '@gmail.com');
+    }
+
+    private function uniqueMailerConfigs(array $variants): array
+    {
+        $unique = [];
+        $seen = [];
+
+        foreach ($variants as $variant) {
+            $key = implode('|', [
+                strtolower(trim((string) ($variant['host'] ?? ''))),
+                (string) ((int) ($variant['port'] ?? 0)),
+                strtolower(trim((string) ($variant['encryption'] ?? ''))),
+                trim((string) ($variant['username'] ?? '')),
+                trim((string) ($variant['password'] ?? '')),
+            ]);
+
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $unique[] = $variant;
+        }
+
+        return $unique;
     }
 
     private function formatTrainingDate(string $date): string

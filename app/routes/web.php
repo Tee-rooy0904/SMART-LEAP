@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 use App\Controllers\AdminDashboardController;
@@ -58,13 +57,17 @@ return [
     'GET /admin/training/attendance' => ['handler' => [TrainingWorkspaceController::class, 'showAdmin'], 'middleware' => ['auth', 'admin']],
     'GET /project-officer' => ['handler' => [ProjectOfficerController::class, 'show'], 'middleware' => ['auth', 'project_officer']],
     'GET /pdo/reports/data' => ['handler' => [ProjectOfficerController::class, 'reportData'], 'middleware' => ['auth', 'project_officer']],
+    'GET /pdo/reports/export/csv' => ['handler' => [ReportController::class, 'exportCsv'], 'middleware' => ['auth', 'project_officer']],
+    'GET /pdo/reports/export/excel' => ['handler' => [ReportController::class, 'exportExcel'], 'middleware' => ['auth', 'project_officer']],
+    'GET /pdo/reports/export/pdf' => ['handler' => [ReportController::class, 'exportPdf'], 'middleware' => ['auth', 'project_officer']],
     'POST /pdo/beneficiaries/status' => ['handler' => [ProjectOfficerController::class, 'updateBeneficiaryStatus'], 'middleware' => ['auth', 'project_officer']],
+    'POST /pdo/co-maker-registrations/send-email' => ['handler' => [ProjectOfficerController::class, 'sendCoMakerRegistrationEmail'], 'middleware' => ['auth', 'project_officer']],
     'POST /pdo/beneficiaries/assistance-received' => ['handler' => [ProjectOfficerController::class, 'recordBeneficiaryAssistanceReceived'], 'middleware' => ['auth', 'project_officer']],
-    'POST /pdo/co-maker-registrations/review' => ['handler' => [ProjectOfficerController::class, 'reviewCoMakerRegistration'], 'middleware' => ['auth', 'project_officer']],
     'GET /pdo/training' => ['handler' => [TrainingWorkspaceController::class, 'showPdo'], 'middleware' => ['auth', 'project_officer']],
     'GET /pdo/training/session' => ['handler' => [TrainingWorkspaceController::class, 'showPdo'], 'middleware' => ['auth', 'project_officer']],
     'GET /pdo/training/operations' => ['handler' => [TrainingWorkspaceController::class, 'showPdo'], 'middleware' => ['auth', 'project_officer']],
     'GET /social-worker' => ['handler' => [SocialWorkerController::class, 'show'], 'middleware' => ['auth', 'social_worker']],
+    'GET /social-worker/overview-data' => ['handler' => [SocialWorkerController::class, 'overviewData'], 'middleware' => ['auth', 'social_worker']],
     'GET /social-worker/reports/export/csv' => ['handler' => [ReportController::class, 'exportCsv'], 'middleware' => ['auth', 'admin_or_social_worker']],
     'GET /social-worker/reports/export/excel' => ['handler' => [ReportController::class, 'exportExcel'], 'middleware' => ['auth', 'admin_or_social_worker']],
     'GET /social-worker/reports/export/pdf' => ['handler' => [ReportController::class, 'exportPdf'], 'middleware' => ['auth', 'admin_or_social_worker']],

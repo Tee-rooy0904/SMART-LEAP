@@ -8,8 +8,18 @@
 }
 
 .admin-section#team-section .applications-filters {
+  grid-template-columns: minmax(360px, 2fr) repeat(3, minmax(150px, 0.72fr)) minmax(92px, max-content);
   padding-top: 18px;
   padding-bottom: 18px;
+}
+
+.admin-section#team-section .applications-filters > .filter-actions {
+  justify-content: flex-start;
+}
+
+.admin-section#team-section .applications-filters .app-btn-ghost {
+  min-width: 86px;
+  height: 44px;
 }
 
 .team-workspace-grid {
@@ -117,6 +127,18 @@
 
 .team-roster-table td.actions .team-action-button {
   min-width: 96px;
+}
+
+.team-roster-table th:nth-child(2),
+.team-roster-table th:nth-child(3),
+.team-roster-table th:nth-child(4),
+.team-roster-table th:nth-child(5),
+.team-roster-table td:nth-child(2),
+.team-roster-table td:nth-child(3),
+.team-roster-table td:nth-child(4),
+.team-roster-table td:nth-child(5) {
+  text-align: center;
+  vertical-align: middle;
 }
 
 .team-roster-table td.actions {
@@ -378,6 +400,13 @@ body.team-modal-open {
   padding: 20px;
   display: grid;
   gap: 16px;
+}
+
+.team-form-panel[hidden],
+.team-form-hero__meta[hidden],
+.team-role-pill[hidden],
+.team-form-grid label[hidden] {
+  display: none !important;
 }
 
 .team-form-panel + .team-form-panel {
@@ -642,6 +671,37 @@ body.team-modal-open {
   justify-content: flex-end;
   gap: 12px;
   padding-top: 4px;
+}
+
+@media (max-width: 1440px) {
+  .admin-section#team-section .applications-filters {
+    grid-template-columns: minmax(320px, 1.4fr) repeat(3, minmax(180px, 1fr)) minmax(86px, max-content);
+  }
+
+  .admin-section#team-section .applications-filters > .filter-group--search {
+    grid-column: auto;
+  }
+}
+
+@media (max-width: 1240px) {
+  .admin-section#team-section .applications-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-section#team-section .applications-filters > .filter-group--search,
+  .admin-section#team-section .applications-filters > .filter-actions {
+    grid-column: 1 / -1;
+  }
+
+  .admin-section#team-section .applications-filters > .filter-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 720px) {
+  .admin-section#team-section .applications-filters {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 860px) {

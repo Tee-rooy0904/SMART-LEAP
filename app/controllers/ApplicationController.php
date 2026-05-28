@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Controllers;
@@ -19,11 +18,22 @@ class ApplicationController extends Controller
         return $user;
     }
 
+    private function authorizeWorkflowReviewer(): array
+    {
+        $user = auth_user() ?? [];
+        $role = strtolower((string) ($user['role'] ?? ''));
+        if (!str_contains($role, 'admin') && !str_contains($role, 'project')) {
+            response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
+        }
+
+        return $user;
+    }
+
     private function authorizeApplicantDataEditor(): array
     {
         $user = auth_user() ?? [];
         $role = strtolower((string) ($user['role'] ?? ''));
-        if (!str_contains($role, 'admin') && !str_contains($role, 'social')) {
+        if (!str_contains($role, 'admin')) {
             response_json(['ok' => false, 'message' => 'Forbidden.'], 403);
         }
 
@@ -95,7 +105,7 @@ class ApplicationController extends Controller
         try {
             $applicationId = (int) ($_POST['applicationId'] ?? 0);
             $service = new ApplicationService();
-            $result = $service->reviewApplication($applicationId, $_POST, $this->authorizeReviewer());
+            $result = $service->reviewApplication($applicationId, $_POST, $this->authorizeWorkflowReviewer());
             if (!$result['ok']) {
                 response_json($result, 422);
             }
@@ -112,7 +122,7 @@ class ApplicationController extends Controller
         try {
             $applicationId = (int) ($_POST['applicationId'] ?? 0);
             $service = new ApplicationService();
-            $result = $service->recordAssistanceReceived($applicationId, $this->authorizeReviewer());
+            $result = $service->recordAssistanceReceived($applicationId, $this->authorizeWorkflowReviewer());
             if (!$result['ok']) {
                 response_json($result, 422);
             }
@@ -129,7 +139,7 @@ class ApplicationController extends Controller
         try {
             $applicationId = (int) ($_POST['applicationId'] ?? 0);
             $service = new ApplicationService();
-            $result = $service->reviewRequirement($applicationId, $_POST, $this->authorizeReviewer());
+            $result = $service->reviewRequirement($applicationId, $_POST, $this->authorizeWorkflowReviewer());
             if (!$result['ok']) {
                 response_json($result, 422);
             }
@@ -152,7 +162,7 @@ class ApplicationController extends Controller
             }
 
             $service = new ApplicationService();
-            $result = $service->uploadFormRequirement($applicationId, $requirementKey, $file, $this->authorizeReviewer());
+            $result = $service->uploadFormRequirement($applicationId, $requirementKey, $file, $this->authorizeWorkflowReviewer());
             if (!$result['ok']) {
                 response_json($result, 422);
             }
@@ -172,7 +182,7 @@ class ApplicationController extends Controller
         try {
             $applicationId = (int) ($_POST['applicationId'] ?? 0);
             $service = new ApplicationService();
-            $result = $service->saveAssessment($applicationId, $_POST, $this->authorizeReviewer());
+            $result = $service->saveAssessment($applicationId, $_POST, $this->authorizeWorkflowReviewer());
             if (!$result['ok']) {
                 response_json($result, 422);
             }

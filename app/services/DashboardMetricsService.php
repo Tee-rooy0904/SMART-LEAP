@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Services;
@@ -45,7 +44,7 @@ class DashboardMetricsService
         ];
     }
 
-    public function socialWorkerOverview(): array
+    public function socialWorkerOverview(array $actor = []): array
     {
         $beneficiaryProfileService = new BeneficiaryProfileService();
         $beneficiaryProfileService->ensureReplacementLinkSchema();
@@ -55,16 +54,21 @@ class DashboardMetricsService
         $beneficiarySummary = $this->beneficiarySummary();
         $repaymentSummary = $this->repaymentSummary($beneficiarySummary);
         $beneficiaryRoster = $this->beneficiaryRoster();
+        $validationState = (new StageOneRegistrationService())->validationState();
+        $coMakerRegistrations = (new CoMakerRegistrationService())->listForActor($actor);
 
         return [
             'generatedAt' => date(DATE_ATOM),
             'applicationSummary' => $applicationSummary,
-            'validationSummary' => (new StageOneRegistrationService())->validationSummary(),
+            'validationSummary' => $validationState['summary'] ?? [],
+            'validationState' => $validationState,
             'assessmentQueue' => $this->assessmentQueue(12),
             'recentApplications' => $this->recentApplications(12),
             'trainingSummary' => $trainingSummary,
             'beneficiarySummary' => $beneficiarySummary,
             'beneficiaryRoster' => $beneficiaryRoster,
+            'coMakerRegistrations' => $coMakerRegistrations,
+            'coMakerRegistrationSummary' => $this->coMakerRegistrationSummary($coMakerRegistrations),
             'beneficiaryRosterSummary' => $this->beneficiaryRosterSummary($beneficiaryRoster),
             'beneficiaryStatusDistribution' => $this->beneficiaryStatusDistribution($beneficiaryRoster),
             'repaymentSummary' => $repaymentSummary,
@@ -305,6 +309,7 @@ class DashboardMetricsService
     private function beneficiarySummary(): array
     {
         $summary = ['total' => 0, 'active' => 0];
+        $countableStatusSql = 'LOWER(COALESCE(beneficiary_status, "")) IN ("active", "inactive", "deceased")';
 
         try {
             (new CoMakerRegistrationService())->ensureSchema();
@@ -312,13 +317,19 @@ class DashboardMetricsService
                 'SELECT COUNT(*)
                  FROM beneficiary_profiles
                  WHERE replacement_for_beneficiary_profile_id IS NULL
-                   AND approval_date IS NOT NULL'
+                   AND (
+                        approval_date IS NOT NULL
+                        OR ' . $countableStatusSql . '
+                   )'
             )->fetchColumn() ?: 0);
             $summary['active'] = (int) (db()->query(
                 'SELECT COUNT(*)
                  FROM beneficiary_profiles
                  WHERE replacement_for_beneficiary_profile_id IS NULL
-                   AND approval_date IS NOT NULL
+                   AND (
+                        approval_date IS NOT NULL
+                        OR ' . $countableStatusSql . '
+                   )
                    AND LOWER(beneficiary_status) = "active"'
             )->fetchColumn() ?: 0);
         } catch (\Throwable $exception) {
@@ -398,7 +409,10 @@ class DashboardMetricsService
                    AND LOWER(COALESCE(co_maker_registrations.registration_status, "")) IN ("active", "approved")
                  LEFT JOIN users AS co_maker_users ON co_maker_users.id = co_maker_registrations.user_id
                  WHERE beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
-                   AND beneficiary_profiles.approval_date IS NOT NULL
+                   AND (
+                        beneficiary_profiles.approval_date IS NOT NULL
+                        OR LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) IN ("active", "inactive", "deceased")
+                   )
                  ORDER BY beneficiary_profiles.updated_at DESC, beneficiary_profiles.id DESC
                  LIMIT :limit'
             );
@@ -851,6 +865,11 @@ class DashboardMetricsService
             'verifiedThisMonth' => 0,
             'overdueAccounts' => 0,
             'creditedCases' => 0,
+            'underReview' => 0,
+            'needsCorrection' => 0,
+            'partialPaid' => 0,
+            'fullyPaid' => 0,
+            'noUploadYet' => 0,
             'distribution' => [
                 'segments' => [
                     ['key' => 'no_upload_yet', 'label' => 'No Upload Yet', 'count' => 0],
@@ -864,24 +883,18 @@ class DashboardMetricsService
         ];
 
         try {
-            $statusRows = db()->query(
-                'SELECT repayments.beneficiary_profile_id,
-                        repayments.status,
-                        verification.verification_status
-                 FROM repayments
-                 LEFT JOIN (
-                    SELECT rv.repayment_id,
-                           rv.verification_status
-                    FROM repayment_verifications rv
-                    INNER JOIN (
-                        SELECT repayment_id, MAX(id) AS latest_id
-                        FROM repayment_verifications
-                        GROUP BY repayment_id
-                    ) latest ON latest.latest_id = rv.id
-                 ) verification ON verification.repayment_id = repayments.id'
-            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            $beneficiaryIds = db()->query(
+                'SELECT id
+                 FROM beneficiary_profiles
+                 WHERE replacement_for_beneficiary_profile_id IS NULL
+                   AND (
+                        approval_date IS NOT NULL
+                        OR LOWER(COALESCE(beneficiary_status, "")) IN ("active", "inactive", "deceased")
+                   )'
+            )->fetchAll(PDO::FETCH_COLUMN) ?: [];
+            $beneficiaryIds = array_values(array_filter(array_map('intval', $beneficiaryIds)));
+            $repaymentMap = $this->beneficiaryRepaymentSummaries($beneficiaryIds);
 
-            $distinctBeneficiariesWithUploads = [];
             $distribution = [
                 'no_upload_yet' => 0,
                 'under_review' => 0,
@@ -890,36 +903,27 @@ class DashboardMetricsService
                 'fully_paid' => 0,
             ];
 
-            foreach ($statusRows as $row) {
-                $beneficiaryProfileId = (int) ($row['beneficiary_profile_id'] ?? 0);
-                if ($beneficiaryProfileId > 0) {
-                    $distinctBeneficiariesWithUploads[$beneficiaryProfileId] = true;
-                }
-
-                $stage = $this->normalizeRepaymentStage(
-                    (string) ($row['status'] ?? ''),
-                    (string) ($row['verification_status'] ?? '')
-                );
-
-                if (in_array($stage, ['uploaded', 'pending'], true)) {
-                    $distribution['under_review']++;
+            foreach ($beneficiaryIds as $beneficiaryId) {
+                $repayment = $repaymentMap[$beneficiaryId] ?? $this->emptyBeneficiaryRepaymentSummary();
+                $key = (string) ($repayment['key'] ?? 'no_upload');
+                if ($key === 'fully_paid') {
+                    $distribution['fully_paid']++;
                     continue;
                 }
-                if (in_array($stage, ['needs_correction', 'rejected'], true)) {
-                    $distribution['needs_correction']++;
-                    continue;
-                }
-                if ($stage === 'verified') {
+                if ($key === 'partial_paid') {
                     $distribution['partial_paid']++;
                     continue;
                 }
-                if ($stage === 'credited') {
-                    $distribution['fully_paid']++;
+                if ($key === 'under_review') {
+                    $distribution['under_review']++;
+                    continue;
                 }
+                if (in_array($key, ['needs_follow_up', 'rejected'], true)) {
+                    $distribution['needs_correction']++;
+                    continue;
+                }
+                $distribution['no_upload_yet']++;
             }
-
-            $activeBeneficiaries = (int) ($beneficiarySummary['active'] ?? 0);
-            $distribution['no_upload_yet'] = max($activeBeneficiaries - count($distinctBeneficiariesWithUploads), 0);
 
             $summary['pendingVerification'] = $distribution['under_review'];
             $summary['verifiedThisMonth'] = (int) (db()->query(
@@ -940,6 +944,11 @@ class DashboardMetricsService
             )->fetchColumn() ?: 0);
             $summary['overdueAccounts'] = $distribution['needs_correction'];
             $summary['creditedCases'] = $distribution['fully_paid'];
+            $summary['underReview'] = $distribution['under_review'];
+            $summary['needsCorrection'] = $distribution['needs_correction'];
+            $summary['partialPaid'] = $distribution['partial_paid'];
+            $summary['fullyPaid'] = $distribution['fully_paid'];
+            $summary['noUploadYet'] = $distribution['no_upload_yet'];
             $summary['distribution'] = [
                 'segments' => [
                     ['key' => 'no_upload_yet', 'label' => 'No Upload Yet', 'count' => $distribution['no_upload_yet']],
@@ -1137,16 +1146,26 @@ class DashboardMetricsService
         if (str_contains($text, 'buy') || str_contains($text, 'sell')) {
             return 'Buy and Sell';
         }
-        if (str_contains($text, 'home')) {
-            return 'Homemade';
+        if (str_contains($text, 'food') || str_contains($text, 'beverage') || str_contains($text, 'balut') || str_contains($text, 'snack') || str_contains($text, 'eatery') || str_contains($text, 'carinderia')) {
+            return 'Food and Beverages';
         }
         if (str_contains($text, 'livestock') || str_contains($text, 'animal') || str_contains($text, 'poultry') || str_contains($text, 'hog')) {
             return 'Livestock';
         }
-        if (str_contains($text, 'service')) {
-            return 'Services';
-        }
-        if (str_contains($text, 'establishment') || str_contains($text, 'store') || str_contains($text, 'shop')) {
+        if (
+            str_contains($text, 'paluwagan')
+            || str_contains($text, 'microenterprise')
+            || str_contains($text, 'micro enterprise')
+            || str_contains($text, 'micro-enterprise')
+            || str_contains($text, 'service')
+            || str_contains($text, 'establishment')
+            || str_contains($text, 'store')
+            || str_contains($text, 'shop')
+            || str_contains($text, 'home')
+            || str_contains($text, 'production')
+            || str_contains($text, 'homemade')
+            || str_contains($text, 'processing')
+        ) {
             return 'Establishment';
         }
 

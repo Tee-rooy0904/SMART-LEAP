@@ -154,7 +154,7 @@
                         ${ticket.unread ? '<span class="helpdesk-unread">Unread</span>' : ''}
                     </div>
                     <h4>${escapeHtml(ticket.subject || '')}</h4>
-                    <p>${escapeHtml(ticket.category || '')} · Assigned to: ${escapeHtml(ticket.assignedRole || '')}</p>
+                    <p>${escapeHtml(ticket.category || '')} Â· Assigned to: ${escapeHtml(ticket.assignedRole || '')}</p>
                 </div>
                 <div class="helpdesk-ticket__meta">
                     <span class="helpdesk-badge ${statusClass(ticket.status)}">${escapeHtml(ticket.status || 'New')}</span>
@@ -182,7 +182,7 @@
                 <div>
                     <strong>${escapeHtml(ticket.ticketNo || '')}</strong>
                     <h4>${escapeHtml(ticket.subject || '')}</h4>
-                    <p>${escapeHtml(ticket.category || '')} · Assigned to: ${escapeHtml(ticket.assignedRole || '')}</p>
+                    <p>${escapeHtml(ticket.category || '')} Â· Assigned to: ${escapeHtml(ticket.assignedRole || '')}</p>
                 </div>
                 <span class="helpdesk-badge ${statusClass(ticket.status)}">${escapeHtml(ticket.status || '')}</span>
                 <dl>

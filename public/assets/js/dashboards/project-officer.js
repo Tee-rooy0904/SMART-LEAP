@@ -1,13 +1,17 @@
 (function () {
+  // Authenticated staff identity used to gate access to the PDO-only dashboard.
   const authUser = window.SMARTLEAP_AUTH_USER || null;
+  // Server-rendered bootstrap payload for the first scoped dashboard and repayment paint.
   const initialData = window.SMARTLEAP_PO_INITIAL && typeof window.SMARTLEAP_PO_INITIAL === 'object' ? window.SMARTLEAP_PO_INITIAL : {};
   const initialOverview = initialData.overview && typeof initialData.overview === 'object' ? initialData.overview : {};
   const initialRepaymentData = initialData.repaymentData && typeof initialData.repaymentData === 'object' ? initialData.repaymentData : {};
   const baseUrl = String(window.SMARTLEAP_BASE_URL || '').replace(/\/+$/, '');
+  // Training status vocabulary used by the PDO training pipeline views.
   const trainingStatuses = ['Not Scheduled', 'Scheduled', 'Notified', 'Attended', 'Excused', 'Missed'];
-  const livelihoodCategories = ['Establishment', 'Livestock', 'Buy & Sell', 'Services', 'Production'];
+  const livelihoodCategories = ['Establishment', 'Livestock', 'Buy & Sell', 'Food and Beverages'];
   const TOTAL_REPAYMENT_MONTHS = 24;
   const TOTAL_REPAYMENT_AMOUNT = 625 * TOTAL_REPAYMENT_MONTHS;
+  // Color maps keep dashboard charts and status chips consistent with workflow meaning.
   const APPLICATION_STATUS_COLORS = {
     draft: '#cbd5e1',
     submitted: '#f2994a',
@@ -43,8 +47,55 @@
   const today = new Date();
   const currentReportMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
   const currentReportYear = String(today.getFullYear());
-  const currentReportQuarter = '1';
-  const state = { applications: Array.isArray(initialOverview.applications) ? initialOverview.applications : [], roster: Array.isArray(initialOverview.roster) ? initialOverview.roster : [], summary: initialOverview.summary || {}, scopeBarangays: Array.isArray(initialOverview.scopeBarangays) ? initialOverview.scopeBarangays : [], beneficiarySummary: initialOverview.beneficiarySummary || {}, beneficiaryRoster: Array.isArray(initialOverview.beneficiaryRoster) ? initialOverview.beneficiaryRoster : [], coMakerRegistrations: Array.isArray(initialOverview.coMakerRegistrations) ? initialOverview.coMakerRegistrations : [], coMakerRegistrationSummary: initialOverview.coMakerRegistrationSummary || {}, repaymentRecords: Array.isArray(initialRepaymentData.payments) ? initialRepaymentData.payments : [], dashboardLoaded: false, activeApplication: null, activePreviewToken: '', activePreviewOwnerId: null, activeBeneficiaryId: null, beneficiaryFilters: { search: '', barangay: '', repayment: '', status: '' }, coMakerFilters: { search: '', status: '' }, reports: { period: 'monthly', month: currentReportMonth, quarter: currentReportQuarter, year: currentReportYear, from: '', to: '', search: '', barangay: '', pdo: '', serviceType: '', gender: '', repayment: '', refreshTimer: null, refreshing: false, liveRequestId: 0 }, searchTimers: {}, returnToApplicationModal: false, assistanceReceivedSelection: false, repayments: { workspace: null, syncObserver: null, syncingDetail: false, modal: null, syncTimer: null }, training: { view: 'overview', subview: 'attendance', programs: [], summary: {}, eligibleInvitees: [], seminarForms: [], selectedProgramId: null, activeProgram: null, lastUpdatedInviteeId: null, lastNotifiedInviteeId: null, savingProgram: false, syncingInvitees: false, sendingProgramNotice: '', removingProgramId: null, confirmRemoveProgramId: null, busyInvitees: {}, rosterSearch: '', rosterFilter: '', assignmentSearch: '', assignmentFilter: '', assignedSearch: '', assignedFilter: '', noticeSelection: [], noticeFilters: { search: '', status: '' }, noticeWarning: '', attendanceEditorId: null, attendanceDrafts: {} } };
+  const repaymentCycleStartMonth = 5;
+  const formatReportCurrencyLabel = (value) => {
+    const amount = safeNumber(value);
+    if (Math.abs(amount) >= 100000) {
+      return `₱${amount.toLocaleString('en-PH', { notation: 'compact', maximumFractionDigits: 2 }).replace(/\s+/g, '')}`;
+    }
+    return formatPesoAmount(amount);
+  };
+  const buildRepaymentCycleMonths = (yearValue, repaymentYear = '1') => {
+    const baseYear = (Number.parseInt(yearValue, 10) || Number.parseInt(currentReportYear, 10)) + (String(repaymentYear) === '2' ? 1 : 0);
+    const start = new Date(baseYear, repaymentCycleStartMonth - 1, 1);
+    return Array.from({ length: 12 }, (_, index) => {
+      const month = new Date(start.getFullYear(), start.getMonth() + index, 1);
+      return `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, '0')}`;
+    });
+  };
+  const defaultCycleMonth = (() => {
+    const cycleMonths = buildRepaymentCycleMonths(currentReportYear, '1');
+    return cycleMonths.includes(currentReportMonth) ? currentReportMonth : cycleMonths[0];
+  })();
+  const deriveRepaymentQuarter = (monthValue) => {
+    const [, monthPart] = String(monthValue || '').split('-');
+    const monthNumber = Number.parseInt(monthPart, 10);
+    if (!monthNumber) return '1';
+    return String(Math.floor(((monthNumber - repaymentCycleStartMonth + 12) % 12) / 3) + 1);
+  };
+  const niceAxisStep = (rawMax) => {
+    const safeMax = Math.max(safeNumber(rawMax), 1);
+    const roughStep = safeMax / 5;
+    const magnitude = 10 ** Math.floor(Math.log10(roughStep || 1));
+    const normalized = roughStep / magnitude;
+    let niceNormalized = 1;
+    if (normalized <= 1) niceNormalized = 1;
+    else if (normalized <= 2) niceNormalized = 2;
+    else if (normalized <= 2.5) niceNormalized = 2.5;
+    else if (normalized <= 5) niceNormalized = 5;
+    else niceNormalized = 10;
+    return niceNormalized * magnitude;
+  };
+  const sectionTitles = {
+    clients: 'Dashboard',
+    applications: 'Application Review',
+    training: 'Training Pipeline',
+    repayments: 'Repayment Checking',
+    beneficiaries: 'Beneficiaries',
+    reports: 'Reports',
+  };
+  // Shared client state for scoped applications, beneficiaries, repayments, reports, and training subviews.
+  const state = { applications: Array.isArray(initialOverview.applications) ? initialOverview.applications : [], roster: Array.isArray(initialOverview.roster) ? initialOverview.roster : [], summary: initialOverview.summary || {}, scopeBarangays: Array.isArray(initialOverview.scopeBarangays) ? initialOverview.scopeBarangays : [], beneficiarySummary: initialOverview.beneficiarySummary || {}, beneficiaryRoster: Array.isArray(initialOverview.beneficiaryRoster) ? initialOverview.beneficiaryRoster : [], repaymentRecords: Array.isArray(initialRepaymentData.payments) ? initialRepaymentData.payments : [], dashboardLoaded: false, activeApplication: null, activePreviewToken: '', activePreviewOwnerId: null, activeBeneficiaryId: null, beneficiaryFilters: { search: '', barangay: '', repayment: '', status: '' }, reports: { period: 'monthly', month: defaultCycleMonth, quarter: deriveRepaymentQuarter(defaultCycleMonth), year: currentReportYear, repaymentYear: '1', from: '', to: '', search: '', barangay: '', pdo: '', serviceType: '', gender: '', repayment: '', refreshTimer: null, refreshing: false, liveRequestId: 0 }, searchTimers: {}, returnToApplicationModal: false, assistanceReceivedSelection: false, repayments: { workspace: null, syncObserver: null, syncingDetail: false, modal: null, syncTimer: null }, training: { view: 'overview', subview: 'attendance', programs: [], summary: {}, eligibleInvitees: [], seminarForms: [], selectedProgramId: null, activeProgram: null, lastUpdatedInviteeId: null, lastNotifiedInviteeId: null, savingProgram: false, syncingInvitees: false, sendingProgramNotice: '', removingProgramId: null, confirmRemoveProgramId: null, busyInvitees: {}, rosterSearch: '', rosterFilter: '', assignmentSearch: '', assignmentFilter: '', assignedSearch: '', assignedFilter: '', noticeSelection: [], noticeFilters: { search: '', status: '' }, noticeWarning: '', attendanceEditorId: null, attendanceDrafts: {} } };
   const routeUrl = (path) => `${baseUrl}/${String(path || '').replace(/^\/+/, '')}`;
   const absoluteRouteUrl = (path) => new URL(routeUrl(path), window.location.origin).toString();
 
@@ -56,6 +107,7 @@
 
   document.addEventListener('DOMContentLoaded', init);
 
+  // Guard access, bootstrap shared modal systems, and load the first dashboard and training payloads.
   function init() {
     if (!authUser || !String(authUser.role || '').toLowerCase().includes('project')) {
       window.location.href = `${baseUrl}/login`;
@@ -69,6 +121,7 @@
     loadTraining();
   }
 
+  // Register all PDO workspace controls: section navigation, reports filters, training tools, and scoped tables.
   function bind() {
     document.querySelectorAll('[data-section]').forEach((button) => button.addEventListener('click', () => { showSection(button.dataset.section || 'clients'); closeSidebar(); }));
     document.querySelector('[data-sidebar-close]')?.addEventListener('click', closeSidebar);
@@ -94,21 +147,10 @@
       state.beneficiaryFilters.status = String(event.target.value || '');
       renderBeneficiariesTable();
     });
-    document.getElementById('poBeneficiaryClearFilters')?.addEventListener('click', clearBeneficiaryFilters);
-    document.getElementById('poCoMakerSearch')?.addEventListener('input', (event) => {
-      state.coMakerFilters.search = String(event.target.value || '');
-      debounceRender('co-maker-search', renderCoMakerRegistrationsTable);
-    });
-    document.getElementById('poCoMakerStatusFilter')?.addEventListener('change', (event) => {
-      state.coMakerFilters.status = String(event.target.value || '');
-      renderCoMakerRegistrationsTable();
-    });
-    document.getElementById('poCoMakerClearFilters')?.addEventListener('click', clearCoMakerFilters);
-    ['poReportsPeriod', 'poReportsMonth', 'poReportsQuarter', 'poReportsYear', 'poReportsFrom', 'poReportsTo', 'poReportsBarangay', 'poReportsPdo', 'poReportsServiceType', 'poReportsGender', 'poReportsRepayment'].forEach((id) => {
+    ['poReportsPeriod', 'poReportsMonth', 'poReportsQuarter', 'poReportsYear', 'poReportsRepaymentYear', 'poReportsFrom', 'poReportsTo', 'poReportsServiceType', 'poReportsGender'].forEach((id) => {
       document.getElementById(id)?.addEventListener('change', handleReportFilterChange);
     });
     document.getElementById('poReportsSearch')?.addEventListener('input', handleReportFilterChange);
-    document.getElementById('poReportsClear')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); clearReportsFilters(); });
     document.getElementById('poReportsRefresh')?.addEventListener('click', (event) => { event.preventDefault(); event.stopPropagation(); refreshReportsRealtime(); });
     document.getElementById('reports-section')?.addEventListener('input', handleReportsSectionEvent);
     document.getElementById('reports-section')?.addEventListener('change', handleReportsSectionEvent);
@@ -118,7 +160,6 @@
     document.querySelector('#po-app-table tbody')?.addEventListener('click', handleApplicationClick);
     document.getElementById('clients-section')?.addEventListener('click', handleOverviewClick);
     document.getElementById('beneficiaries-section')?.addEventListener('click', handleBeneficiarySectionClick);
-    document.getElementById('co-makers-section')?.addEventListener('click', handleCoMakerSectionClick);
     document.getElementById('repayments-section')?.addEventListener('click', handleRepaymentSectionClick);
     document.getElementById('poBeneficiaryModal')?.addEventListener('click', (event) => {
       const assistanceButton = event.target.closest('[data-po-beneficiary-assistance-record]');
@@ -126,19 +167,15 @@
         recordBeneficiaryAssistanceReceived(Number(assistanceButton.dataset.poBeneficiaryAssistanceRecord || 0));
         return;
       }
-      const copyButton = event.target.closest('[data-copy-text]');
-      if (copyButton) {
-        event.preventDefault();
-        event.stopPropagation();
-        copyTextToClipboard(copyButton.dataset.copyText || '')
-          .then((copied) => showToast(copied ? 'Co-maker signup link copied.' : 'Unable to copy the signup link.', copied ? 'success' : 'warning'));
+      const sendCoMakerButton = event.target.closest('[data-po-send-co-maker-email]');
+      if (sendCoMakerButton) {
+        sendCoMakerRegistrationEmail(sendCoMakerButton);
         return;
       }
       if (event.target.closest('[data-po-beneficiary-modal-close]')) {
         closeBeneficiaryModal();
       }
     });
-    document.getElementById('poBeneficiaryMarkDeceased')?.addEventListener('click', handleMarkBeneficiaryDeceased);
     document.getElementById('poApplicationModal')?.addEventListener('click', handleReviewClick);
     document.getElementById('poApplicationModal')?.addEventListener('change', handleReviewChange);
     document.getElementById('po-app-modal-livelihood-category-input')?.addEventListener('change', handleLivelihoodCategoryChange);
@@ -556,11 +593,13 @@
       .join('') || 'PO';
   }
 
+  // Switch the visible PDO workspace and trigger any section-specific refresh or rendering work.
   function showSection(section) {
-    const allowedSections = new Set(['clients', 'applications', 'training', 'repayments', 'beneficiaries', 'co-makers', 'reports']);
+    const allowedSections = new Set(['clients', 'applications', 'training', 'repayments', 'beneficiaries', 'reports']);
     const nextSection = allowedSections.has(section) ? section : 'clients';
     if (nextSection === 'training') switchTrainingView('overview');
     document.querySelectorAll('[data-section]').forEach((button) => button.classList.toggle('active', button.dataset.section === nextSection));
+    setText('poHeaderTitle', sectionTitles[nextSection] || 'Dashboard');
     document.querySelectorAll('[data-role-section]').forEach((panel) => { panel.style.display = panel.id === `${nextSection}-section` ? 'block' : 'none'; });
     if (nextSection === 'repayments') {
       renderRepaymentRosterDirect();
@@ -652,7 +691,9 @@
     state.repaymentRecords = Array.isArray(repaymentResponse?.data?.payments) ? repaymentResponse.data.payments : [];
     if (!response.ok) {
       renderLoadError(response.message || 'Unable to load the project officer dashboard.');
-      renderReportsSection();
+      if (document.getElementById('reports-section')?.style.display !== 'none') {
+        fetchPoReportData();
+      }
       state.repayments.workspace?.refresh?.();
       return;
     }
@@ -661,8 +702,6 @@
     state.summary = response.data?.summary || {};
     state.beneficiarySummary = response.data?.beneficiarySummary || {};
     state.beneficiaryRoster = Array.isArray(response.data?.beneficiaryRoster) ? response.data.beneficiaryRoster : [];
-    state.coMakerRegistrations = Array.isArray(response.data?.coMakerRegistrations) ? response.data.coMakerRegistrations : [];
-    state.coMakerRegistrationSummary = response.data?.coMakerRegistrationSummary || {};
     state.scopeBarangays = response.data?.scopeBarangays || [];
     state.dashboardLoaded = true;
     const scopeDistricts = Array.from(new Set(
@@ -680,12 +719,8 @@
     renderApplicationsTable();
     renderBeneficiaryFilters();
     renderBeneficiariesTable();
-    renderCoMakerSnapshots();
-    renderCoMakerRegistrationsTable();
     if (document.getElementById('reports-section')?.style.display !== 'none') {
       fetchPoReportData();
-    } else {
-      renderReportsSection();
     }
     renderRepaymentRosterDirect();
     initRepaymentWorkspace();
@@ -695,23 +730,24 @@
 
   function collectPoReportFiltersFromControls() {
     state.reports.period = reportControlValue('poReportsPeriod', state.reports.period || 'monthly') || 'monthly';
-    state.reports.month = reportControlValue('poReportsMonth', state.reports.month || currentReportMonth) || currentReportMonth;
-    state.reports.quarter = reportControlValue('poReportsQuarter', state.reports.quarter || currentReportQuarter) || currentReportQuarter;
+    state.reports.month = reportControlValue('poReportsMonth', state.reports.month || defaultCycleMonth) || defaultCycleMonth;
+    state.reports.quarter = reportControlValue('poReportsQuarter', state.reports.quarter || '1') || '1';
     state.reports.year = reportControlValue('poReportsYear', state.reports.year || currentReportYear) || currentReportYear;
+    state.reports.repaymentYear = reportControlValue('poReportsRepaymentYear', state.reports.repaymentYear || '1') || '1';
     state.reports.from = reportControlValue('poReportsFrom', state.reports.from || '');
     state.reports.to = reportControlValue('poReportsTo', state.reports.to || '');
     state.reports.search = reportControlValue('poReportsSearch', state.reports.search || '');
-    state.reports.barangay = reportControlValue('poReportsBarangay', state.reports.barangay || '');
-    state.reports.pdo = reportControlValue('poReportsPdo', state.reports.pdo || '');
+    state.reports.barangay = '';
+    state.reports.pdo = '';
     state.reports.serviceType = reportControlValue('poReportsServiceType', state.reports.serviceType || '');
     state.reports.gender = reportControlValue('poReportsGender', state.reports.gender || '');
-    state.reports.repayment = reportControlValue('poReportsRepayment', state.reports.repayment || '');
-
+    state.reports.repayment = '';
     return {
       period: state.reports.period,
       month: state.reports.month,
       quarter: state.reports.quarter,
       year: state.reports.year,
+      repaymentYear: state.reports.repaymentYear,
       from: state.reports.from,
       to: state.reports.to,
       barangay: state.reports.barangay,
@@ -732,27 +768,31 @@
       if (!node) return;
       const current = normalizeFilterValue(selected || node.value || '');
       node.innerHTML = `<option value="">${escapeHtml(label)}</option>${optionListFromApi(values).map((value) => {
-        const normalized = normalizeFilterValue(value);
-        return `<option value="${escapeHtml(normalized)}"${normalized === current ? ' selected' : ''}>${escapeHtml(String(value))}</option>`;
+        const optionValue = typeof value === 'object' && value !== null ? normalizeFilterValue(value.value) : normalizeFilterValue(value);
+        const optionLabel = typeof value === 'object' && value !== null ? String(value.label ?? value.value ?? '') : String(value);
+        return `<option value="${escapeHtml(optionValue)}"${optionValue === current ? ' selected' : ''}>${escapeHtml(optionLabel)}</option>`;
       }).join('')}`;
       node.value = current;
     };
 
-    fill('poReportsBarangay', options.barangays, state.reports.barangay, 'All barangays');
-    fill('poReportsPdo', options.pdos, state.reports.pdo, 'All PDOs');
+    const cycleMonths = buildRepaymentCycleMonths(state.reports.year || currentReportYear, state.reports.repaymentYear || '1');
+    fill('poReportsMonth', cycleMonths.map((value) => ({
+      value,
+      label: new Date(`${value}-01T00:00:00`).toLocaleDateString('en-PH', { month: 'short', year: 'numeric' }),
+    })), state.reports.month, 'Select repayment month');
     fill('poReportsServiceType', options.serviceTypes, state.reports.serviceType, 'All service types');
     fill('poReportsGender', options.genders, state.reports.gender, 'All genders');
-
-    const repayment = document.getElementById('poReportsRepayment');
-    if (repayment) {
-      const current = String(state.reports.repayment || repayment.value || '');
-      const states = Array.isArray(options.repaymentStates) ? options.repaymentStates : [];
-      repayment.innerHTML = `<option value="">All repayment states</option>${states.map((item) => {
-        const key = String(item?.key || '');
-        return `<option value="${escapeHtml(key)}"${key === current ? ' selected' : ''}>${escapeHtml(String(item?.label || key))}</option>`;
-      }).join('')}`;
-      repayment.value = current;
-    }
+    fill('poReportsYear', options.years, state.reports.year, 'Select year');
+    fill('poReportsRepaymentYear', [
+      { value: '1', label: 'Year 1' },
+      { value: '2', label: 'Year 2' },
+    ], state.reports.repaymentYear, 'Select repayment cycle');
+    fill('poReportsQuarter', [
+      { value: '1', label: 'Q1 (May-Jul)' },
+      { value: '2', label: 'Q2 (Aug-Oct)' },
+      { value: '3', label: 'Q3 (Nov-Jan)' },
+      { value: '4', label: 'Q4 (Feb-Apr)' },
+    ], state.reports.quarter, 'Select repayment quarter');
   }
 
   function renderPoReportsApiPayload(report) {
@@ -773,20 +813,171 @@
     const roiPercent = safeNumber(metrics.roiPercent);
     const beneficiaryCount = safeNumber(metrics.scopedBeneficiaries ?? records.length);
     const obligationCount = safeNumber(metrics.obligationCount);
+    const summary = buildPoReportSummary(visibleRecords);
 
-    setText('poReportsResultCount', `${visibleRecords.length} record${visibleRecords.length === 1 ? '' : 's'} shown - ${label}`);
+    setText('poReportsResultCount', `${visibleRecords.length} unique ${visibleRecords.length === 1 ? 'person' : 'people'} shown - ${label}`);
     setText('poReportsTargetAmount', formatPesoAmount(targetAmount));
     setText('poReportsActualCollected', formatPesoAmount(actualCollectedAmount));
     setText('poReportsGapAmount', formatPesoAmount(gapAmount));
     setText('poReportsRoiPercent', `${roiPercent.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`);
-    setText('poReportsTargetMeta', label);
-    setText('poReportsActualMeta', `${beneficiaryCount} scoped beneficiar${beneficiaryCount === 1 ? 'y' : 'ies'}`);
-    setText('poReportsGapMeta', `${obligationCount} repayment month${obligationCount === 1 ? '' : 's'} covered`);
+      setText('poReportsTargetMeta', label);
+      setText('poReportsActualMeta', `${beneficiaryCount} scoped beneficiar${beneficiaryCount === 1 ? 'y' : 'ies'}`);
+      setText('poReportsGapMeta', `${obligationCount} repayment month${obligationCount === 1 ? '' : 's'} covered`);
 
-    renderPoReportsPerformanceChart(
-      document.getElementById('poReportsPerformanceBars'),
-      Array.isArray(report.repaymentAnalytics?.monthlyBreakdown) ? report.repaymentAnalytics.monthlyBreakdown : []
+      renderPoReportsPerformanceChart(
+        document.getElementById('poReportsPerformanceBars'),
+      state.reports.period === 'monthly'
+        ? (Array.isArray(report.repaymentAnalytics?.monthlyBreakdown) ? report.repaymentAnalytics.monthlyBreakdown : [])
+        : (Array.isArray(report.repaymentAnalytics?.breakdown) ? report.repaymentAnalytics.breakdown : []),
+      state.reports.period
     );
+    renderPoReportsDistribution(document.getElementById('poReportsGenderDonut'), summary.genderDistribution, {
+      label: 'Scoped gender distribution chart',
+      centerLabel: 'Gender',
+    });
+    renderPoReportsDistribution(document.getElementById('poReportsServiceDonut'), summary.serviceTypeDistribution, {
+      label: 'Scoped service type distribution chart',
+      centerLabel: 'Services',
+    });
+    renderPoReportsDistribution(document.getElementById('poReportsSectorDonut'), summary.sectorDistribution, {
+      label: 'Scoped sector distribution chart',
+      centerLabel: 'Sectors',
+    });
+  }
+
+  function buildPoReportSummary(records) {
+    const safeRecords = Array.isArray(records) ? records : [];
+    const countBy = (resolver) => {
+      const map = new Map();
+      safeRecords.forEach((record) => {
+        const label = String(resolver(record) || 'Not Set').trim() || 'Not Set';
+        map.set(label, (map.get(label) || 0) + 1);
+      });
+      return Array.from(map.entries())
+        .map(([label, count]) => ({ label, count }))
+        .sort((left, right) => Number(right.count || 0) - Number(left.count || 0) || String(left.label).localeCompare(String(right.label)));
+    };
+
+    return {
+      totalPeople: safeRecords.length,
+      beneficiaryCount: safeRecords.filter((record) => !!record.isBeneficiary).length,
+      pipelineOnlyCount: safeRecords.filter((record) => !record.isBeneficiary).length,
+      genderDistribution: countBy((record) => record.gender),
+      serviceTypeDistribution: countBy((record) => record.serviceType || record.businessType),
+      sectorDistribution: countBy((record) => record.sector),
+    };
+  }
+
+  function indicatorTextColor() {
+    return '#ffffff';
+  }
+
+  function polarToCartesian(cx, cy, radius, angleInDegrees) {
+    const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
+    return {
+      x: cx + (radius * Math.cos(angleInRadians)),
+      y: cy + (radius * Math.sin(angleInRadians)),
+    };
+  }
+
+  function donutArcPath(cx, cy, outerRadius, innerRadius, startAngle, endAngle) {
+    const outerStart = polarToCartesian(cx, cy, outerRadius, endAngle);
+    const outerEnd = polarToCartesian(cx, cy, outerRadius, startAngle);
+    const innerStart = polarToCartesian(cx, cy, innerRadius, startAngle);
+    const innerEnd = polarToCartesian(cx, cy, innerRadius, endAngle);
+    const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+
+    return [
+      `M ${outerStart.x} ${outerStart.y}`,
+      `A ${outerRadius} ${outerRadius} 0 ${largeArcFlag} 0 ${outerEnd.x} ${outerEnd.y}`,
+      `L ${innerStart.x} ${innerStart.y}`,
+      `A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 1 ${innerEnd.x} ${innerEnd.y}`,
+      'Z',
+    ].join(' ');
+  }
+
+  function sliceLabelMarkup(slice, cx, cy, labelRadius, ringThickness) {
+    const midAngle = slice.startAngle + ((slice.endAngle - slice.startAngle) / 2);
+    const point = polarToCartesian(cx, cy, labelRadius, midAngle);
+    const share = slice.endAngle - slice.startAngle;
+    const countFontSize = share <= 34 ? 13 : 16;
+    const percentFontSize = share <= 34 ? 10.5 : 12.5;
+    const percentText = `${slice.percentage.toFixed(1)}%`;
+    const dyOffset = Math.min(10, Math.max(7, ringThickness * 0.16));
+    return `
+      <text class="reports-donut__slice-label" x="${point.x.toFixed(2)}" y="${point.y.toFixed(2)}" fill="${slice.textColor}">
+        <tspan class="reports-donut__slice-count" x="${point.x.toFixed(2)}" dy="-${dyOffset}" style="font-size:${countFontSize}px;">${escapeHtml(String(slice.count))}</tspan>
+        <tspan class="reports-donut__slice-percent" x="${point.x.toFixed(2)}" dy="${dyOffset + 12}" style="font-size:${percentFontSize}px;">${escapeHtml(percentText)}</tspan>
+      </text>
+    `;
+  }
+
+  function renderPoReportsDistribution(root, rows, options = {}) {
+    if (!root) return;
+    const safeRows = Array.isArray(rows) ? rows.filter((row) => safeNumber(row?.count) > 0) : [];
+    const total = safeRows.reduce((sum, row) => sum + safeNumber(row.count), 0);
+    if (!safeRows.length || total <= 0) {
+      root.innerHTML = '<p class="reports-empty">No data available.</p>';
+      return;
+    }
+    const slices = safeRows.map((row, index) => {
+      const count = safeNumber(row.count);
+      const share = total > 0 ? (count / total) * 100 : 0;
+      const color = FALLBACK_CHART_COLORS[index % FALLBACK_CHART_COLORS.length];
+      const percentage = Number(share.toFixed(1));
+      return {
+        color,
+        textColor: indicatorTextColor(color),
+        count,
+        percentage,
+        label: row.label,
+        share,
+      };
+    });
+
+    const cx = 160;
+    const cy = 160;
+    const outerRadius = 122;
+    const innerRadius = 66;
+    const ringThickness = outerRadius - innerRadius;
+    const labelRadius = innerRadius + (ringThickness / 2);
+    let runningAngle = 0;
+    const donutSlices = slices.map((slice) => {
+      const sweepAngle = total > 0 ? (slice.count / total) * 360 : 0;
+      const startAngle = runningAngle;
+      const endAngle = runningAngle + sweepAngle;
+      runningAngle = endAngle;
+      return {
+        ...slice,
+        startAngle,
+        endAngle,
+        path: donutArcPath(cx, cy, outerRadius, innerRadius, startAngle, endAngle),
+      };
+    });
+
+    root.innerHTML = `
+      <div class="reports-donut" role="img" aria-label="${escapeHtml(options.label || 'Distribution chart')}">
+        <div class="reports-donut__chart-shell">
+          <svg class="reports-donut__svg" viewBox="0 0 320 320" aria-hidden="true">
+            <circle class="reports-donut__track" cx="${cx}" cy="${cy}" r="${outerRadius}"></circle>
+            ${donutSlices.map((slice) => `<path d="${slice.path}" fill="${slice.color}"></path>`).join('')}
+            ${donutSlices.map((slice) => sliceLabelMarkup(slice, cx, cy, labelRadius, ringThickness)).join('')}
+          </svg>
+        </div>
+        <div class="reports-donut__legend">
+          ${donutSlices.map((slice) => {
+            return `
+              <div class="reports-donut__legend-row">
+                <span class="reports-donut__legend-swatch" style="--legend-color:${slice.color};"></span>
+                <span class="reports-donut__legend-label">${escapeHtml(slice.label)}</span>
+                <strong class="reports-donut__legend-count">${slice.count}</strong>
+                <span class="reports-donut__legend-percent">${slice.percentage.toFixed(1)}%</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    `;
   }
 
   async function fetchPoReportData() {
@@ -831,6 +1022,7 @@
     state.reports.refreshTimer = null;
   }
 
+  // Connect the shared repayment review workspace to the PDO-scoped beneficiary roster and modal controls.
   function initRepaymentWorkspace() {
     if (!window.SMARTLEAP_REPAYMENT_REVIEW?.createWorkspace || state.repayments.workspace) {
       return;
@@ -854,7 +1046,6 @@
         stateFilter: 'po-repayment-status',
         fromDateFilter: 'po-repayment-from-date',
         toDateFilter: 'po-repayment-to-date',
-        applyFilters: 'po-repayment-apply',
         resetFilters: 'po-repayment-reset',
         approvedCount: 'po-repayment-approved',
         pendingCount: 'po-repayment-pending',
@@ -914,13 +1105,11 @@
     const trainingSnapshot = document.getElementById('poOverviewTrainingSnapshot');
     const beneficiarySnapshot = document.getElementById('poOverviewBeneficiarySnapshot');
     const beneficiaryTableBody = document.getElementById('poBeneficiaryTableBody');
-    const coMakerTableBody = document.getElementById('poCoMakerTableBody');
     if (attention) attention.innerHTML = `<div class="po-empty">${escapeHtml(message)}</div>`;
     if (trainingSnapshot) trainingSnapshot.innerHTML = `<div class="po-empty">${escapeHtml(message)}</div>`;
     if (beneficiarySnapshot) beneficiarySnapshot.innerHTML = `<div class="po-empty">${escapeHtml(message)}</div>`;
     if (applications) applications.innerHTML = `<tr><td colspan="7" class="text-center text-muted">${escapeHtml(message)}</td></tr>`;
     if (beneficiaryTableBody) beneficiaryTableBody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">${escapeHtml(message)}</td></tr>`;
-    if (coMakerTableBody) coMakerTableBody.innerHTML = `<tr><td colspan="6" class="text-center text-muted">${escapeHtml(message)}</td></tr>`;
   }
 
   function renderAttentionStrip() {
@@ -1006,13 +1195,14 @@
   function handleRepaymentSectionClick(event) {
     const trigger = event.target.closest('[data-repayment-open]');
     if (!trigger) return;
-    if (state.repayments.workspace?.openBeneficiary) {
-      return;
-    }
     event.preventDefault();
     initRepaymentWorkspace();
     state.repayments.workspace?.syncBeneficiaries?.();
-    state.repayments.workspace?.openBeneficiary?.(trigger.getAttribute('data-repayment-open') || '');
+    if (!state.repayments.workspace?.openBeneficiary) {
+      showToast('Repayment workspace is still loading. Please try again.', 'warning');
+      return;
+    }
+    state.repayments.workspace.openBeneficiary(trigger.getAttribute('data-repayment-open') || '');
   }
 
   function renderBeneficiaryFilters() {
@@ -1183,13 +1373,19 @@
     };
   }
 
+  function formatCoMakerRegistrationStatus(status) {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'active') return 'Approved';
+    if (!normalized) return 'Not submitted';
+    return normalized.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
+  }
+
   function openBeneficiaryModal(beneficiaryId) {
     const modal = document.getElementById('poBeneficiaryModal');
     const title = document.getElementById('poBeneficiaryModalTitle');
     const body = document.getElementById('poBeneficiaryModalBody');
-    const actionButton = document.getElementById('poBeneficiaryMarkDeceased');
     const beneficiary = findBeneficiaryRecord(beneficiaryId);
-    if (!modal || !title || !body || !actionButton || !beneficiary) return;
+    if (!modal || !title || !body || !beneficiary) return;
 
     state.activeBeneficiaryId = safeNumber(beneficiary.id);
     const initials = getInitials(beneficiary.name || 'Beneficiary');
@@ -1201,7 +1397,6 @@
       : '';
     const statusKey = normalizeDashboardKey(beneficiary.programStatus || 'active');
     const coMaker = beneficiary.coMakerRegistration || null;
-    const coMakerSignupUrl = absoluteRouteUrl(`signup?mode=co-maker&beneficiary=${safeNumber(beneficiary.id)}`);
     const avatarMarkup = beneficiary.photo
       ? `<div class="admin-profile-modal__avatar admin-record-sheet__avatar has-photo" style="background-image:url('${escapeAttribute(beneficiary.photo)}')" aria-hidden="true"></div>`
       : `<div class="admin-record-sheet__avatar" aria-hidden="true">${escapeHtml(initials)}</div>`;
@@ -1268,76 +1463,83 @@
             <article class="admin-record-sheet__field"><span>Uploaded Receipts</span><strong>${escapeHtml(String(safeNumber(beneficiary.repayment?.recordCount || 0)))}</strong></article>
             <article class="admin-record-sheet__field"><span>Verified Amount</span><strong>${escapeHtml(`PHP ${safeNumber(beneficiary.repayment?.verifiedAmount || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}</strong></article>
             <article class="admin-record-sheet__field"><span>Repayment Rate</span><strong>${escapeHtml(`${safeNumber(beneficiary.repayment?.rate || 0)}% (${beneficiary.repayment?.monthsPaidFraction || '0/0'})`)}</strong></article>
-            <article class="admin-record-sheet__field"><span>Ledger Standing</span><strong>${escapeHtml(statusKey === 'deceased' ? 'Closed for successor takeover' : 'Active under current beneficiary')}</strong></article>
+            <article class="admin-record-sheet__field"><span>Ledger Standing</span><strong>${escapeHtml(statusKey === 'deceased' ? 'Closed' : 'Active under current beneficiary')}</strong></article>
           </div>
         </section>
-          ${statusKey === 'deceased'
-            ? `
-          <section class="admin-record-sheet__section admin-record-sheet__section--aqua">
-            <div class="admin-record-sheet__section-head"><span>Co-maker Account</span></div>
-            <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
-                    <article class="admin-record-sheet__field admin-record-sheet__field--wide">
-                      <span>Public self-registration link</span>
-                      <small>Share this link with the co-maker. Opening it while logged in as staff will redirect back to the portal. Portal access opens only after PDO/Admin approval.</small>
-                      <div class="admin-record-sheet__link-share">
-                        <input class="admin-profile-modal__input" type="text" value="${escapeHtml(coMakerSignupUrl)}" readonly>
-                        <button type="button" class="team-action-button team-action-button--soft" data-copy-text="${escapeHtml(coMakerSignupUrl)}">Copy Link</button>
-                      </div>
-                    </article>
-                    ${coMaker
-                      ? `
-                      <article class="admin-record-sheet__field">
-                        <span>Submitted Name</span>
-                        <strong>${escapeHtml(coMaker.name || 'Not set')}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Registration Status</span>
-                        <strong>${escapeHtml(formatCoMakerStatus(coMaker.registrationStatus))}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Email</span>
-                        <strong>${escapeHtml(coMaker.email || 'No email')}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Contact Number</span>
-                        <strong>${escapeHtml(coMaker.contactNumber || 'No contact')}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Age</span>
-                        <strong>${escapeHtml(coMaker.age ? String(coMaker.age) : 'Not set')}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Gender</span>
-                        <strong>${escapeHtml(coMaker.gender || 'Not set')}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field admin-record-sheet__field--wide">
-                        <span>Relationship to Primary Beneficiary</span>
-                        <strong>${escapeHtml(coMaker.relationshipToPrimaryBeneficiary || 'Not set')}</strong>
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Valid ID</span>
-                        ${coMaker?.validId?.url ? `<small><a href="${escapeHtml(coMaker.validId.url)}" target="_blank" rel="noopener">View submitted file</a></small>` : '<small>No file uploaded yet.</small>'}
-                      </article>
-                      <article class="admin-record-sheet__field">
-                        <span>Relationship Document</span>
-                        ${coMaker?.relationshipDocument?.url ? `<small><a href="${escapeHtml(coMaker.relationshipDocument.url)}" target="_blank" rel="noopener">View submitted file</a></small>` : '<small>No file uploaded yet.</small>'}
-                      </article>`
-                      : `
-                      <article class="admin-record-sheet__field admin-record-sheet__field--wide">
-                        <span>Registration Status</span>
-                        <strong>Awaiting co-maker self-registration</strong>
-                      </article>`
-                    }
-            </div>
-          </section>`
-            : ``
-          }
+        ${statusKey === 'deceased' ? `
+        <section class="admin-record-sheet__section admin-record-sheet__section--aqua">
+          <div class="admin-record-sheet__section-head"><span>Co-maker Account</span></div>
+          <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
+            ${!coMaker ? `
+            <article class="admin-record-sheet__field admin-record-sheet__field--wide">
+              <span>Official Gmail invitation</span>
+              <div class="po-co-maker-callout">
+                <div class="po-co-maker-callout__header">
+                  <span class="po-co-maker-callout__eyebrow">Required PDO Action</span>
+                  <strong>Send the co-maker Gmail link now</strong>
+                </div>
+                <p class="po-co-maker-callout__copy">This beneficiary is already tagged deceased. The next step is for the assigned PDO to send the official Gmail registration link to the co-maker. Admin will only review and approve the registration after the co-maker submits it.</p>
+                <div class="po-co-maker-callout__steps" aria-label="Co-maker registration steps">
+                  <span>1. Admin tags Deceased</span>
+                  <span>2. PDO sends Gmail link</span>
+                  <span>3. Admin reviews submission</span>
+                </div>
+                <label class="po-co-maker-callout__input">
+                  <span>Co-maker Gmail Address</span>
+                  <div class="admin-record-sheet__link-share po-co-maker-callout__actions">
+                    <input class="admin-profile-modal__input" id="poCoMakerGmailInput" type="email" placeholder="co-maker@gmail.com" autocomplete="email">
+                    <button type="button" class="team-action-button team-action-button--soft" data-po-send-co-maker-email="${safeNumber(beneficiary.id)}">Send Gmail Link</button>
+                  </div>
+                </label>
+              </div>
+            </article>
+            ` : `
+            <article class="admin-record-sheet__field admin-record-sheet__field--wide">
+              <span>Registration Progress</span>
+              <div class="po-co-maker-callout po-co-maker-callout--submitted">
+                <div class="po-co-maker-callout__header">
+                  <span class="po-co-maker-callout__eyebrow">Co-maker Registration Started</span>
+                  <strong>${escapeHtml(formatCoMakerRegistrationStatus(coMaker.registrationStatus))}</strong>
+                </div>
+                <p class="po-co-maker-callout__copy">The Gmail link for this deceased beneficiary has already been used for registration. You can review the submitted co-maker details below while Admin handles the approval decision.</p>
+              </div>
+            </article>
+            <article class="admin-record-sheet__field">
+              <span>Submitted Name</span>
+              <strong>${escapeHtml(coMaker.name || 'Not set')}</strong>
+            </article>
+            <article class="admin-record-sheet__field">
+              <span>Registration Status</span>
+              <strong>${escapeHtml(formatCoMakerRegistrationStatus(coMaker.registrationStatus))}</strong>
+            </article>
+            <article class="admin-record-sheet__field">
+              <span>Email</span>
+              <strong>${escapeHtml(coMaker.email || 'No email')}</strong>
+            </article>
+            <article class="admin-record-sheet__field">
+              <span>Contact Number</span>
+              <strong>${escapeHtml(coMaker.contactNumber || 'No contact')}</strong>
+            </article>
+            <article class="admin-record-sheet__field admin-record-sheet__field--wide">
+              <span>Relationship to Primary Beneficiary</span>
+              <strong>${escapeHtml(coMaker.relationshipToPrimaryBeneficiary || 'Not set')}</strong>
+            </article>
+            <article class="admin-record-sheet__field">
+              <span>Valid ID</span>
+              ${coMaker?.validId?.url ? `<small><a href="${escapeHtml(coMaker.validId.url)}" target="_blank" rel="noopener">View submitted file</a></small>` : '<small>No file uploaded yet.</small>'}
+            </article>
+            <article class="admin-record-sheet__field">
+              <span>Relationship Document</span>
+              ${coMaker?.relationshipDocument?.url ? `<small><a href="${escapeHtml(coMaker.relationshipDocument.url)}" target="_blank" rel="noopener">View submitted file</a></small>` : '<small>No file uploaded yet.</small>'}
+            </article>
+            `}
+          </div>
+        </section>
+        ` : ''}
         </section>
       `;
-      actionButton.disabled = statusKey === 'deceased';
-      actionButton.textContent = statusKey === 'deceased' ? 'Already Deceased' : 'Mark as Deceased';
-      modal.hidden = false;
-    }
+    modal.hidden = false;
+  }
 
   async function recordBeneficiaryAssistanceReceived(beneficiaryId) {
     if (!beneficiaryId) return;
@@ -1354,130 +1556,38 @@
     openBeneficiaryModal(beneficiaryId);
   }
 
+  async function sendCoMakerRegistrationEmail(button) {
+    const beneficiaryId = safeNumber(button?.dataset?.poSendCoMakerEmail);
+    const emailInput = document.getElementById('poCoMakerGmailInput');
+    const email = String(emailInput?.value || '').trim();
+    if (!beneficiaryId || !email) {
+      showToast('Enter the co-maker Gmail address first.', 'warning');
+      return;
+    }
+
+    button.disabled = true;
+    button.textContent = 'Sending...';
+    try {
+      const response = await apiPost('pdo/co-maker-registrations/send-email', {
+        beneficiaryProfileId: beneficiaryId,
+        email,
+      });
+      if (!response.ok) {
+        showToast(firstError(response.errors) || response.message || 'Unable to send the co-maker registration email.', 'warning');
+        return;
+      }
+      showToast(response.message || 'Co-maker registration email sent.', 'success');
+      emailInput.value = '';
+    } finally {
+      button.disabled = false;
+      button.textContent = 'Send Gmail Link';
+    }
+  }
+
   function clearBeneficiaryFilters() {
     state.beneficiaryFilters = { search: '', barangay: '', repayment: '', status: '' };
     renderBeneficiaryFilters();
     renderBeneficiariesTable();
-  }
-
-  function normalizeCoMakerStatus(status) {
-    const normalized = String(status || '').trim().toLowerCase();
-    return normalized === 'active' ? 'approved' : normalized;
-  }
-
-  function formatCoMakerStatus(status) {
-    const normalized = normalizeCoMakerStatus(status);
-    if (!normalized) return 'Not submitted';
-    return normalized.replace(/_/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase());
-  }
-
-  function clearCoMakerFilters() {
-    state.coMakerFilters = { search: '', status: '' };
-    if (document.getElementById('poCoMakerSearch')) document.getElementById('poCoMakerSearch').value = '';
-    if (document.getElementById('poCoMakerStatusFilter')) document.getElementById('poCoMakerStatusFilter').value = '';
-    renderCoMakerRegistrationsTable();
-  }
-
-  function renderCoMakerSnapshots() {
-    const root = document.getElementById('poCoMakerSnapshots');
-    if (!root) return;
-
-    const summary = state.coMakerRegistrationSummary || {};
-    const cards = [
-      ['Pending Review', safeNumber(summary.pendingReview || 0)],
-      ['Approved', safeNumber(summary.approved || 0)],
-      ['Rejected', safeNumber(summary.rejected || 0)],
-      ['Total', safeNumber(summary.total || 0)],
-    ];
-
-    root.innerHTML = cards.map(([label, value]) => `
-      <article class="metric-card metric-card--soft admin-beneficiaries-snapshot-card">
-        <span class="metric-card__label">${escapeHtml(label)}</span>
-        <strong class="metric-card__value">${value}</strong>
-      </article>
-    `).join('');
-  }
-
-  function filteredCoMakerRegistrations() {
-    const search = normalizeFilterValue(state.coMakerFilters.search);
-    const statusFilter = normalizeFilterValue(state.coMakerFilters.status);
-    return state.coMakerRegistrations.filter((item) => {
-      const searchable = normalizeFilterValue([
-        item.name,
-        item.email,
-        item.primaryBeneficiaryName,
-        item.primaryBusinessName,
-        item.primaryBarangay,
-        item.relationshipToPrimaryBeneficiary,
-      ].join(' '));
-      const status = normalizeCoMakerStatus(item.registrationStatus);
-      return (!search || searchable.includes(search))
-        && (!statusFilter || status === statusFilter);
-    });
-  }
-
-  function renderCoMakerRegistrationsTable() {
-    const body = document.getElementById('poCoMakerTableBody');
-    const caption = document.getElementById('poCoMakerTableCaption');
-    if (!body) return;
-
-    const rows = filteredCoMakerRegistrations();
-    if (caption) {
-      caption.textContent = `${rows.length} record${rows.length === 1 ? '' : 's'}`;
-    }
-
-    if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No co-maker registrations yet.</td></tr>';
-      return;
-    }
-
-    body.innerHTML = rows.map((item) => {
-      const status = normalizeCoMakerStatus(item.registrationStatus);
-      const pending = status === 'pending_review';
-      return `
-        <tr>
-          <td>
-            <div class="admin-beneficiary-person">
-              <strong>${escapeHtml(item.name || 'Unnamed co-maker')}</strong>
-              <span>${escapeHtml(item.email || 'No email')}</span>
-              <small>${escapeHtml(item.contactNumber || 'No contact')}</small>
-            </div>
-          </td>
-          <td>
-            <div class="admin-beneficiary-stack">
-              <strong>${escapeHtml(item.primaryBeneficiaryName || 'Unknown primary')}</strong>
-              <span>${escapeHtml(item.primaryBusinessName || item.primaryBarangay || 'No beneficiary details')}</span>
-            </div>
-          </td>
-          <td>${escapeHtml(item.relationshipToPrimaryBeneficiary || 'Not set')}</td>
-          <td>${escapeHtml(status.replace(/_/g, ' '))}</td>
-          <td>${escapeHtml(formatActivityTime(item.createdAt || item.updatedAt))}</td>
-          <td class="text-center">
-            ${pending ? `<button type="button" class="action-button" data-po-co-maker-approve="${item.id}">Approve</button>` : ''}
-            ${pending ? `<button type="button" class="action-button action-button--ghost" data-po-co-maker-reject="${item.id}">Reject</button>` : ''}
-          </td>
-        </tr>
-      `;
-    }).join('');
-  }
-
-  async function handleCoMakerSectionClick(event) {
-    const approve = event.target.closest('[data-po-co-maker-approve]');
-    const reject = event.target.closest('[data-po-co-maker-reject]');
-    if (!approve && !reject) return;
-
-    const registrationId = safeNumber((approve || reject).dataset.poCoMakerApprove || (approve || reject).dataset.poCoMakerReject);
-    const decision = approve ? 'approve' : 'reject';
-    const response = await apiPost('pdo/co-maker-registrations/review', {
-      registrationId,
-      decision,
-    });
-    if (!response.ok) {
-      showToast(response.message || 'Unable to update the co-maker registration.', 'warning');
-      return;
-    }
-    showToast(response.message || 'Co-maker registration updated.', 'success');
-    await loadDashboard();
   }
 
   function handleBeneficiarySectionClick(event) {
@@ -1486,25 +1596,6 @@
       openBeneficiaryModal(viewButton.dataset.poBeneficiaryView);
       return;
     }
-  }
-
-  async function handleMarkBeneficiaryDeceased() {
-    const beneficiaryId = safeNumber(state.activeBeneficiaryId);
-    if (beneficiaryId <= 0) return;
-    const button = document.getElementById('poBeneficiaryMarkDeceased');
-    if (button) button.disabled = true;
-    const response = await apiPost('pdo/beneficiaries/status', {
-      beneficiaryProfileId: beneficiaryId,
-      status: 'deceased',
-    });
-    if (button) button.disabled = false;
-    if (!response.ok) {
-      showToast(firstError(response.errors) || response.message || 'Unable to update the beneficiary status.', 'warning');
-      return;
-    }
-    showToast(response.message || 'Beneficiary record updated.', 'success');
-    await loadDashboard();
-    openBeneficiaryModal(beneficiaryId);
   }
 
   function countByText(items, resolver) {
@@ -1754,167 +1845,42 @@
     return ((endYear - startYear) * 12) + (endNumber - startNumber) + 1;
   }
 
-  function monthEndDateValue(month) {
-    const normalized = normalizeMonthValue(month);
-    if (!normalized) return '';
-    const parsed = new Date(`${normalized}-01T00:00:00`);
-    if (Number.isNaN(parsed.getTime())) return '';
-    parsed.setMonth(parsed.getMonth() + 1, 0);
-    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
-  }
-
-  function resolveReportsRange() {
-    const period = state.reports.period || 'monthly';
-    const month = state.reports.month || currentReportMonth;
-    const year = String(state.reports.year || currentReportYear);
-    const quarter = Number(state.reports.quarter || currentReportQuarter);
-    if (period === 'monthly') {
-      return {
-        from: `${month}-01`,
-        to: monthEndDateValue(month),
-        label: formatMonth(month),
-        breakdownMode: 'month',
-      };
-    }
-    if (period === 'quarterly') {
-      const startMonth = `${year}-${String(((quarter - 1) * 3) + 1).padStart(2, '0')}`;
-      const endMonth = `${year}-${String(((quarter - 1) * 3) + 3).padStart(2, '0')}`;
-      return {
-        from: `${startMonth}-01`,
-        to: monthEndDateValue(endMonth),
-        label: `Q${quarter} ${year}`,
-        breakdownMode: 'month',
-      };
-    }
-    if (period === 'yearly') {
-      return {
-        from: `${year}-01-01`,
-        to: `${year}-12-31`,
-        label: year,
-        breakdownMode: 'quarter',
-      };
-    }
-    return {
-      from: state.reports.from || `${currentReportMonth}-01`,
-      to: state.reports.to || monthEndDateValue(currentReportMonth),
-      label: 'Custom range',
-      breakdownMode: 'month',
-    };
-  }
-
-  function reportTargetMonthsForPeriod(period) {
-    if (period === 'monthly') return 1;
-    if (period === 'quarterly') return 3;
-    if (period === 'yearly') return 12;
-    return null;
-  }
-
-  function breakdownKeyForMonth(month, mode) {
-    const normalized = normalizeMonthValue(month);
-    if (!normalized) return '';
-    if (mode === 'quarter') {
-      const [year, monthNumber] = normalized.split('-').map(Number);
-      return `${year}-Q${Math.ceil(monthNumber / 3)}`;
-    }
-    return normalized;
-  }
-
-  function breakdownLabel(key, mode) {
-    const repaymentQuarter = String(key || '').match(/^repayment-q([1-8])$/i);
-    if (repaymentQuarter) return `Q${repaymentQuarter[1]}`;
-    if (mode === 'quarter') {
-      const match = String(key || '').match(/^(\d{4})-Q([1-4])$/);
-      return match ? `Q${match[2]} ${match[1]}` : key;
-    }
-    return formatMonth(key);
-  }
-
-  function optionMarkup(values, selected, allLabel) {
-    const normalizedSelected = normalizeFilterValue(selected);
-    return `<option value="">${escapeHtml(allLabel)}</option>${uniqueSorted(values).map((value) => {
-      const normalized = normalizeFilterValue(value);
-      return `<option value="${escapeHtml(normalized)}"${normalizedSelected === normalized ? ' selected' : ''}>${escapeHtml(value)}</option>`;
-    }).join('')}`;
-  }
-
-  function populateReportsFilterOptions(records = getScopedBeneficiaryRecords()) {
-    const barangay = document.getElementById('poReportsBarangay');
-    const pdo = document.getElementById('poReportsPdo');
-    const serviceType = document.getElementById('poReportsServiceType');
-    const gender = document.getElementById('poReportsGender');
-    const repayment = document.getElementById('poReportsRepayment');
-    if (barangay) barangay.innerHTML = optionMarkup(records.map((record) => record.barangay || 'Unassigned'), state.reports.barangay, 'All barangays');
-    if (pdo) pdo.innerHTML = optionMarkup(records.map((record) => record.assignedPdo || authUser?.name || 'Project Officer'), state.reports.pdo, 'All PDOs');
-    if (serviceType) serviceType.innerHTML = optionMarkup(records.map((record) => record.serviceTypeLabel || record.serviceType || 'Not set'), state.reports.serviceType, 'All service types');
-    if (gender) gender.innerHTML = optionMarkup(records.map((record) => record.gender || 'Not Set'), state.reports.gender, 'All genders');
-    if (repayment) {
-      const states = [
-        ['no_upload_yet', 'No Upload Yet'],
-        ['under_review', 'Under Review'],
-        ['needs_correction', 'Needs Correction'],
-        ['rejected', 'Rejected'],
-        ['partial_paid', 'Partial Paid'],
-        ['fully_paid', 'Fully Paid'],
-      ];
-      repayment.innerHTML = `<option value="">All repayment states</option>${states.map(([key, label]) => `<option value="${escapeHtml(key)}"${state.reports.repayment === key ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('')}`;
-    }
-  }
-
-  function filterReportsRecords(records) {
-    const search = normalizeFilterValue(state.reports.search);
-    return (records || []).filter((record) => {
-      const serviceType = record.serviceTypeLabel || record.serviceType || 'Not set';
-      const matchesSearch = !search || [
-        record.name,
-        record.email,
-        record.businessName,
-        record.barangay,
-        record.assignedPdo,
-        serviceType,
-        record.sector,
-      ].some((value) => normalizeFilterValue(value).includes(search));
-      return matchesSearch
-        && (!state.reports.barangay || normalizeFilterValue(record.barangay || 'Unassigned') === state.reports.barangay)
-        && (!state.reports.pdo || normalizeFilterValue(record.assignedPdo || authUser?.name || 'Project Officer') === state.reports.pdo)
-        && (!state.reports.serviceType || normalizeFilterValue(serviceType) === state.reports.serviceType)
-        && (!state.reports.gender || normalizeFilterValue(record.gender || 'Not Set') === state.reports.gender)
-        && (!state.reports.repayment || normalizeDashboardKey(record.repayment?.key || 'no_upload_yet') === state.reports.repayment);
-    });
-  }
-
   function syncReportsFilterControls() {
     const period = document.getElementById('poReportsPeriod');
     const month = document.getElementById('poReportsMonth');
     const quarter = document.getElementById('poReportsQuarter');
     const year = document.getElementById('poReportsYear');
+    const repaymentYear = document.getElementById('poReportsRepaymentYear');
     const from = document.getElementById('poReportsFrom');
     const to = document.getElementById('poReportsTo');
     const search = document.getElementById('poReportsSearch');
-    const barangay = document.getElementById('poReportsBarangay');
-    const pdo = document.getElementById('poReportsPdo');
     const serviceType = document.getElementById('poReportsServiceType');
     const gender = document.getElementById('poReportsGender');
-    const repayment = document.getElementById('poReportsRepayment');
     const activePeriod = state.reports.period || 'monthly';
     const fieldVisibility = {
       month: activePeriod === 'monthly',
       quarter: activePeriod === 'quarterly',
-      year: ['quarterly', 'yearly'].includes(activePeriod),
+      repaymentYear: activePeriod !== 'custom',
+      year: activePeriod !== 'custom',
       from: activePeriod === 'custom',
       to: activePeriod === 'custom',
     };
     if (period) period.value = state.reports.period || 'monthly';
     if (month) {
-      month.value = state.reports.month || currentReportMonth;
+      month.value = state.reports.month || defaultCycleMonth;
       month.disabled = !fieldVisibility.month;
     }
     if (quarter) {
-      quarter.value = state.reports.quarter || currentReportQuarter;
+      quarter.value = state.reports.quarter || '1';
       quarter.disabled = !fieldVisibility.quarter;
     }
     if (year) {
       year.value = state.reports.year || currentReportYear;
       year.disabled = !fieldVisibility.year;
+    }
+    if (repaymentYear) {
+      repaymentYear.value = state.reports.repaymentYear || '1';
+      repaymentYear.disabled = !fieldVisibility.repaymentYear;
     }
     if (from) {
       from.value = state.reports.from || '';
@@ -1925,11 +1891,8 @@
       to.disabled = !fieldVisibility.to;
     }
     if (search && search.value !== state.reports.search) search.value = state.reports.search || '';
-    if (barangay) barangay.value = state.reports.barangay || '';
-    if (pdo) pdo.value = state.reports.pdo || '';
     if (serviceType) serviceType.value = state.reports.serviceType || '';
     if (gender) gender.value = state.reports.gender || '';
-    if (repayment) repayment.value = state.reports.repayment || '';
     document.querySelectorAll('[data-po-report-filter-field]').forEach((field) => {
       const key = String(field.dataset.poReportFilterField || '');
       field.hidden = !fieldVisibility[key];
@@ -1939,17 +1902,21 @@
   function handleReportFilterChange(event) {
     const id = String(event.target?.id || '');
     if (id === 'poReportsPeriod') state.reports.period = String(event.target.value || 'monthly');
-    if (id === 'poReportsMonth') state.reports.month = String(event.target.value || currentReportMonth);
-    if (id === 'poReportsQuarter') state.reports.quarter = String(event.target.value || currentReportQuarter);
+    if (id === 'poReportsMonth') state.reports.month = String(event.target.value || defaultCycleMonth);
+    if (id === 'poReportsQuarter') state.reports.quarter = String(event.target.value || '1');
     if (id === 'poReportsYear') state.reports.year = String(event.target.value || currentReportYear);
+    if (id === 'poReportsRepaymentYear') state.reports.repaymentYear = String(event.target.value || '1');
     if (id === 'poReportsFrom') state.reports.from = String(event.target.value || '');
     if (id === 'poReportsTo') state.reports.to = String(event.target.value || '');
     if (id === 'poReportsSearch') state.reports.search = String(event.target.value || '');
-    if (id === 'poReportsBarangay') state.reports.barangay = String(event.target.value || '');
-    if (id === 'poReportsPdo') state.reports.pdo = String(event.target.value || '');
     if (id === 'poReportsServiceType') state.reports.serviceType = String(event.target.value || '');
     if (id === 'poReportsGender') state.reports.gender = String(event.target.value || '');
-    if (id === 'poReportsRepayment') state.reports.repayment = String(event.target.value || '');
+    if (id === 'poReportsYear' || id === 'poReportsRepaymentYear') {
+      const cycleMonths = buildRepaymentCycleMonths(state.reports.year || currentReportYear, state.reports.repaymentYear || '1');
+      if (!cycleMonths.includes(state.reports.month)) {
+        state.reports.month = cycleMonths[0];
+      }
+    }
     syncReportsFilterControls();
     fetchPoReportData();
   }
@@ -1959,10 +1926,6 @@
     const id = String(target?.id || '');
     if (!id.startsWith('poReports')) return;
     if (event.type === 'click') {
-      if (id === 'poReportsClear') {
-        event.preventDefault();
-        clearReportsFilters();
-      }
       if (id === 'poReportsRefresh') {
         event.preventDefault();
         refreshReportsRealtime();
@@ -1977,9 +1940,10 @@
     state.reports = {
       ...state.reports,
       period: 'monthly',
-      month: currentReportMonth,
-      quarter: currentReportQuarter,
+      month: defaultCycleMonth,
+      quarter: deriveRepaymentQuarter(defaultCycleMonth),
       year: currentReportYear,
+      repaymentYear: '1',
       from: '',
       to: '',
       search: '',
@@ -2057,7 +2021,8 @@
 
     return Array.from(grouped.values()).map((entry) => {
       const records = entry.records.slice().sort((left, right) => toTime(right.submittedAt) - toTime(left.submittedAt));
-      const verifiedRecords = records.filter((record) => record.stage === 'verified');
+      const verifiedRecords = records.filter((record) => ['verified', 'partial_verified', 'credited'].includes(record.stage));
+      const hasCreditedRecord = records.some((record) => record.stage === 'credited');
       const verifiedMonths = new Set(verifiedRecords.map((record) => record.month).filter(Boolean));
       const verifiedAmount = verifiedRecords.reduce((sum, record) => sum + safeNumber(record.amount), 0);
       const verifiedAmountByMonth = verifiedRecords.reduce((map, record) => {
@@ -2092,7 +2057,7 @@
         repaymentKey = 'needs_correction';
       } else if (records.some((record) => record.stage === 'rejected') && verifiedAmount <= 0) {
         repaymentKey = 'rejected';
-      } else if (verifiedMonths.size >= TOTAL_REPAYMENT_MONTHS || verifiedAmount >= TOTAL_REPAYMENT_AMOUNT) {
+      } else if (hasCreditedRecord || verifiedMonths.size >= TOTAL_REPAYMENT_MONTHS || verifiedAmount >= TOTAL_REPAYMENT_AMOUNT) {
         repaymentKey = 'fully_paid';
       } else if (verifiedMonths.size > 0 || verifiedAmount > 0) {
         repaymentKey = 'partial_paid';
@@ -2121,16 +2086,13 @@
     const beneficiaryTotal = Number(state.beneficiarySummary?.total ?? 0);
     const scopedRepaymentRoster = buildScopedRepaymentRoster(state.beneficiaryRoster, state.repaymentRecords);
     const repaymentCounts = countByText(scopedRepaymentRoster, (item) => item.repayment?.label || item.repayment?.key);
-    const trainingSummary = state.training.summary || {};
     const repaymentTotal = countMatching(repaymentCounts, ['Fully Paid', 'Fully Verified'])
       + countMatching(repaymentCounts, ['Partial Paid', 'Partially Verified'])
       + countMatching(repaymentCounts, ['Under Review'])
-      + countMatching(repaymentCounts, ['No Upload Yet'])
       + countMatching(repaymentCounts, ['Needs Correction'])
       + countMatching(repaymentCounts, ['Rejected']);
     setText('poSummaryClients', String(state.summary.applications || 0));
     setText('poSummaryRepayments', String(repaymentTotal));
-    setText('poSummaryTraining', String(state.training.summary.total || state.training.programs.length || 0));
     setText('poSummaryBeneficiaries', String(beneficiaryTotal));
     updateSidebarBadges();
     renderOverviewCharts();
@@ -2229,7 +2191,7 @@
     );
   }
 
-  function renderPoReportsPerformanceChart(root, rows) {
+  function renderPoReportsPerformanceChart(root, rows, period = 'monthly') {
     if (!root) return;
     const safeRows = Array.isArray(rows) ? rows : [];
     if (!safeRows.length) {
@@ -2247,12 +2209,14 @@
       series.forEach((item) => values.push(safeNumber(row[item.key])));
     });
     const rawMax = Math.max(...values, 1);
-    const step = rawMax <= 5000 ? 1000 : (rawMax <= 20000 ? 5000 : 20000);
+    const step = niceAxisStep(rawMax);
     const maxValue = Math.max(step, Math.ceil(rawMax / step) * step);
     const ticks = [];
     for (let value = maxValue; value >= 0; value -= step) {
       ticks.push(value);
     }
+
+    const xAxisTitle = period === 'quarterly' ? 'Quarters' : period === 'yearly' ? 'Years' : 'Months';
 
     root.innerHTML = `
       <div class="reports-monthly-payment-chart" role="img" aria-label="Repayment performance for scoped PDO beneficiaries">
@@ -2274,7 +2238,7 @@
                       const height = maxValue > 0 ? Math.max(value > 0 ? 3 : 0, (value / maxValue) * 100) : 0;
                       return `
                         <span class="reports-monthly-payment-chart__bar" style="--bar-height:${height}%;--bar-color:${item.color};" title="${escapeHtml(item.label)}: ${formatPesoAmount(value)}">
-                          <strong>${escapeHtml(formatPesoAmount(value))}</strong>
+                          <strong>${escapeHtml(formatReportCurrencyLabel(value))}</strong>
                         </span>
                       `;
                     }).join('')}
@@ -2288,105 +2252,9 @@
             ${series.map((item) => `<span><i style="background:${item.color}"></i>${escapeHtml(item.label)}</span>`).join('')}
           </div>
         </div>
-        <div class="reports-monthly-payment-chart__x-title">Months</div>
+        <div class="reports-monthly-payment-chart__x-title">${escapeHtml(xAxisTitle)}</div>
       </div>
     `;
-  }
-
-  function resolvePoReportObligationStatus(entries, dueDate) {
-    const verifiedEntries = [];
-    let pendingAmount = 0;
-    const todayValue = new Date().toISOString().slice(0, 10);
-
-    (entries || []).forEach((entry) => {
-      const stage = normalizeRepaymentStage(entry.stage);
-      const amount = safeNumber(entry.amount);
-      if (['pending', 'uploaded', 'under_review'].includes(stage)) {
-        pendingAmount += amount;
-        return;
-      }
-      if (!['verified', 'credited', 'partial_verified'].includes(stage)) {
-        return;
-      }
-      const paymentDate = /^\d{4}-\d{2}-\d{2}$/.test(String(entry.paymentDate || '')) ? String(entry.paymentDate) : '';
-      verifiedEntries.push({
-        paymentDate,
-        amount,
-        partial: stage === 'partial_verified',
-      });
-    });
-
-    if (verifiedEntries.length) {
-      verifiedEntries.sort((left, right) => String(left.paymentDate || '').localeCompare(String(right.paymentDate || '')));
-      const verifiedAmount = verifiedEntries.reduce((sum, entry) => sum + safeNumber(entry.amount), 0);
-      const firstPaymentDate = String(verifiedEntries[0]?.paymentDate || '');
-      const hasPartialVerification = verifiedEntries.some((entry) => entry.partial);
-      if (!hasPartialVerification && verifiedAmount >= 625 && firstPaymentDate && firstPaymentDate <= dueDate) {
-        return { status: 'paid_on_time', label: 'Paid / On-time', amount: verifiedAmount };
-      }
-      return { status: 'partial_delayed', label: 'Partial / Delayed', amount: verifiedAmount };
-    }
-
-    if (pendingAmount > 0) {
-      return { status: 'pending_verification', label: 'Pending Verification', amount: pendingAmount };
-    }
-
-    if (dueDate > todayValue) {
-      return { status: 'upcoming', label: 'Upcoming', amount: 0 };
-    }
-
-    return { status: 'overdue_unpaid', label: 'Overdue / Unpaid', amount: 625 };
-  }
-
-  function buildPoReportObligations(records) {
-    const obligations = [];
-    (records || []).forEach((record) => {
-      const beneficiaryId = safeNumber(record.id);
-      const firstDueMonth = deriveFirstDueMonth(record.approvalDate || '');
-      if (!beneficiaryId || !firstDueMonth) return;
-      const entriesByMonth = (record.repaymentRecords || []).reduce((map, entry) => {
-        const month = normalizeMonthValue(entry.month);
-        if (!month) return map;
-        if (!map[month]) map[month] = [];
-        map[month].push(entry);
-        return map;
-      }, {});
-      let dueMonth = firstDueMonth;
-      for (let index = 0; index < TOTAL_REPAYMENT_MONTHS; index += 1) {
-        const dueDate = monthEndDateValue(dueMonth);
-        if (!dueDate) break;
-        const status = resolvePoReportObligationStatus(entriesByMonth[dueMonth] || [], dueDate);
-        const installmentNumber = index + 1;
-        obligations.push({
-          beneficiaryId,
-          dueMonth,
-          dueDate,
-          installmentNumber,
-          repaymentQuarter: Math.ceil(installmentNumber / 3),
-          repaymentYearNumber: Math.ceil(installmentNumber / 12),
-          expectedAmount: 625,
-          status: status.status,
-          statusLabel: status.label,
-          amountRepresented: status.amount,
-        });
-        dueMonth = shiftMonthValue(dueMonth, 1);
-        if (!dueMonth) break;
-      }
-    });
-    return obligations.sort((left, right) => String(left.dueMonth || '').localeCompare(String(right.dueMonth || '')));
-  }
-
-  function filterPoReportObligations(obligations, range, period) {
-    return (obligations || []).filter((obligation) => {
-      if (period === 'yearly') {
-        return safeNumber(obligation.repaymentYearNumber) === 1;
-      }
-      if (period === 'quarterly') {
-        return safeNumber(obligation.repaymentYearNumber) === 1
-          && safeNumber(obligation.repaymentQuarter) === safeNumber(state.reports.quarter || currentReportQuarter);
-      }
-      return !((range.from && String(obligation.dueDate || '') < range.from) || (range.to && String(obligation.dueDate || '') > range.to));
-    });
   }
 
   function reportControlValue(id, fallback = '') {
@@ -2394,237 +2262,12 @@
     return String(node?.value ?? fallback ?? '');
   }
 
-  function scopedReportSourceRecords() {
-    const metaRecords = Array.isArray(state.beneficiaryRoster) && state.beneficiaryRoster.length
-      ? state.beneficiaryRoster
-      : (Array.isArray(initialOverview.beneficiaryRoster) ? initialOverview.beneficiaryRoster : []);
-    const payments = Array.isArray(state.repaymentRecords) && state.repaymentRecords.length
-      ? state.repaymentRecords
-      : (Array.isArray(initialRepaymentData.payments) ? initialRepaymentData.payments : []);
-    const paymentsByBeneficiary = payments.reduce((map, payment) => {
-      const beneficiaryId = safeNumber(payment?.beneficiaryId);
-      if (!beneficiaryId) return map;
-      if (!map[beneficiaryId]) map[beneficiaryId] = [];
-      map[beneficiaryId].push({
-        stage: normalizeRepaymentStage(payment?.stage),
-        amount: safeNumber(payment?.amount || payment?.allocatedAmount || 0),
-        month: String(payment?.month || payment?.coverageFrom || payment?.coverageMonth || payment?.paymentDate || ''),
-        paymentDate: String(payment?.paymentDate || payment?.submittedAt || ''),
-      });
-      return map;
-    }, {});
-
-    return metaRecords.map((record) => {
-      const beneficiaryId = safeNumber(record.id);
-      const repaymentRecords = paymentsByBeneficiary[beneficiaryId] || [];
-      const verifiedRecords = repaymentRecords.filter((payment) => ['verified', 'credited', 'partial_verified'].includes(payment.stage));
-      const verifiedAmount = verifiedRecords.reduce((sum, payment) => sum + safeNumber(payment.amount), 0);
-      const pending = repaymentRecords.some((payment) => ['uploaded', 'under_review', 'pending'].includes(payment.stage));
-      const repaymentKey = pending
-        ? 'under_review'
-        : (verifiedAmount >= TOTAL_REPAYMENT_AMOUNT ? 'fully_paid' : (verifiedAmount > 0 ? 'partial_paid' : 'no_upload_yet'));
-      return {
-        ...record,
-        id: beneficiaryId,
-        name: String(record.name || 'Unnamed beneficiary'),
-        email: String(record.email || ''),
-        businessName: String(record.businessName || 'No business name'),
-        barangay: String(record.barangay || 'Unassigned'),
-        assignedPdo: String(record.assignedPdo || authUser?.name || 'Project Officer'),
-        gender: String(record.gender || 'Not Set'),
-        serviceTypeLabel: String(record.serviceType || record.businessType || record.sectorOtherSpecify || 'Not set'),
-        repayment: { key: repaymentKey },
-        repaymentRecords,
-      };
-    });
-  }
-
-  function populateReportControlsDirect(records) {
-    const fill = (id, values, selected, label) => {
-      const node = document.getElementById(id);
-      if (!node) return;
-      const current = String(selected || node.value || '');
-      node.innerHTML = `<option value="">${escapeHtml(label)}</option>${uniqueSorted(values).map((value) => {
-        const normalized = normalizeFilterValue(value);
-        return `<option value="${escapeHtml(normalized)}"${normalized === current ? ' selected' : ''}>${escapeHtml(value)}</option>`;
-      }).join('')}`;
-      node.value = current;
-    };
-    fill('poReportsBarangay', records.map((record) => record.barangay), state.reports.barangay, 'All barangays');
-    fill('poReportsPdo', records.map((record) => record.assignedPdo), state.reports.pdo, 'All PDOs');
-    fill('poReportsServiceType', records.map((record) => record.serviceTypeLabel), state.reports.serviceType, 'All service types');
-    fill('poReportsGender', records.map((record) => record.gender), state.reports.gender, 'All genders');
-    const repayment = document.getElementById('poReportsRepayment');
-    if (repayment) {
-      const current = String(state.reports.repayment || repayment.value || '');
-      repayment.innerHTML = [
-        ['','All repayment states'],
-        ['no_upload_yet','No Upload Yet'],
-        ['under_review','Under Review'],
-        ['needs_correction','Needs Correction'],
-        ['rejected','Rejected'],
-        ['partial_paid','Partial Paid'],
-        ['fully_paid','Fully Paid'],
-      ].map(([value, label]) => `<option value="${escapeHtml(value)}"${value === current ? ' selected' : ''}>${escapeHtml(label)}</option>`).join('');
-      repayment.value = current;
-    }
-  }
-
-  function renderReportsSectionDirect() {
-    const allRecords = scopedReportSourceRecords();
-    populateReportControlsDirect(allRecords);
-
-    const period = reportControlValue('poReportsPeriod', state.reports.period || 'monthly') || 'monthly';
-    const month = reportControlValue('poReportsMonth', state.reports.month || currentReportMonth) || currentReportMonth;
-    const quarter = reportControlValue('poReportsQuarter', state.reports.quarter || currentReportQuarter) || currentReportQuarter;
-    const year = reportControlValue('poReportsYear', state.reports.year || currentReportYear) || currentReportYear;
-    state.reports.period = period;
-    state.reports.month = month;
-    state.reports.quarter = quarter;
-    state.reports.year = year;
-    state.reports.from = reportControlValue('poReportsFrom', state.reports.from || '');
-    state.reports.to = reportControlValue('poReportsTo', state.reports.to || '');
-    state.reports.search = reportControlValue('poReportsSearch', state.reports.search || '');
-    state.reports.barangay = reportControlValue('poReportsBarangay', state.reports.barangay || '');
-    state.reports.pdo = reportControlValue('poReportsPdo', state.reports.pdo || '');
-    state.reports.serviceType = reportControlValue('poReportsServiceType', state.reports.serviceType || '');
-    state.reports.gender = reportControlValue('poReportsGender', state.reports.gender || '');
-    state.reports.repayment = reportControlValue('poReportsRepayment', state.reports.repayment || '');
-
-    syncReportsFilterControls();
-
-    const search = normalizeFilterValue(state.reports.search);
-    const records = allRecords.filter((record) => {
-      const haystack = [record.name, record.email, record.businessName, record.barangay, record.assignedPdo, record.serviceTypeLabel].map(normalizeFilterValue).join(' ');
-      return (!search || haystack.includes(search))
-        && (!state.reports.barangay || normalizeFilterValue(record.barangay) === state.reports.barangay)
-        && (!state.reports.pdo || normalizeFilterValue(record.assignedPdo) === state.reports.pdo)
-        && (!state.reports.serviceType || normalizeFilterValue(record.serviceTypeLabel) === state.reports.serviceType)
-        && (!state.reports.gender || normalizeFilterValue(record.gender) === state.reports.gender)
-        && (!state.reports.repayment || normalizeDashboardKey(record.repayment?.key || 'no_upload_yet') === state.reports.repayment);
-    });
-
-    const range = resolveReportsRange();
-    const obligations = buildPoReportObligations(records);
-    const filteredObligations = filterPoReportObligations(obligations, range, period);
-    const beneficiaryIds = new Set();
-    const periodMap = new Map();
-    let targetAmount = 0;
-    let actualCollectedAmount = 0;
-
-    filteredObligations.forEach((obligation) => {
-      const expected = safeNumber(obligation.expectedAmount || 625);
-      const actual = ['paid_on_time', 'partial_delayed'].includes(String(obligation.status || '')) ? safeNumber(obligation.amountRepresented) : 0;
-      targetAmount += expected;
-      actualCollectedAmount += actual;
-      beneficiaryIds.add(safeNumber(obligation.beneficiaryId));
-      const periodKey = String(obligation.dueMonth || '');
-      if (!periodKey) return;
-      const entry = periodMap.get(periodKey) || { key: periodKey, label: breakdownLabel(periodKey, 'month'), targetAmount: 0, actualCollectedAmount: 0, gapAmount: 0 };
-      entry.targetAmount += expected;
-      entry.actualCollectedAmount += actual;
-      entry.gapAmount = Math.max(0, entry.targetAmount - entry.actualCollectedAmount);
-      periodMap.set(periodKey, entry);
-    });
-
-    const targetMonths = reportTargetMonthsForPeriod(period);
-    if (targetMonths !== null) {
-      targetAmount = beneficiaryIds.size * targetMonths * 625;
-    }
-    const gapAmount = Math.max(0, targetAmount - actualCollectedAmount);
-    const roiPercent = targetAmount > 0 ? Math.round((actualCollectedAmount / targetAmount) * 10000) / 100 : 0;
-    const obligationCount = targetMonths !== null ? beneficiaryIds.size * targetMonths : filteredObligations.length;
-
-    setText('poReportsResultCount', `${records.length} record${records.length === 1 ? '' : 's'} shown - ${range.label}`);
-    setText('poReportsTargetAmount', formatPesoAmount(targetAmount));
-    setText('poReportsActualCollected', formatPesoAmount(actualCollectedAmount));
-    setText('poReportsGapAmount', formatPesoAmount(gapAmount));
-    setText('poReportsRoiPercent', `${roiPercent.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`);
-    setText('poReportsTargetMeta', range.label);
-    setText('poReportsActualMeta', `${beneficiaryIds.size} scoped beneficiar${beneficiaryIds.size === 1 ? 'y' : 'ies'}`);
-    setText('poReportsGapMeta', `${obligationCount} repayment month${obligationCount === 1 ? '' : 's'} covered`);
-
-    renderPoReportsPerformanceChart(
-      document.getElementById('poReportsPerformanceBars'),
-      Array.from(periodMap.values()).map((entry) => ({ ...entry, gapAmount: Math.max(0, safeNumber(entry.targetAmount) - safeNumber(entry.actualCollectedAmount)) }))
-    );
-  }
-
+  // Build the PDO reports view from the currently selected filters and live scoped analytics payload.
   function renderReportsSection() {
-    try {
-      renderReportsSectionDirect();
-    } catch (error) {
-      console.error('Unable to render PDO repayment reports.', error);
-      setText('poReportsResultCount', `Report render failed: ${error?.message || 'unknown error'}`);
-    }
-    return;
-    const allRecords = getScopedBeneficiaryRecords();
-    populateReportsFilterOptions(allRecords);
-    const records = filterReportsRecords(allRecords);
-    const range = resolveReportsRange();
-    const period = state.reports.period || 'monthly';
-    const targetMonths = reportTargetMonthsForPeriod(period);
-    const periodMap = new Map();
-    let targetAmount = 0;
-    let actualCollectedAmount = 0;
-    const obligations = buildPoReportObligations(records);
-    const filteredObligations = filterPoReportObligations(obligations, range, period);
-    const beneficiaryIds = new Set();
-
-    filteredObligations.forEach((obligation) => {
-      targetAmount += safeNumber(obligation.expectedAmount || 625);
-      beneficiaryIds.add(safeNumber(obligation.beneficiaryId));
-      if (['paid_on_time', 'partial_delayed'].includes(String(obligation.status || ''))) {
-        actualCollectedAmount += safeNumber(obligation.amountRepresented);
-      }
-      const periodKey = String(obligation.dueMonth || '');
-      if (!periodKey) return;
-      const periodEntry = periodMap.get(periodKey) || {
-        key: periodKey,
-        label: breakdownLabel(periodKey, 'month'),
-        targetAmount: 0,
-        actualCollectedAmount: 0,
-        gapAmount: 0,
-      };
-      periodEntry.targetAmount += safeNumber(obligation.expectedAmount || 625);
-      if (['paid_on_time', 'partial_delayed'].includes(String(obligation.status || ''))) {
-        periodEntry.actualCollectedAmount += safeNumber(obligation.amountRepresented);
-      }
-      periodEntry.gapAmount = Math.max(0, periodEntry.targetAmount - periodEntry.actualCollectedAmount);
-      periodMap.set(periodKey, periodEntry);
-    });
-
-    if (targetMonths !== null) {
-      targetAmount = beneficiaryIds.size * targetMonths * 625;
-      if (!periodMap.size && beneficiaryIds.size > 0) {
-        periodMap.set(range.label || period, {
-          key: range.label || period,
-          label: range.label || period,
-          targetAmount,
-          actualCollectedAmount,
-          gapAmount: Math.max(0, targetAmount - actualCollectedAmount),
-        });
-      }
-    }
-
-    const gapAmount = targetAmount - actualCollectedAmount;
-    const roiPercent = targetAmount > 0 ? Math.round((actualCollectedAmount / targetAmount) * 10000) / 100 : 0;
-
     syncReportsFilterControls();
-    setText('poReportsResultCount', `${records.length} record${records.length === 1 ? '' : 's'} shown - ${range.label}`);
-    setText('poReportsTargetAmount', formatPesoAmount(targetAmount));
-    setText('poReportsActualCollected', formatPesoAmount(actualCollectedAmount));
-    setText('poReportsGapAmount', formatPesoAmount(gapAmount));
-    setText('poReportsRoiPercent', `${roiPercent.toLocaleString('en-PH', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`);
-    setText('poReportsTargetMeta', range.label);
-    setText('poReportsActualMeta', `${beneficiaryIds.size} scoped beneficiar${beneficiaryIds.size === 1 ? 'y' : 'ies'}`);
-    const obligationCount = targetMonths !== null ? beneficiaryIds.size * targetMonths : filteredObligations.length;
-    setText('poReportsGapMeta', `${obligationCount} repayment month${obligationCount === 1 ? '' : 's'} covered`);
-    const chartRows = Array.from(periodMap.values()).map((entry) => ({
-        ...entry,
-        gapAmount: Math.max(0, safeNumber(entry.targetAmount) - safeNumber(entry.actualCollectedAmount)),
-      }));
-    renderPoReportsPerformanceChart(document.getElementById('poReportsPerformanceBars'), chartRows);
+    if (document.getElementById('reports-section')?.style.display !== 'none') {
+      fetchPoReportData();
+    }
   }
 
   function renderOverviewContextCards() {
@@ -2680,6 +2323,7 @@
     bootstrap.Modal.getOrCreateInstance(document.getElementById('poApplicationModal')).show();
   }
 
+  // Render the scoped application review modal, including requirement navigation and approval readiness.
   function renderApplicationModal() {
     const app = state.activeApplication;
     const ready = app.approvalReadiness || {};
@@ -2704,7 +2348,7 @@
     setText('po-app-form-summary', `${ready.formSummary?.approved || 0} / ${ready.formSummary?.total || 0}`);
     const trainingProgress = ready.trainingStatus?.displayStatus || ready.trainingStatus?.status || '--';
     const trainingCompletion = ready.trainingStatus?.completionStatus || '';
-    setText('po-app-training-status', trainingCompletion ? `${trainingProgress} â€¢ ${trainingCompletion}` : trainingProgress);
+    setText('po-app-training-status', trainingCompletion ? `${trainingProgress} - ${trainingCompletion}` : trainingProgress);
     setText('po-app-training-chip', ready.trainingStatus?.completed ? 'Training Completed' : 'Training Pending');
     setStatusChipClass('po-app-training-chip', ready.trainingStatus?.completed ? 'Completed' : 'Pending');
     setText('po-upload-review-count', formatRequirementCount(app.requirements || []));
@@ -2850,7 +2494,7 @@
       root.innerHTML = '<div class="po-preview-empty">Form preview is not available for this requirement.</div>';
       return;
     }
-    root.innerHTML = `<div class="po-native-form-preview"><div class="po-preview-loading">Loading formÃ¢â‚¬Â¦</div><iframe class="po-native-form-loader" src="${escapeHtml(reviewUrl)}" title="${escapeHtml(item.label || 'Fill-up form review')}"></iframe><div class="po-native-form-content"></div></div>`;
+    root.innerHTML = `<div class="po-native-form-preview"><div class="po-preview-loading">Loading form...</div><iframe class="po-native-form-loader" src="${escapeHtml(reviewUrl)}" title="${escapeHtml(item.label || 'Fill-up form review')}"></iframe><div class="po-native-form-content"></div></div>`;
     hydrateNativeFormPreview(root, reviewUrl, state.activePreviewToken, state.activePreviewOwnerId);
   }
 
@@ -3101,7 +2745,7 @@
     state.assistanceReceivedSelection = !!document.getElementById('po-app-modal-assisted')?.checked;
     const ready = state.activeApplication.approvalReadiness || {};
     const trainingSummary = ready.trainingStatus?.completionStatus
-      ? `${ready.trainingStatus?.displayStatus || ready.trainingStatus?.status || '--'} â€¢ ${ready.trainingStatus?.completionStatus}`
+      ? `${ready.trainingStatus?.displayStatus || ready.trainingStatus?.status || '--'} - ${ready.trainingStatus?.completionStatus}`
       : (ready.trainingStatus?.displayStatus || ready.trainingStatus?.status || '--');
     setText('po-summary-applicant', state.activeApplication.applicantName || 'Applicant');
     setText('po-summary-case-title', `${state.activeApplication.applicantName || 'Applicant'} approval check`);
@@ -3394,7 +3038,7 @@
 
   function buildTrainingSessionHeader(program, invitees) {
     const yearly = getYearlyBatch(program);
-    return `<section class="po-training-session-hero"><div class="po-training-session-hero__head"><div class="po-training-session-hero__identity"><span class="po-panel-label">Selected Session</span><h3>${escapeHtml(program.programName || 'New Training Session')}</h3></div><div class="po-training-session-hero__status"><span class="po-status-pill ${statusClass(program.status)}">${escapeHtml(program.status || 'Scheduled')}</span></div></div><div class="po-training-session-hero__meta"><article><span>Date</span><strong>${escapeHtml(formatDate(program.date || program.startsAt))}</strong></article><article><span>Venue / Place</span><strong>${escapeHtml(program.venue || '--')}</strong></article><article><span>Speaker / Facilitator</span><strong>${escapeHtml(program.speaker || '--')}</strong></article><article><span>Participant Count</span><strong>${escapeHtml(String(invitees.length || 0))}</strong></article><article><span>Batch Year</span><strong>${escapeHtml(String(yearly.batchYear || '--'))}</strong></article></div></section>`;
+    return `<section class="po-training-session-hero"><div class="po-training-session-hero__head"><div class="po-training-session-hero__identity"><span class="po-panel-label">Selected Session</span><h3>${escapeHtml(program.programName || 'New Training Session')}</h3></div><div class="po-training-row-actions"><button type="button" class="action-button action-button--quiet" data-training-action="back-overview">Back to Sessions</button><div class="po-training-session-hero__status"><span class="po-status-pill ${statusClass(program.status)}">${escapeHtml(program.status || 'Scheduled')}</span></div></div></div><div class="po-training-session-hero__meta"><article><span>Date</span><strong>${escapeHtml(formatDate(program.date || program.startsAt))}</strong></article><article><span>Venue / Place</span><strong>${escapeHtml(program.venue || '--')}</strong></article><article><span>Speaker / Facilitator</span><strong>${escapeHtml(program.speaker || '--')}</strong></article><article><span>Participant Count</span><strong>${escapeHtml(String(invitees.length || 0))}</strong></article><article><span>Batch Year</span><strong>${escapeHtml(String(yearly.batchYear || '--'))}</strong></article></div></section>`;
   }
 
   function buildTrainingOperationsRail(program, invitees) {
@@ -3429,7 +3073,13 @@
   }
 
   function deriveTrainingCompletionStatus(invitee) {
-    return String(invitee.status || '') === 'Completed' ? 'Completed' : 'Incomplete';
+    return invitee.completedByAttendance || String(invitee.completionStatus || '') === 'Completed' ? 'Completed' : 'Incomplete';
+  }
+
+  function attendanceDisplayLabel(status) {
+    if (status === 'Attended') return 'Present';
+    if (status === 'Missed') return 'Absent';
+    return status || 'Not Marked';
   }
 
   function buildSessionSetup(program, invitees) {
@@ -3475,7 +3125,7 @@
       excused: invitees.filter((invitee) => String(invitee.status || '') === 'Excused').length,
       counted: invitees.filter((invitee) => ['Attended', 'Completed'].includes(String(invitee.status || ''))).length,
     };
-    return `<section class="po-training-roster-summary">${renderTrainingStatCard('Participants', counts.participants, 'Assigned to this session', 'Roster')}${renderTrainingStatCard('Notified', counts.notified, 'Participant notices sent', 'Notices')}${renderTrainingStatCard('Attended', counts.attended, 'Attendance already recorded', 'Attendance')}${renderTrainingStatCard('Excused', counts.excused, 'Approved attendance exceptions', 'Excused')}${renderTrainingStatCard('Counted', counts.counted, 'Seminars credited toward requirement', 'Credit')}</section>`;
+    return `<section class="po-training-roster-summary">${renderTrainingStatCard('Participants', counts.participants, 'Assigned to this session', 'Roster')}${renderTrainingStatCard('Notified', counts.notified, 'Participant notices sent', 'Notices')}${renderTrainingStatCard('Present', counts.attended, 'Attendance already recorded', 'Attendance')}${renderTrainingStatCard('Excused', counts.excused, 'Approved attendance exceptions', 'Excused')}${renderTrainingStatCard('Counted', counts.counted, 'Seminars credited toward requirement', 'Credit')}</section>`;
   }
 
   function buildTrainingNoticesTable(program, invitees) {
@@ -3500,7 +3150,7 @@
     return `<section class="po-training-workspace"><header class="po-training-workspace__header"><div><span class="po-panel-label">Notice Monitoring</span><h4>Participant Notice Table</h4></div></header><div class="po-training-notice-actionbar"><div class="po-training-notice-bulk-actions"><button type="button" class="action-button po-case-action" data-training-notice-action="pending" ${!pendingIds.length || busySendAll ? 'disabled' : ''}>${busySendAll ? 'Sending Notice...' : 'Send Notice to All Pending'}</button><button type="button" class="action-button" data-training-notice-action="selected" ${!hasSelection || busySendSelected ? 'disabled' : ''}>${busySendSelected ? 'Sending Notice...' : 'Send to Selected'}</button><button type="button" class="action-button action-button--quiet" data-training-notice-action="resend-selected" ${!hasSelection || busyResendSelected ? 'disabled' : ''}>${busyResendSelected ? 'Resending Notice...' : 'Resend Selected'}</button><button type="button" class="action-button action-button--quiet" data-training-notice-action="refresh">Refresh Notice States</button></div><div class="po-training-notice-selectionbar"><label class="po-search-control" aria-label="Search participant or business"><i class="fas fa-magnifying-glass"></i><input id="po-training-notice-search" type="search" placeholder="Search participant or business" value="${escapeHtml(state.training.noticeFilters.search || '')}"></label><label class="po-filter-field" for="po-training-notice-status"><span>Status</span><select id="po-training-notice-status" class="section-filter"><option value="">All</option><option value="Not Sent" ${status === 'Not Sent' ? 'selected' : ''}>Not Sent</option><option value="Notified" ${status === 'Notified' ? 'selected' : ''}>Notified</option></select></label></div></div>${state.training.noticeWarning ? `<div class="po-training-validation-banner po-training-validation-banner--warning">${escapeHtml(state.training.noticeWarning)}</div>` : ''}<div class="data-table-wrapper"><table class="data-table po-training-notice-table"><thead><tr><th class="po-training-notice-table__checkbox"><input type="checkbox" data-training-notice-select-all ${allVisibleSelected ? 'checked' : ''}></th><th>Participant</th><th>Business</th><th>Group</th><th>Notice Status</th><th>Last Notice Sent</th><th>Seminar Forms</th><th>Attendance Status</th></tr></thead><tbody>${filtered.map((invitee) => {
       const noticeStatus = invitee.lastNoticeSentAt || invitee.notifiedAt ? 'Notified' : 'Not Sent';
       const formsState = Array.isArray(program.seminarFormCodes) && program.seminarFormCodes.length ? `${program.seminarFormCodes.length} open` : 'Closed';
-      return `<tr><td class="po-training-notice-table__checkbox"><input type="checkbox" data-training-notice-select="${invitee.id}" ${selected.has(Number(invitee.id)) ? 'checked' : ''}></td><td><div class="table-primary">${escapeHtml(invitee.user?.name || '--')}</div></td><td>${escapeHtml(invitee.businessName || '--')}</td><td>${invitee.batchGroupNumber ? `Group ${escapeHtml(String(invitee.batchGroupNumber))}` : 'Batch'}</td><td><span class="po-training-notice-readonly-chip ${noticeStatus === 'Notified' ? 'po-training-status-chip--notified' : 'po-training-status-chip--warning'}">${escapeHtml(noticeStatus)}</span></td><td>${escapeHtml(invitee.lastNoticeSentAt ? formatDate(invitee.lastNoticeSentAt) : 'Pending notice')}</td><td>${escapeHtml(formsState)}</td><td>${escapeHtml(String(invitee.status || 'Scheduled') === 'Missed' ? 'Absent' : String(invitee.status || 'Scheduled'))}</td></tr>`;
+      return `<tr><td class="po-training-notice-table__checkbox"><input type="checkbox" data-training-notice-select="${invitee.id}" ${selected.has(Number(invitee.id)) ? 'checked' : ''}></td><td><div class="table-primary">${escapeHtml(invitee.user?.name || '--')}</div></td><td>${escapeHtml(invitee.businessName || '--')}</td><td>${invitee.batchGroupNumber ? `Group ${escapeHtml(String(invitee.batchGroupNumber))}` : 'Batch'}</td><td><span class="po-training-notice-readonly-chip ${noticeStatus === 'Notified' ? 'po-training-status-chip--notified' : 'po-training-status-chip--warning'}">${escapeHtml(noticeStatus)}</span></td><td>${escapeHtml(invitee.lastNoticeSentAt ? formatDate(invitee.lastNoticeSentAt) : 'Pending notice')}</td><td>${escapeHtml(formsState)}</td><td>${escapeHtml(attendanceDisplayLabel(deriveTrainingAttendanceStatus(invitee)))}</td></tr>`;
     }).join('') || '<tr><td colspan="8" class="text-center text-muted">No assigned participants are available. Notices can only be sent after participant assignment.</td></tr>'}</tbody></table></div></section>`;
   }
 
@@ -3513,7 +3163,7 @@
       missed: invitees.filter((invitee) => deriveTrainingAttendanceStatus(invitee) === 'Missed').length,
       completed: invitees.filter((invitee) => deriveTrainingCompletionStatus(invitee) === 'Completed').length,
     };
-    return `<section class="po-training-summary-rail"><article class="po-training-summary-card"><span>Participants</span><strong>${counts.participants}</strong></article><article class="po-training-summary-card"><span>Notified</span><strong>${counts.notified}</strong></article><article class="po-training-summary-card"><span>Attended</span><strong>${counts.attended}</strong></article><article class="po-training-summary-card"><span>Excused</span><strong>${counts.excused}</strong></article><article class="po-training-summary-card"><span>Missed</span><strong>${counts.missed}</strong></article><article class="po-training-summary-card"><span>Completed</span><strong>${counts.completed}</strong></article></section>`;
+    return `<section class="po-training-summary-rail"><article class="po-training-summary-card"><span>Participants</span><strong>${counts.participants}</strong></article><article class="po-training-summary-card"><span>Notified</span><strong>${counts.notified}</strong></article><article class="po-training-summary-card"><span>Present</span><strong>${counts.attended}</strong></article><article class="po-training-summary-card"><span>Excused</span><strong>${counts.excused}</strong></article><article class="po-training-summary-card"><span>Absent</span><strong>${counts.missed}</strong></article><article class="po-training-summary-card"><span>Completed</span><strong>${counts.completed}</strong></article></section>`;
   }
 
   function buildAnnouncementPanel(program, invitees) {
@@ -3527,8 +3177,9 @@
 
   function getTrainingAttendanceDraft(invitee) {
     const draft = state.training.attendanceDrafts[String(invitee.id)] || {};
+    const fallbackStatus = deriveTrainingAttendanceStatus(invitee);
     return {
-      status: String(draft.status || invitee.status || 'Notified'),
+      status: String(draft.status || (fallbackStatus === 'Not Marked' ? '' : fallbackStatus)),
       remarks: typeof draft.remarks === 'string' ? draft.remarks : String(invitee.remarks || ''),
     };
   }
@@ -3572,7 +3223,7 @@
     const completionLabel = deriveTrainingCompletionStatus(invitee);
     const noticeLabel = deriveTrainingWorkflowStatus(invitee);
     const lastUpdated = invitee.proofAttachment?.updated_at || invitee.lastNoticeSentAt || invitee.notifiedAt || '';
-    return `<tr class="po-training-attendance-editor-row"><td colspan="7"><div class="po-training-editor"><div class="po-training-editor__meta"><div class="po-training-editor__meta-item"><span>Participant</span><strong>${escapeHtml(invitee.user?.name || '--')}</strong></div><div class="po-training-editor__meta-item"><span>Workflow</span><strong>${escapeHtml(noticeLabel)}</strong></div><div class="po-training-editor__meta-item"><span>Attendance</span><strong>${escapeHtml(deriveTrainingAttendanceStatus(invitee))}</strong></div><div class="po-training-editor__meta-item"><span>Completion</span><strong>${escapeHtml(completionLabel)}</strong></div><div class="po-training-editor__meta-item"><span>Last Updated</span><strong>${escapeHtml(lastUpdated ? formatDate(lastUpdated) : 'No recent update')}</strong></div></div><div class="po-training-editor__body"><section class="po-training-editor__column po-training-editor__column--decision"><div class="po-training-editor__section-title"><span class="po-panel-label">Session Actions</span><h5>Execution Controls</h5></div><div class="po-training-status-preset-list"><button type="button" class="action-button action-button--quiet" data-training-resend-notice="${invitee.id}">Resend Notice</button><button type="button" class="po-training-status-preset ${draft.status === 'Attended' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Attended" ${dateLockedAttr}>Mark Attended</button><button type="button" class="po-training-status-preset ${draft.status === 'Excused' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Excused" ${dateLockedAttr}>Mark Excused</button><button type="button" class="po-training-status-preset ${draft.status === 'Missed' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Missed" ${dateLockedAttr}>Mark Missed</button><button type="button" class="po-training-status-preset ${draft.status === 'Completed' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Completed" ${dateLockedAttr}>Mark Completed</button></div>${dateLocked ? `<div class="po-training-editor-validation">Attendance opens on ${escapeHtml(formatDate(sessionDateValue(state.training.activeProgram)))}.</div>` : ''}<div class="po-filter-field"><span>Selected Status</span><div class="po-training-proof-state"><strong>${escapeHtml(draft.status)}</strong></div></div></section><section class="po-training-editor__column po-training-editor__column--proof"><div class="po-training-editor__section-title"><span class="po-panel-label">Exception Proof</span><h5>Excused Proof</h5></div><div class="po-training-proof-block ${isExcused ? 'is-active' : 'is-disabled'}"><div class="po-training-proof-state"><strong>${proof?.file_path ? 'Proof uploaded' : 'No proof uploaded'}</strong></div>${proof?.file_path ? `<div class="po-training-proof-file"><span>${escapeHtml(existingProofName || 'Existing proof file')}</span><a class="action-link" href="${escapeHtml(routeUrl(proof.file_path))}" target="_blank" rel="noopener">View proof</a></div>` : ''}${isExcused ? `<label class="po-filter-field"><span>Proof Upload</span><input type="file" class="section-filter" data-training-proof="${invitee.id}" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf" ${saveBusy || dateLocked ? 'disabled' : ''}></label>` : ''}</div></section><section class="po-training-editor__column po-training-editor__column--remarks"><div class="po-training-editor__section-title"><span class="po-panel-label">Remarks and Save</span><h5>Remarks and Save</h5></div><div class="po-training-remarks-block"><label class="po-filter-field"><span>Remarks</span><textarea id="po-training-remarks-${invitee.id}" class="po-inline-remarks po-training-compact-textarea" data-training-remarks="${invitee.id}" rows="5" placeholder="Add remarks" ${saveBusy ? 'disabled' : ''}>${escapeHtml(draft.remarks)}</textarea></label>${isExcused && !proof?.file_path ? '<div class="po-training-editor-validation">Upload proof before saving Excused status.</div>' : ''}<div class="po-training-editor-footer"><button type="button" class="action-button po-case-action" data-training-save-status="${invitee.id}" ${saveBusy || dateLocked ? 'disabled' : ''}>${saveBusy ? 'Saving...' : 'Save Update'}</button><button type="button" class="action-button action-button--quiet" data-training-open-editor="${invitee.id}">Close</button></div></div></section></div></div></td></tr>`;
+    return `<tr class="po-training-attendance-editor-row"><td colspan="7"><div class="po-training-editor"><div class="po-training-editor__meta"><div class="po-training-editor__meta-item"><span>Participant</span><strong>${escapeHtml(invitee.user?.name || '--')}</strong></div><div class="po-training-editor__meta-item"><span>Workflow</span><strong>${escapeHtml(noticeLabel)}</strong></div><div class="po-training-editor__meta-item"><span>Attendance</span><strong>${escapeHtml(attendanceDisplayLabel(deriveTrainingAttendanceStatus(invitee)))}</strong></div><div class="po-training-editor__meta-item"><span>Completion</span><strong>${escapeHtml(completionLabel)}</strong></div><div class="po-training-editor__meta-item"><span>Last Updated</span><strong>${escapeHtml(lastUpdated ? formatDate(lastUpdated) : 'No recent update')}</strong></div></div><div class="po-training-editor__body"><section class="po-training-editor__column po-training-editor__column--decision"><div class="po-training-editor__section-title"><span class="po-panel-label">Session Actions</span><h5>Execution Controls</h5></div><div class="po-training-status-preset-list"><button type="button" class="po-training-status-preset ${draft.status === 'Attended' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Attended" ${dateLockedAttr}>Mark Present</button><button type="button" class="po-training-status-preset ${draft.status === 'Missed' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Missed" ${dateLockedAttr}>Mark Absent</button><button type="button" class="po-training-status-preset ${draft.status === 'Excused' ? 'is-active' : ''}" data-training-editor-status="${invitee.id}:Excused" ${dateLockedAttr}>Mark Excused</button></div>${dateLocked ? `<div class="po-training-editor-validation">Attendance opens on ${escapeHtml(formatDate(sessionDateValue(state.training.activeProgram)))}.</div>` : ''}<div class="po-filter-field"><span>Selected Status</span><div class="po-training-proof-state"><strong>${escapeHtml(attendanceDisplayLabel(draft.status))}</strong></div></div></section><section class="po-training-editor__column po-training-editor__column--proof"><div class="po-training-editor__section-title"><span class="po-panel-label">Exception Proof</span><h5>Excused Proof</h5></div><div class="po-training-proof-block ${isExcused ? 'is-active' : 'is-disabled'}"><div class="po-training-proof-state"><strong>${proof?.file_path ? 'Proof uploaded' : 'No proof uploaded'}</strong></div>${proof?.file_path ? `<div class="po-training-proof-file"><span>${escapeHtml(existingProofName || 'Existing proof file')}</span><a class="action-link" href="${escapeHtml(routeUrl(proof.file_path))}" target="_blank" rel="noopener">View proof</a></div>` : ''}${isExcused ? `<label class="po-filter-field"><span>Proof Upload</span><input type="file" class="section-filter" data-training-proof="${invitee.id}" accept=".jpg,.jpeg,.png,.webp,.heic,.heif,.pdf" ${saveBusy || dateLocked ? 'disabled' : ''}></label>` : ''}</div></section><section class="po-training-editor__column po-training-editor__column--remarks"><div class="po-training-editor__section-title"><span class="po-panel-label">Remarks and Save</span><h5>Remarks and Save</h5></div><div class="po-training-remarks-block"><label class="po-filter-field"><span>Remarks</span><textarea id="po-training-remarks-${invitee.id}" class="po-inline-remarks po-training-compact-textarea" data-training-remarks="${invitee.id}" rows="5" placeholder="Add remarks" ${saveBusy ? 'disabled' : ''}>${escapeHtml(draft.remarks)}</textarea></label>${isExcused && !proof?.file_path ? '<div class="po-training-editor-validation">Upload proof before saving Excused status.</div>' : ''}<div class="po-training-editor-footer"><button type="button" class="action-button po-case-action" data-training-save-status="${invitee.id}" ${saveBusy || dateLocked ? 'disabled' : ''}>${saveBusy ? 'Saving...' : 'Save Update'}</button><button type="button" class="action-button action-button--quiet" data-training-open-editor="${invitee.id}">Close</button></div></div></section></div></div></td></tr>`;
   }
 
   function renderTrainingAttendanceCompactRow(invitee, program, saveBusy, editorOpen) {
@@ -3582,7 +3233,7 @@
     const completionClass = completionLabel === 'Completed' ? 'po-training-status-chip--completed' : 'po-training-status-chip--warning';
     const noticeSecondary = invitee.lastNoticeSentAt || invitee.notifiedAt ? formatDate(invitee.lastNoticeSentAt || invitee.notifiedAt) : '';
     const groupLabel = invitee.batchGroupNumber ? `Group ${escapeHtml(String(invitee.batchGroupNumber))}` : 'Batch';
-    return `<tr class="${state.training.lastUpdatedInviteeId === invitee.id ? 'is-updated' : ''}"><td class="po-training-attendance-col po-training-attendance-col--participant">${renderTrainingAttendanceCompactCell(`<div class="table-primary">${escapeHtml(invitee.user?.name || '--')}</div>`, `<span class="table-secondary">${escapeHtml(invitee.contactNumber || invitee.user?.email || '')}</span>`, 'po-training-roster-cell--participant')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<strong>${escapeHtml(invitee.businessName || '--')}</strong>`, escapeHtml(groupLabel), 'po-training-roster-cell--business')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-training-status-chip ${workflowLabel === 'Notified' ? 'po-training-status-chip--notified' : 'po-training-status-chip--scheduled'}">${escapeHtml(workflowLabel)}</span>`, '', 'po-training-roster-cell--status')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-training-status-chip ${attendanceLabel === 'Not Marked' ? 'po-training-status-chip--warning' : statusClass(attendanceLabel)}">${escapeHtml(attendanceLabel)}</span>`, '', 'po-training-roster-cell--status')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-training-status-chip ${completionClass} po-training-completion-chip">${escapeHtml(completionLabel)}</span>`, '', 'po-training-roster-cell--status')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-table-state">${escapeHtml(noticeSecondary || 'Pending notice')}</span>`, '', 'po-training-roster-cell--status')}</td><td class="actions po-training-attendance-col po-training-attendance-col--action">${renderTrainingAttendanceCompactCell(`<div class="po-training-row-actions"><button type="button" class="po-training-action-trigger" data-training-open-editor="${invitee.id}">Open</button></div>`, '', 'po-training-roster-cell--action')}</td></tr>${editorOpen ? renderTrainingAttendanceEditorRow(invitee) : ''}`;
+    return `<tr class="${state.training.lastUpdatedInviteeId === invitee.id ? 'is-updated' : ''}"><td class="po-training-attendance-col po-training-attendance-col--participant">${renderTrainingAttendanceCompactCell(`<div class="table-primary">${escapeHtml(invitee.user?.name || '--')}</div>`, `<span class="table-secondary">${escapeHtml(invitee.contactNumber || invitee.user?.email || '')}</span>`, 'po-training-roster-cell--participant')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<strong>${escapeHtml(invitee.businessName || '--')}</strong>`, escapeHtml(groupLabel), 'po-training-roster-cell--business')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-training-status-chip ${workflowLabel === 'Notified' ? 'po-training-status-chip--notified' : 'po-training-status-chip--scheduled'}">${escapeHtml(workflowLabel)}</span>`, '', 'po-training-roster-cell--status')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-training-status-chip ${attendanceLabel === 'Not Marked' ? 'po-training-status-chip--warning' : statusClass(attendanceLabel)}">${escapeHtml(attendanceDisplayLabel(attendanceLabel))}</span>`, '', 'po-training-roster-cell--status')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-training-status-chip ${completionClass} po-training-completion-chip">${escapeHtml(completionLabel)}</span>`, '', 'po-training-roster-cell--status')}</td><td class="po-training-attendance-col">${renderTrainingAttendanceCompactCell(`<span class="po-table-state">${escapeHtml(noticeSecondary || 'Pending notice')}</span>`, '', 'po-training-roster-cell--status')}</td><td class="actions po-training-attendance-col po-training-attendance-col--action">${renderTrainingAttendanceCompactCell(`<div class="po-training-row-actions"><button type="button" class="po-training-action-trigger" data-training-open-editor="${invitee.id}">Open</button></div>`, '', 'po-training-roster-cell--action')}</td></tr>${editorOpen ? renderTrainingAttendanceEditorRow(invitee) : ''}`;
   }
 
   function buildParticipantRoster(program, invitees) {
@@ -3596,7 +3247,7 @@
         || deriveTrainingCompletionStatus(invitee) === filter;
       return matchesSearch && matchesFilter;
     });
-    return `<section class="po-training-attendance-panel"><div class="po-training-attendance-panel__header"><div><span class="po-panel-label">Operations Workspace</span><h4>Scoped Participants</h4></div><span class="chip">${escapeHtml(`${invitees.length} ${invitees.length === 1 ? 'participant' : 'participants'}`)}</span></div><div class="po-training-roster-toolbar"><label class="po-search-control" aria-label="Search participant or business"><i class="fas fa-magnifying-glass"></i><input id="po-training-roster-search" type="search" placeholder="Search participant or business" value="${escapeHtml(state.training.rosterSearch)}"></label><label class="po-filter-field" for="po-training-roster-filter"><span>Status</span><select id="po-training-roster-filter" class="section-filter"><option value="">All statuses</option><option value="Scheduled" ${filter === 'Scheduled' ? 'selected' : ''}>Scheduled</option><option value="Notified" ${filter === 'Notified' ? 'selected' : ''}>Notified</option><option value="Attended" ${filter === 'Attended' ? 'selected' : ''}>Attended</option><option value="Excused" ${filter === 'Excused' ? 'selected' : ''}>Excused</option><option value="Missed" ${filter === 'Missed' ? 'selected' : ''}>Missed</option><option value="Completed" ${filter === 'Completed' ? 'selected' : ''}>Completed</option></select></label></div><div class="data-table-wrapper"><table class="data-table po-training-attendance-table"><thead><tr><th>Participant</th><th>Business / Group</th><th>Workflow Status</th><th>Attendance Status</th><th>Completion Status</th><th>Notice</th><th>Actions</th></tr></thead><tbody>${filtered.map((invitee) => {
+    return `<section class="po-training-attendance-panel"><div class="po-training-attendance-panel__header"><div><span class="po-panel-label">Operations Workspace</span><h4>Scoped Participants</h4></div><div class="po-training-row-actions"><span class="chip">${escapeHtml(`${invitees.length} ${invitees.length === 1 ? 'participant' : 'participants'}`)}</span></div></div><div class="po-training-roster-toolbar"><label class="po-search-control" aria-label="Search participant or business"><i class="fas fa-magnifying-glass"></i><input id="po-training-roster-search" type="search" placeholder="Search participant or business" value="${escapeHtml(state.training.rosterSearch)}"></label><label class="po-filter-field" for="po-training-roster-filter"><span>Status</span><select id="po-training-roster-filter" class="section-filter"><option value="">All statuses</option><option value="Scheduled" ${filter === 'Scheduled' ? 'selected' : ''}>Scheduled</option><option value="Notified" ${filter === 'Notified' ? 'selected' : ''}>Notified</option><option value="Attended" ${filter === 'Attended' ? 'selected' : ''}>Present</option><option value="Missed" ${filter === 'Missed' ? 'selected' : ''}>Absent</option><option value="Excused" ${filter === 'Excused' ? 'selected' : ''}>Excused</option><option value="Completed" ${filter === 'Completed' ? 'selected' : ''}>Completed</option></select></label></div><div class="data-table-wrapper"><table class="data-table po-training-attendance-table"><thead><tr><th>Participant</th><th>Business / Group</th><th>Workflow Status</th><th>Attendance Status</th><th>Completion Status</th><th>Notice</th><th>Actions</th></tr></thead><tbody>${filtered.map((invitee) => {
         const saveBusy = !!state.training.busyInvitees[`attendance-${invitee.id}`];
         const editorOpen = Number(state.training.attendanceEditorId) === Number(invitee.id);
         return renderTrainingAttendanceCompactRow(invitee, program, saveBusy, editorOpen);
@@ -3696,6 +3347,12 @@
   }
 
   async function handleTrainingClick(event) {
+    const backOverview = event.target.closest('[data-training-action="back-overview"]');
+    if (backOverview) {
+      state.training.attendanceEditorId = null;
+      state.training.attendanceDrafts = {};
+      return switchTrainingView('overview');
+    }
     const subview = event.target.closest('[data-training-subview]');
     if (subview) return switchTrainingSubview(String(subview.dataset.trainingSubview || 'details'));
     const open = event.target.closest('[data-training-open]');
@@ -3735,10 +3392,6 @@
       const [inviteeId, status] = String(editorStatus.dataset.trainingEditorStatus || '').split(':');
       updateTrainingAttendanceDraft(Number(inviteeId), 'status', String(status || 'Notified'), true);
       return;
-    }
-    const resendRowNotice = event.target.closest('[data-training-resend-notice]');
-    if (resendRowNotice && state.training.activeProgram?.id) {
-      return sendTrainingNotices(state.training.activeProgram.id, [Number(resendRowNotice.dataset.trainingResendNotice)], 'resend-row');
     }
     const save = event.target.closest('[data-training-save-status]');
     if (save) return saveTrainingAttendanceRow(Number(save.dataset.trainingSaveStatus));
@@ -3917,8 +3570,12 @@
   async function updateTrainingAttendance(trainingInviteeId) {
     const draft = state.training.attendanceDrafts[String(trainingInviteeId)] || {};
     const invitee = (state.training.activeProgram?.invitees || []).find((item) => Number(item.id) === Number(trainingInviteeId));
-    const status = String(draft.status || invitee?.status || 'Scheduled');
-    if (invitee && isAttendanceDateLockedForInvitee(invitee) && ['Attended', 'Excused', 'Missed', 'Completed'].includes(status)) {
+    const status = String(draft.status || '').trim();
+    if (!['Attended', 'Excused', 'Missed'].includes(status)) {
+      showToast('Choose Present, Absent, or Excused before saving attendance.', 'warning');
+      return;
+    }
+    if (invitee && isAttendanceDateLockedForInvitee(invitee) && ['Attended', 'Excused', 'Missed'].includes(status)) {
       showToast(`Attendance opens on ${formatDate(sessionDateValue(state.training.activeProgram))}.`, 'warning');
       return;
     }
@@ -3952,10 +3609,12 @@
     renderTrainingSessionView();
   }
 
+  // Persist one invitee's attendance row after validating the allowed status set and completion rules.
   function saveTrainingAttendanceRow(trainingInviteeId) {
     return updateTrainingAttendance(trainingInviteeId);
   }
 
+  // Start the PDO workflow for setting up a new training session for the current yearly batch.
   function openNewTrainingSession() {
     state.training.selectedProgramId = null;
     state.training.subview = 'details';
@@ -4100,12 +3759,8 @@
     return 'is-muted';
   }
 
-  function trainingModeLabel(mode) {
-    return String(mode || '').toLowerCase() === 'batch' ? 'Batch (3 groups Ãƒâ€” 85)' : 'All participants';
-  }
-
   function trainingModeLabel() {
-    return 'Yearly Batch â€¢ 3 Trainings â€¢ 3 Groups x 85';
+    return 'Yearly Batch - 3 Trainings - 3 Groups x 100';
   }
 
   function readinessBadgeClass(status) {

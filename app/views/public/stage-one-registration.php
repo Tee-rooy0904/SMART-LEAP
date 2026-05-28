@@ -13,11 +13,7 @@
 </head>
 <body class="portal-page portal-page--signup portal-page--stage-one">
     <div class="page-shell">
-        <?php
-        $activeNav = '';
-        $showLoginNav = false;
-        require __DIR__ . '/../layouts/public-header.php';
-        ?>
+        <?php require __DIR__ . '/../layouts/public-flow-header.php'; ?>
 
         <main class="page" id="content">
             <section class="signup-page stage-one-page">
@@ -26,7 +22,6 @@
                         <div class="auth-card__top">
                             <span class="portal-chip">Stage 1 Public Registration</span>
                             <h2 id="stageOneHeading">Register for SMART LEAP.</h2>
-                            <p>Submit your basic registration information here. Your name, address, contact details, valid ID, and existing business photo will be reviewed before your application moves forward.</p>
                         </div>
 
                         <form id="stageOneForm" novalidate enctype="multipart/form-data">
@@ -65,7 +60,8 @@
 
                                 <label class="field field--wide">
                                     <span>Complete address</span>
-                                    <textarea id="stageOneCompleteAddress" name="completeAddress" rows="3" required></textarea>
+                                    <textarea id="stageOneCompleteAddress" class="field-textarea field-textarea--address" name="completeAddress" rows="2" placeholder="House no., purok/sitio, barangay, city/municipality" required></textarea>
+                                    <small class="field-helper">Include your house number, purok or sitio, barangay, and city or municipality.</small>
                                     <small data-error-for="stageOneCompleteAddress"></small>
                                 </label>
                             </div>
@@ -88,7 +84,6 @@
 
                             <div class="stage-one-actions">
                                 <button type="submit" class="auth-submit signup-submit" id="stageOneSubmit">Submit Registration</button>
-                                <a class="header-action" href="<?= $baseUrl ?>/portal">Back to SMART LEAP page</a>
                             </div>
 
                             <p class="auth-feedback" id="stageOneFeedback" role="alert" hidden></p>
@@ -97,7 +92,9 @@
                         <section class="stage-one-success" id="stageOneSuccess" hidden aria-live="polite" aria-labelledby="stageOneSuccessHeading">
                             <div class="stage-one-success__card">
                                 <div class="stage-one-success__mark" aria-hidden="true">
-                                    <span>✓</span>
+                                    <svg viewBox="0 0 24 24" role="presentation" focusable="false">
+                                        <path d="M5 12.5 9.2 16.7 19 7.4" />
+                                    </svg>
                                 </div>
                                 <div class="stage-one-success__content">
                                     <span class="stage-one-success__eyebrow">Registration submitted</span>
@@ -120,7 +117,7 @@
                                     </div>
                                 </div>
 
-                                <a class="stage-one-success__action" href="<?= $baseUrl ?>/portal">Back to SMART LEAP page</a>
+                                <a class="stage-one-success__action" href="<?= $baseUrl ?>/portal">Back to Main Page</a>
                             </div>
                         </section>
                     </section>
@@ -128,7 +125,10 @@
             </section>
         </main>
 
-        <?php require __DIR__ . '/../layouts/public-footer.php'; ?>
+        <?php
+        $publicFooterVariant = 'flow';
+        require __DIR__ . '/../layouts/public-footer.php';
+        ?>
     </div>
 
     <div class="auth-loading-screen" id="authLoadingScreen" hidden aria-live="polite" aria-label="Loading">

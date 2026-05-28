@@ -1,5 +1,4 @@
 <?php
-
 declare(strict_types=1);
 
 namespace App\Controllers;
@@ -51,6 +50,17 @@ class StageOneRegistrationController extends Controller
         $registrationId = (int) ($_POST['registrationId'] ?? 0);
         $action = (string) ($_POST['action'] ?? '');
         $result = (new StageOneRegistrationService())->reviewRegistration($registrationId, $action, auth_user() ?? []);
+        if (!$result['ok']) {
+            response_json($result, 422);
+        }
+
+        response_json($result);
+    }
+
+    public function resendSelectionEmail(): never
+    {
+        $registrationId = (int) ($_POST['registrationId'] ?? 0);
+        $result = (new StageOneRegistrationService())->resendSelectionEmail($registrationId, auth_user() ?? []);
         if (!$result['ok']) {
             response_json($result, 422);
         }

@@ -1,4 +1,9 @@
 <?php
+/**
+ * SMART LEAP FILE GUIDE
+ * Core application workflow service.
+ * Owns applicant/application retrieval, reviewer detail payloads, requirement review logic, assessment persistence, dashboard summaries, and workflow readiness calculations.
+ */
 
 declare(strict_types=1);
 
@@ -398,6 +403,17 @@ class ApplicationService
         if ($isProjectOfficer) {
             $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
             if ($staffProfileId === null) {
+                return [
+                    'applications' => [],
+                    'summary' => $this->emptyApplicationSummary(),
+                    'barangays' => [],
+                    'assignedPdos' => [],
+                    'scopeBarangays' => [],
+                ];
+            }
+
+            $scopeBarangayIds = (new BarangayAssignmentService())->activeBarangayIdsForStaffProfileId($staffProfileId);
+            if ($scopeBarangayIds === []) {
                 return [
                     'applications' => [],
                     'summary' => $this->emptyApplicationSummary(),
@@ -1116,7 +1132,7 @@ class ApplicationService
             'sector' => $application['sector'] ?? '',
             'sectorOtherSpecify' => $application['sector_other_specify'] ?? '',
             'batchNo' => $application['batch_no'] ?? '',
-            'livelihoodCategory' => $application['livelihood_category'] ?? '',
+            'livelihoodCategory' => $this->normalizeLivelihoodCategory((string) (($application['livelihood_category'] ?? '') ?: ($application['livelihood_type'] ?? ''))) ?? '',
             'livelihood' => $application['livelihood_type'] ?? '',
             'is4ps' => ((int) ($application['is_4ps'] ?? 0)) === 1,
         ];
@@ -1497,18 +1513,34 @@ class ApplicationService
             ];
         }
 
+        $scopeBarangayIds = (new BarangayAssignmentService())->activeBarangayIdsForStaffProfileId($staffProfileId);
+        if ($scopeBarangayIds === []) {
+            return [
+                'total' => 0,
+                'pending' => 0,
+                'pendingVerification' => 0,
+                'verified' => 0,
+                'verifiedRepayments' => 0,
+                'followUp' => 0,
+            ];
+        }
+
         $statement = db()->prepare(
             'SELECT
                 COUNT(DISTINCT CASE
-                    WHEN beneficiary_profiles.approval_date IS NOT NULL
-                      OR LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) = "active"
+                    WHEN beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
+                     AND (
+                        beneficiary_profiles.approval_date IS NOT NULL
+                        OR LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) IN ("active", "inactive", "deceased")
+                     )
                     THEN beneficiary_profiles.id
                     ELSE NULL
                 END) AS total_beneficiaries,
                 COUNT(DISTINCT CASE
                     WHEN beneficiary_profiles.id IS NOT NULL
+                     AND beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
                      AND beneficiary_profiles.approval_date IS NULL
-                     AND LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) <> "active"
+                     AND LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) NOT IN ("active", "inactive", "deceased")
                     THEN beneficiary_profiles.id
                     ELSE NULL
                 END) AS pending_beneficiaries
@@ -1554,6 +1586,11 @@ class ApplicationService
     {
         $staffProfileId = $this->findStaffProfileIdForUser((int) ($actor['id'] ?? 0));
         if ($staffProfileId === null) {
+            return [];
+        }
+
+        $scopeBarangayIds = (new BarangayAssignmentService())->activeBarangayIdsForStaffProfileId($staffProfileId);
+        if ($scopeBarangayIds === []) {
             return [];
         }
 
@@ -1631,7 +1668,7 @@ class ApplicationService
              WHERE beneficiary_profiles.replacement_for_beneficiary_profile_id IS NULL
                AND (
                     beneficiary_profiles.approval_date IS NOT NULL
-                    OR LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) = "active"
+                    OR LOWER(COALESCE(beneficiary_profiles.beneficiary_status, "")) IN ("active", "inactive", "deceased")
                )
              ORDER BY beneficiary_profiles.updated_at DESC, beneficiary_profiles.id DESC'
         );
@@ -1655,8 +1692,8 @@ class ApplicationService
                 'educationalAttainment' => (string) ($row['educational_attainment'] ?: ''),
                 'barangay' => (string) ($row['barangay_name'] ?: 'Unassigned'),
                 'assignedPdo' => (string) ($row['assigned_pdo_name'] ?: 'Unassigned'),
-                'serviceType' => (string) (($row['livelihood_category'] ?: ($row['sector'] ?: ($row['livelihood_type'] ?: ''))) ?: ''),
-                'livelihoodCategory' => (string) ($row['livelihood_category'] ?: ''),
+                'serviceType' => (string) (($this->normalizeLivelihoodCategory((string) (($row['livelihood_category'] ?: $row['livelihood_type']) ?: '')) ?: ($row['sector'] ?: ($row['livelihood_type'] ?: ''))) ?: ''),
+                'livelihoodCategory' => (string) ($this->normalizeLivelihoodCategory((string) (($row['livelihood_category'] ?: $row['livelihood_type']) ?: '')) ?: ''),
                 'businessType' => (string) ($row['livelihood_type'] ?: ''),
                 'sector' => (string) ($row['sector'] ?: ''),
                 'sectorOtherSpecify' => (string) ($row['sector_other_specify'] ?: ''),
@@ -2652,44 +2689,10 @@ class ApplicationService
             return null;
         }
 
-        $typeStatement = db()->prepare(
-            'INSERT INTO post_approval_task_types (code, label, description)
-             VALUES (:code, :label, :description)
-             ON DUPLICATE KEY UPDATE label = VALUES(label), description = VALUES(description)'
+        (new PostApprovalTaskProvisioningService())->ensureApplicationStageTasks(
+            $beneficiaryProfileId,
+            $actorUserId
         );
-
-        foreach (self::APPLICATION_FORM_DEFINITIONS as $code => $label) {
-            $typeStatement->execute([
-                'code' => $code,
-                'label' => $label,
-                'description' => 'Application-stage fill-up form requirement.',
-            ]);
-        }
-
-        $fetchTypes = db()->query('SELECT id, code FROM post_approval_task_types');
-        $typeMap = [];
-        foreach (($fetchTypes->fetchAll(PDO::FETCH_ASSOC) ?: []) as $row) {
-            $typeMap[(string) $row['code']] = (int) $row['id'];
-        }
-
-        $insertTask = db()->prepare(
-            'INSERT INTO post_approval_tasks
-             (beneficiary_profile_id, task_type_id, status, assigned_by_user_id)
-             VALUES (:beneficiary_profile_id, :task_type_id, :status, :assigned_by_user_id)
-             ON DUPLICATE KEY UPDATE updated_at = updated_at'
-        );
-
-        foreach (array_keys(self::APPLICATION_FORM_DEFINITIONS) as $code) {
-            if (!isset($typeMap[$code])) {
-                continue;
-            }
-            $insertTask->execute([
-                'beneficiary_profile_id' => $beneficiaryProfileId,
-                'task_type_id' => $typeMap[$code],
-                'status' => POST_APPROVAL_STATUS_UNLOCKED,
-                'assigned_by_user_id' => $actorUserId > 0 ? $actorUserId : null,
-            ]);
-        }
 
         return $beneficiaryProfileId;
     }
@@ -3256,9 +3259,7 @@ class ApplicationService
             'Livestock',
             'Buy & Sell',
             'Agriculture',
-            'Services',
-            'Food Processing',
-            'Production',
+            'Food and Beverages',
             'Other',
         ];
 
@@ -3266,6 +3267,54 @@ class ApplicationService
             if (strcasecmp($value, $option) === 0) {
                 return $option;
             }
+        }
+
+        $normalized = strtolower($value);
+        if (str_contains($normalized, 'buy') || str_contains($normalized, 'sell')) {
+            return 'Buy & Sell';
+        }
+        if (
+            str_contains($normalized, 'food')
+            || str_contains($normalized, 'beverage')
+            || str_contains($normalized, 'balut')
+            || str_contains($normalized, 'snack')
+            || str_contains($normalized, 'eatery')
+            || str_contains($normalized, 'carinderia')
+        ) {
+            return 'Food and Beverages';
+        }
+        if (
+            str_contains($normalized, 'livestock')
+            || str_contains($normalized, 'animal')
+            || str_contains($normalized, 'poultry')
+            || str_contains($normalized, 'hog')
+        ) {
+            return 'Livestock';
+        }
+        if (
+            str_contains($normalized, 'microenterprise')
+            || str_contains($normalized, 'micro enterprise')
+            || str_contains($normalized, 'micro-enterprise')
+            || str_contains($normalized, 'paluwagan')
+            || str_contains($normalized, 'service')
+            || str_contains($normalized, 'repair')
+            || str_contains($normalized, 'salon')
+            || str_contains($normalized, 'establishment')
+            || str_contains($normalized, 'store')
+            || str_contains($normalized, 'shop')
+        ) {
+            return 'Establishment';
+        }
+        if (
+            str_contains($normalized, 'home')
+            || str_contains($normalized, 'production')
+            || str_contains($normalized, 'homemade')
+            || str_contains($normalized, 'processing')
+        ) {
+            return 'Establishment';
+        }
+        if (str_contains($normalized, 'agri') || str_contains($normalized, 'farm') || str_contains($normalized, 'crop')) {
+            return 'Agriculture';
         }
 
         return $value;
@@ -3283,9 +3332,7 @@ class ApplicationService
             'Livestock',
             'Buy & Sell',
             'Agriculture',
-            'Services',
-            'Food Processing',
-            'Production',
+            'Food and Beverages',
             'Other',
         ];
 
@@ -3655,7 +3702,7 @@ class ApplicationService
               'educationalAttainment' => $row['educational_attainment'] ?? '',
               'sector' => $row['sector'],
               'sectorOtherSpecify' => $row['sector_other_specify'] ?? '',
-              'livelihoodCategory' => $row['livelihood_category'] ?? '',
+              'livelihoodCategory' => $this->normalizeLivelihoodCategory((string) (($row['livelihood_category'] ?? '') ?: ($row['livelihood_type'] ?? ''))) ?? '',
               'livelihood' => $row['livelihood_type'],
               'batchNo' => $batchNo,
               'address' => $row['address_line'],

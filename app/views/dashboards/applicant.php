@@ -17,14 +17,20 @@ $butuanBarangays = array_map(
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <!-- Core document metadata for the private applicant portal. -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Browser tab title for the Stage 2 applicant workspace. -->
     <title>SMART LEAP | Applicant Portal</title>
+
+    <!-- Applicant and post-approval styles used across profile, application, training, and support pages. -->
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/applicant.css?v=<?= urlencode((string) $applicantCssVersion) ?>">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/post-approval.css?v=<?= urlencode((string) $postApprovalCssVersion) ?>">
     <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= urlencode((string) $notificationsCssVersion) ?>">
 </head>
 <body class="applicant-dashboard-page">
+    <!-- Bootstrap values consumed by the applicant dashboard scripts after page load. -->
     <script>
         window.SMARTLEAP_AUTH_USER = <?= json_encode($authUser ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
         window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
@@ -32,6 +38,7 @@ $butuanBarangays = array_map(
     </script>
     <div class="dashboard-shell">
         <aside class="dash-sidebar" id="appSidebar" aria-label="Applicant portal navigation">
+            <!-- Applicant portal branding and mobile drawer close button. -->
             <div class="sidebar-drawer__top">
                 <div class="sidebar-brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="sidebar-logo">
@@ -41,10 +48,15 @@ $butuanBarangays = array_map(
                     <span aria-hidden="true">&times;</span>
                 </button>
             </div>
+            <!-- Applicant routing is intentionally narrow: overview, application, training, and support. -->
             <nav class="sidebar-nav">
+                <!-- Overview page showing current step, milestones, and important updates. -->
                 <a class="sidebar-link is-active" href="#dashboard-home"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 11.5L12 4l9 7.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10.5V20h13V10.5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n-key="overview">Overview</span></a>
+                <!-- Application page for profile completion, requirements, and workflow review status. -->
                 <a class="sidebar-link" href="#application-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M8 7h8" stroke-linecap="round"/><path d="M8 12h8" stroke-linecap="round"/><path d="M8 17h5" stroke-linecap="round"/><rect x="5" y="3" width="14" height="18" rx="2" stroke-linejoin="round"/></svg></span><span data-i18n-key="application">Application</span></a>
+                <!-- Training page for schedules, notices, attendance, and certificate readiness. -->
                 <a class="sidebar-link" href="#training-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M3 9l9-4 9 4-9 4-9-4z" stroke-linejoin="round"/><path d="M7 11v5c0 1.66 2.91 3 5 3s5-1.34 5-3v-5" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span data-i18n-key="training">Training</span></a>
+                <!-- Support page for help-desk contact and conversation history. -->
                 <a class="sidebar-link" href="#support-page"><span class="sidebar-icon" aria-hidden="true"><svg viewBox="0 0 24 24" role="presentation"><path d="M7 7h10a3 3 0 013 3v4a3 3 0 01-3 3h-3l-3 4-3-4H7a3 3 0 01-3-3v-4a3 3 0 013-3z" stroke-linejoin="round"/></svg></span><span data-i18n-key="support">Support</span></a>
             </nav>
         </aside>
@@ -57,6 +69,7 @@ $butuanBarangays = array_map(
         </div>
         <div class="dash-content">
             <header class="mobile-topbar applicant-contextbar" aria-label="Applicant portal navigation">
+                <!-- Compact top bar shown on smaller screens for title, notifications, language, and account access. -->
                 <div class="applicant-contextbar__brand">
                     <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP logo" class="applicant-contextbar__logo">
                     <strong class="mobile-topbar__title" id="mobileTopbarTitle" data-i18n-key="overview">Overview</strong>
@@ -68,6 +81,7 @@ $butuanBarangays = array_map(
                         <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Bisaya</button>
                     </div>
                     <div class="mobile-topbar__account">
+                        <!-- Mobile account trigger opens profile, password, and sign-out actions. -->
                         <button
                             type="button"
                             class="mobile-topbar__avatar"
@@ -89,6 +103,7 @@ $butuanBarangays = array_map(
             <main class="dash-main">
                 <section id="dashboard-home" class="dash-page dash-page--home">
                     <section class="panel dash-section panel--hero applicant-current-step" aria-labelledby="nextStepHeading">
+                        <!-- Current-step card points the applicant to the single most important next action. -->
                         <div class="applicant-current-step__main">
                             <div class="panel-header panel-header--compact">
                                 <h3 id="nextStepHeading">Current step</h3>
@@ -98,6 +113,7 @@ $butuanBarangays = array_map(
                             <strong class="applicant-current-step__title" id="nextStepTitle">Loading your next step</strong>
                             <p class="applicant-current-step__copy" id="nextStepDescription">Please wait while the workspace checks your current workflow stage.</p>
                             <div class="applicant-current-step__actions">
+                                <!-- JS rewrites this label and destination based on the applicant's current workflow step. -->
                                 <button type="button" class="btn-primary" id="nextStepAction" disabled>Loading</button>
                             </div>
                         </div>
@@ -160,6 +176,7 @@ $butuanBarangays = array_map(
                 </section>
                 <section id="profile-page" class="dash-page">
                     <section class="dash-section profile-editor-workspace" aria-labelledby="profileWorkspaceHeading">
+                        <!-- This status bar mirrors the applicant's latest application workflow state and remarks. -->
                         <div class="status-bar" aria-live="polite">
                             <div>
                                 <span class="status-label">Application status</span>
@@ -183,6 +200,7 @@ $butuanBarangays = array_map(
                             <p class="profile-photo__note">JPG or PNG, up to 5MB.</p>
                         </aside>
 
+                        <!-- This form is the main Stage 2 applicant profile editor that feeds completion progress. -->
                         <form id="profileCompletionForm" class="profile-form" novalidate>
                             <section class="panel profile-editor-panel profile-editor-panel--personal">
                                 <div class="panel-header">

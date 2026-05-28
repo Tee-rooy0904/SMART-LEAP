@@ -56,6 +56,12 @@ $normalizeRepaymentStage = static function (string $stage): string {
     if (in_array($normalized, ['rejected', 'flagged', 'invalid'], true)) {
         return 'rejected';
     }
+    if (in_array($normalized, ['partialverified', 'partiallyverified'], true)) {
+        return 'partial_verified';
+    }
+    if ($normalized === 'credited') {
+        return 'credited';
+    }
     if (in_array($normalized, ['verified', 'verifiedupload', 'approved'], true)) {
         return 'verified';
     }
@@ -71,7 +77,7 @@ $initialRepaymentRows = array_map(static function (array $beneficiary) use ($ini
         if (in_array($stage, ['uploaded', 'under_review'], true)) {
             $pending = true;
         }
-        if ($stage === 'verified') {
+        if (in_array($stage, ['verified', 'credited', 'partial_verified'], true)) {
             $verifiedAmount += (float) ($payment['amount'] ?? $payment['allocatedAmount'] ?? 0);
             $month = substr((string) ($payment['month'] ?? $payment['coverageFrom'] ?? ''), 0, 7);
             if (preg_match('/^\d{4}-\d{2}$/', $month)) {
@@ -83,7 +89,8 @@ $initialRepaymentRows = array_map(static function (array $beneficiary) use ($ini
     $monthsPaid = count($verifiedMonths);
     $hasNeedsCorrection = array_reduce($payments, static fn (bool $carry, array $payment): bool => $carry || $normalizeRepaymentStage((string) ($payment['stage'] ?? '')) === 'needs_correction', false);
     $hasRejected = array_reduce($payments, static fn (bool $carry, array $payment): bool => $carry || $normalizeRepaymentStage((string) ($payment['stage'] ?? '')) === 'rejected', false);
-    $repaymentKey = $pending ? 'under_review' : ($hasNeedsCorrection ? 'needs_correction' : ($hasRejected && $verifiedAmount <= 0 ? 'rejected' : ($verifiedAmount >= 15000 || $monthsPaid >= 24 ? 'fully_paid' : ($verifiedAmount > 0 ? 'partial_paid' : 'no_upload_yet'))));
+    $hasCredited = array_reduce($payments, static fn (bool $carry, array $payment): bool => $carry || $normalizeRepaymentStage((string) ($payment['stage'] ?? '')) === 'credited', false);
+    $repaymentKey = $pending ? 'under_review' : ($hasNeedsCorrection ? 'needs_correction' : ($hasRejected && $verifiedAmount <= 0 ? 'rejected' : ($hasCredited || $verifiedAmount >= 15000 || $monthsPaid >= 24 ? 'fully_paid' : ($verifiedAmount > 0 ? 'partial_paid' : 'no_upload_yet'))));
     return [
         'beneficiary' => $beneficiary,
         'repaymentKey' => $repaymentKey,
@@ -138,9 +145,14 @@ $initialReportBars = [
 <!DOCTYPE html>
 <html lang="en">
 <head>
+  <!-- Core document metadata for the PDO dashboard shell. -->
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SMART LEAP â€¢ Project Officer</title>
+
+  <!-- Browser tab title for the Project Development Officer workspace. -->
+  <title>SMART LEAP - Project Officer</title>
+
+  <!-- Shared dashboard, reporting, beneficiary, repayment, and PDO-specific styles used in this workspace. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" crossorigin="anonymous" referrerpolicy="no-referrer" />
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" crossorigin="anonymous">
   <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/dashboards/admin.css?v=<?= $adminCssVersion ?>">
@@ -153,6 +165,7 @@ $initialReportBars = [
   <link rel="stylesheet" href="<?= $baseUrl ?>/assets/css/components/notifications.css?v=<?= $notificationsCssVersion ?>">
 </head>
 <body>
+  <!-- Bootstrap values consumed by the PDO frontend logic for scoped dashboards, reports, training, and repayments. -->
   <script>
     window.SMARTLEAP_AUTH_USER = <?= json_encode($authUser ?? null, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
     window.SMARTLEAP_BASE_URL = <?= json_encode($baseUrl, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?>;
@@ -164,6 +177,7 @@ $initialReportBars = [
 
   <div id="mainSystem" class="admin-shell project-officer-shell" data-sidebar-open="false">
       <aside id="adminSidebar" class="admin-sidebar" aria-label="Project officer navigation" aria-hidden="false">
+        <!-- PDO branding shown at the top of the fixed left navigation. -->
         <div class="sidebar-brand">
           <img src="<?= $baseUrl ?>/assets/img/SMARTLEAP.png" alt="SMART LEAP seal" class="brand-logo">
           <div class="brand-copy">
@@ -172,33 +186,36 @@ $initialReportBars = [
           </div>
         </div>
 
+      <!-- PDO navigation is limited to scoped review, training, repayment, beneficiary, and reporting work. -->
       <nav class="sidebar-nav">
+        <!-- Dashboard snapshot for the PDO's current scoped caseload and repayments. -->
         <button type="button" class="nav-link active po-nav-link" data-section="clients">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19h16v2H4v-2Zm2-2h3V9H6v8Zm5 0h3V4h-3v13Zm5 0h3v-6h-3v6Z"/></svg>
           <span class="po-nav-copy"><strong>Dashboard</strong></span>
         </button>
+        <!-- Scoped application review workspace for applicants assigned to this PDO. -->
         <button type="button" class="nav-link po-nav-link" data-section="applications">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8l4 4v14H6V3Zm7 1.5V8h3.5L13 4.5ZM8.5 12h6v1.5h-6V12Zm0 4H13v1.5H8.5V16Zm9.7-1.8 1.1 1.1-3.8 3.8-2.1-2.1 1.1-1.1 1 1 2.7-2.7Z"/></svg>
           <span class="po-nav-copy"><strong>Application Review</strong></span>
           <span class="nav-badge" data-section-badge="applications" hidden></span>
         </button>
+        <!-- Training pipeline for session setup, notices, participant assignment, and attendance checking. -->
         <button type="button" class="nav-link po-nav-link" data-section="training">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4 3 8.5l9 4.5 9-4.5L12 4Zm-5 7.2V16c0 2 3.4 3.5 5 3.5s5-1.5 5-3.5v-4.8l-5 2.5-5-2.5Z"/></svg>
           <span class="po-nav-copy"><strong>Training Pipeline</strong></span>
         </button>
+        <!-- Repayment checking workspace for scoped beneficiary uploads and proof review. -->
         <button type="button" class="nav-link po-nav-link" data-section="repayments">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3h10v18l-2-1.2-2 1.2-2-1.2-2 1.2-2-1.2V3Zm2 5h6V6.5H9V8Zm0 4h6v-1.5H9V12Zm0 4h4v-1.5H9V16Z"/></svg>
           <span class="po-nav-copy"><strong>Repayment Checking</strong></span>
           <span class="nav-badge" data-section-badge="repayments" hidden></span>
         </button>
+        <!-- Beneficiary roster and scoped profile detail workspace. -->
         <button type="button" class="nav-link po-nav-link" data-section="beneficiaries">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11a4 4 0 1 0-3.999-4A4 4 0 0 0 16 11Zm-8 0A4 4 0 1 0 4 7a4 4 0 0 0 4 4Zm0 2c-3.314 0-6 1.79-6 4v2h8v-2c0-1.002.337-1.933.904-2.688A8.24 8.24 0 0 0 8 13Zm8 0a8.1 8.1 0 0 0-4.612 1.312C10.82 15.067 10.5 15.998 10.5 17v2h11v-2c0-2.21-2.91-4-5.5-4Z"/></svg>
           <span class="po-nav-copy"><strong>Beneficiaries</strong></span>
         </button>
-        <button type="button" class="nav-link po-nav-link" data-section="co-makers">
-          <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a4 4 0 0 1 4 4c0 .73-.2 1.42-.54 2.01A4.99 4.99 0 0 1 19 13v5h-2v-5a3 3 0 0 0-3-3H8a3 3 0 0 0-3 3v5H3v-5a4.99 4.99 0 0 1 3.54-4.79A3.96 3.96 0 0 1 6 6a4 4 0 0 1 6-3.46A3.98 3.98 0 0 1 12 2Zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm8 13h2v5h-2v-5Zm-1.59-3L20 10.41 21.41 9 24 11.59 21.41 14.17 20 12.76 18.41 14 17 12.59 18.59 11 17 9.41 18.41 8 20 9.59Z"/></svg>
-          <span class="po-nav-copy"><strong>Co-maker Registrations</strong></span>
-        </button>
+        <!-- PDO reports page with scoped repayment and training analytics filters. -->
         <button type="button" class="nav-link po-nav-link" data-section="reports">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19h14v2H5v-2Zm1-3h2V8H6v8Zm5 0h2V4h-2v12Zm5 0h2v-6h-2v6Z"/></svg>
           <span class="po-nav-copy"><strong>Reports</strong></span>
@@ -211,10 +228,10 @@ $initialReportBars = [
 
     <div class="content-area">
       <header class="content-header">
+        <!-- Header chips summarize the PDO's current geographic scope and scoped applicant count. -->
         <div class="po-header-shell">
           <div class="content-headline">
-            <span class="po-header-kicker">Welcome back</span>
-            <h1><?= htmlspecialchars((string) ($authUser['name'] ?? 'Project Officer'), ENT_QUOTES) ?></h1>
+            <h1 id="poHeaderTitle">Dashboard</h1>
             <div class="po-header-meta">
               <span class="po-header-chip"><svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z"/></svg><span id="poHeaderBarangays">No assigned barangays</span></span>
               <span class="po-header-chip"><svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm0 2c-3.3 0-6 1.8-6 4v2h12v-2c0-2.2-2.7-4-6-4Zm10.7-1.7-4.2 4.2-1.8-1.8-1.4 1.4 3.2 3.2 5.6-5.6-1.4-1.4Z"/></svg><span id="poHeaderScope">0 scoped applicants</span></span>
@@ -222,7 +239,9 @@ $initialReportBars = [
           </div>
         </div>
         <div class="header-actions">
+          <!-- Manual refresh pulls the latest scoped dashboard, roster, repayment, and training state. -->
           <button type="button" class="btn-ghost" id="po-refresh"><svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h8V3l-3.3 3.3Z"/></svg><span>Refresh</span></button>
+          <!-- Account actions for viewing PDO profile info, changing password, or logging out. -->
           <div class="admin-account-menu staff-account-menu">
             <button type="button" class="app-btn-outline admin-account-menu__trigger" id="poAccountMenuTrigger" aria-expanded="false">
               <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5Zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5Z"/></svg>
@@ -268,15 +287,6 @@ $initialReportBars = [
                     <strong class="po-kpi-card__value" id="poSummaryRepayments">0</strong>
                   </div>
                   <span class="po-kpi-card__icon" aria-hidden="true"><i class="fas fa-receipt"></i></span>
-                </div>
-              </article>
-              <article class="po-kpi-card po-snapshot-card po-kpi-card--training">
-                <div class="po-snapshot-card__eyebrow">Training</div>
-                <div class="po-kpi-card__main">
-                  <div class="po-snapshot-card__body">
-                    <strong class="po-kpi-card__value" id="poSummaryTraining">0</strong>
-                  </div>
-                  <span class="po-kpi-card__icon" aria-hidden="true"><i class="fas fa-graduation-cap"></i></span>
                 </div>
               </article>
               <article class="po-kpi-card po-snapshot-card po-kpi-card--beneficiaries">
@@ -335,8 +345,7 @@ $initialReportBars = [
                       <option value="Establishment">Establishments</option>
                       <option value="Livestock">Livestock</option>
                       <option value="Buy &amp; Sell">Buy &amp; Sell</option>
-                      <option value="Services">Services</option>
-                      <option value="Production">Homemade</option>
+                      <option value="Food and Beverages">Food and Beverages</option>
                     </select>
                   </label>
                 </div>
@@ -405,7 +414,6 @@ $initialReportBars = [
             <section class="po-section-board">
               <div id="po-training-session-shell" class="po-training-shell">
                 <div id="po-training-session-context" class="po-training-detail"></div>
-                <nav id="po-training-subnav" class="po-training-subnav" aria-label="Training session workspace"></nav>
                 <div id="po-training-session-detail-view" class="po-training-workspace"></div>
                 <div id="po-training-assignment-view" class="po-training-workspace" style="display:none;"></div>
                 <div id="po-training-forms-view" class="po-training-workspace" style="display:none;"></div>
@@ -483,10 +491,6 @@ $initialReportBars = [
                       <span>To date</span>
                       <input id="po-repayment-to-date" class="section-filter" type="date">
                     </label>
-                  </div>
-                  <div class="po-repayment-filter-actions">
-                    <button type="button" class="app-btn-primary" id="po-repayment-apply">Apply Filters</button>
-                    <button type="button" class="app-btn-outline" id="po-repayment-reset">Clear Filters</button>
                   </div>
                 </section>
 
@@ -770,10 +774,6 @@ $initialReportBars = [
                     <option value="deceased">Deceased</option>
                   </select>
                 </label>
-                <div class="filter-group filter-group--actions admin-beneficiaries-filter-actions">
-                  <span class="filter-label">Actions</span>
-                  <button type="button" class="app-btn-outline" id="poBeneficiaryClearFilters">Clear</button>
-                </div>
               </div>
 
               <div class="table-card admin-beneficiaries-table-card">
@@ -804,57 +804,6 @@ $initialReportBars = [
           </div>
         </section>
 
-        <section id="co-makers-section" class="content-card" data-role-section style="display:none;">
-          <div class="po-section-shell">
-            <section class="po-section-board">
-              <div class="po-application-toolbar">
-                <div class="po-application-toolbar__controls">
-                  <label class="po-filter-field" for="poCoMakerSearch">
-                    <span>Search</span>
-                    <input id="poCoMakerSearch" class="section-filter" type="search" placeholder="Search co-maker, beneficiary, or barangay">
-                  </label>
-                  <label class="po-filter-field" for="poCoMakerStatusFilter">
-                    <span>Status</span>
-                    <select id="poCoMakerStatusFilter" class="section-filter">
-                      <option value="">All statuses</option>
-                      <option value="pending_review">Pending Review</option>
-                      <option value="approved">Approved</option>
-                      <option value="rejected">Rejected</option>
-                    </select>
-                  </label>
-                  <button type="button" class="btn-ghost" id="poCoMakerClearFilters"><span>Clear</span></button>
-                </div>
-              </div>
-
-              <div class="metric-grid metric-grid--compact admin-beneficiaries-snapshots" id="poCoMakerSnapshots"></div>
-
-              <div class="data-table-card">
-                <header class="data-table-card__header">
-                  <h3>My scoped co-maker registrations</h3>
-                  <span class="chip" id="poCoMakerTableCaption">0 records</span>
-                </header>
-                <div class="data-table-wrapper">
-                  <table class="data-table">
-                    <thead>
-                      <tr>
-                        <th>Co-maker</th>
-                        <th>Primary Beneficiary</th>
-                        <th>Relationship</th>
-                        <th>Status</th>
-                        <th>Submitted</th>
-                        <th class="text-center">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody id="poCoMakerTableBody">
-                      <tr><td colspan="6" class="text-center text-muted">No co-maker registrations yet.</td></tr>
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
         <section id="reports-section" class="content-card" data-role-section style="display:none;">
           <div class="po-section-shell po-reports-shell">
             <section class="po-section-board">
@@ -863,7 +812,7 @@ $initialReportBars = [
                   <label class="reports-filter-group reports-search po-reports-search-field">
                     <span class="reports-label">Search</span>
                     <i class="fas fa-search" aria-hidden="true"></i>
-                    <input type="search" id="poReportsSearch" placeholder="Search beneficiary, barangay, business, or PDO">
+                    <input type="search" id="poReportsSearch" placeholder="Search beneficiary, business, or service type">
                   </label>
                   <label class="reports-field po-reports-filter-field po-reports-filter-field--period">
                     <span class="reports-label">View Type</span>
@@ -874,22 +823,26 @@ $initialReportBars = [
                       <option value="custom">Custom Range</option>
                     </select>
                   </label>
+                  <label class="reports-field po-reports-filter-field" data-po-report-filter-field="year">
+                    <span class="reports-label">Year</span>
+                    <select class="filter-select" id="poReportsYear">
+                      <option value="<?= date('Y') ?>"><?= date('Y') ?></option>
+                    </select>
+                  </label>
+                  <label class="reports-field po-reports-filter-field" data-po-report-filter-field="repaymentYear">
+                    <span class="reports-label">Repayment Cycle</span>
+                    <select class="filter-select" id="poReportsRepaymentYear">
+                      <option value="1">Year 1</option>
+                      <option value="2">Year 2</option>
+                    </select>
+                  </label>
                   <label class="reports-field po-reports-filter-field" data-po-report-filter-field="month">
-                    <span class="reports-label">Month</span>
-                    <input type="month" class="filter-select" id="poReportsMonth" value="<?= date('Y-m') ?>">
+                    <span class="reports-label">Repayment Month</span>
+                    <select class="filter-select" id="poReportsMonth"></select>
                   </label>
                   <label class="reports-field po-reports-filter-field" data-po-report-filter-field="quarter" hidden>
                     <span class="reports-label">Repayment Quarter</span>
-                    <select class="filter-select" id="poReportsQuarter">
-                      <option value="1">Q1</option>
-                      <option value="2">Q2</option>
-                      <option value="3">Q3</option>
-                      <option value="4">Q4</option>
-                    </select>
-                  </label>
-                  <label class="reports-field po-reports-filter-field" data-po-report-filter-field="year" hidden>
-                    <span class="reports-label">Year</span>
-                    <input type="number" min="2000" max="2100" class="filter-select" id="poReportsYear" value="<?= date('Y') ?>">
+                    <select class="filter-select" id="poReportsQuarter"></select>
                   </label>
                   <label class="reports-field po-reports-filter-field" data-po-report-filter-field="from" hidden>
                     <span class="reports-label">From date</span>
@@ -900,14 +853,6 @@ $initialReportBars = [
                     <input type="date" class="filter-select" id="poReportsTo">
                   </label>
                   <label class="reports-field po-reports-filter-field">
-                    <span class="reports-label">Barangay</span>
-                    <select class="filter-select" id="poReportsBarangay"></select>
-                  </label>
-                  <label class="reports-field po-reports-filter-field">
-                    <span class="reports-label">Assigned PDO</span>
-                    <select class="filter-select" id="poReportsPdo"></select>
-                  </label>
-                  <label class="reports-field po-reports-filter-field">
                     <span class="reports-label">Service Type</span>
                     <select class="filter-select" id="poReportsServiceType"></select>
                   </label>
@@ -915,24 +860,19 @@ $initialReportBars = [
                     <span class="reports-label">Gender</span>
                     <select class="filter-select" id="poReportsGender"></select>
                   </label>
-                  <label class="reports-field po-reports-filter-field">
-                    <span class="reports-label">Repayment State</span>
-                    <select class="filter-select" id="poReportsRepayment"></select>
-                  </label>
                 </div>
                 <div class="reports-filter-actions po-reports-filter-actions">
-                  <span class="reports-result-count" id="poReportsResultCount">0 records shown</span>
+                  <span class="reports-result-count" id="poReportsResultCount">0 unique people shown</span>
                   <div class="reports-toolbar__actions">
-                    <button class="app-btn-ghost" id="poReportsClear" type="button">Clear</button>
                     <button class="app-btn-outline" id="poReportsRefresh" type="button">Refresh</button>
                   </div>
                 </div>
               </section>
 
-              <section class="charts-grid po-reports-performance-grid" aria-label="PDO reports">
-                <section class="chart-card chart-card--full po-reports-performance-card">
-                  <header class="chart-card__header">
-                    <div>
+                <section class="charts-grid po-reports-performance-grid" aria-label="PDO reports">
+                  <section class="chart-card chart-card--full po-reports-performance-card">
+                    <header class="chart-card__header">
+                      <div>
                       <h4>Repayment Performance</h4>
                       <p>Targeted collections, actual collected repayments, reporting gap, and ROI for the selected period.</p>
                     </div>
@@ -941,7 +881,7 @@ $initialReportBars = [
                     <article class="reports-repayment-status-kpi" style="--kpi-color:#2563eb">
                       <span>Target Amount</span>
                       <strong id="poReportsTargetAmount">&#8369;<?= number_format((float) $initialReportTargetAmount, 0) ?></strong>
-                      <small id="poReportsTargetMeta"><?= $escapeHtml(date('M Y')) ?></small>
+                      <small id="poReportsTargetMeta"><?= $escapeHtml(date('Y')) ?></small>
                     </article>
                     <article class="reports-repayment-status-kpi" style="--kpi-color:#16a34a">
                       <span>Actual Collected</span>
@@ -996,6 +936,33 @@ $initialReportBars = [
                     </div>
                   </div>
                 </section>
+                <section class="chart-card">
+                  <header class="chart-card__header">
+                    <div>
+                      <h4>Gender Segregation</h4>
+                      <p>Scoped pipeline and beneficiary population.</p>
+                    </div>
+                  </header>
+                  <div class="chart-wrap" id="poReportsGenderDonut"></div>
+                </section>
+                <section class="chart-card">
+                  <header class="chart-card__header">
+                    <div>
+                      <h4>Service Type Distribution</h4>
+                      <p>Scoped pipeline and beneficiary population.</p>
+                    </div>
+                  </header>
+                  <div class="chart-wrap" id="poReportsServiceDonut"></div>
+                </section>
+                <section class="chart-card">
+                  <header class="chart-card__header">
+                    <div>
+                      <h4>Sector Distribution</h4>
+                      <p>Scoped pipeline and beneficiary population.</p>
+                    </div>
+                  </header>
+                  <div class="chart-wrap" id="poReportsSectorDonut"></div>
+                </section>
               </section>
             </section>
           </div>
@@ -1003,7 +970,7 @@ $initialReportBars = [
       </main>
 
       <footer class="content-footer">
-        <span>SMART LEAP â€¢ City Government of Butuan â€¢ CSWDD</span>
+        <span>SMART LEAP - City Government of Butuan - CSWDD</span>
       </footer>
     </div>
   </div>
@@ -1041,9 +1008,8 @@ $initialReportBars = [
                 <select id="po-app-modal-livelihood-category-input" class="section-filter">
                   <option value="">Select category</option>
                   <option value="Establishment">Establishments</option>
-                  <option value="Services">Services</option>
-                  <option value="Production">Homemade</option>
                   <option value="Buy &amp; Sell">Buy &amp; Sell</option>
+                  <option value="Food and Beverages">Food and Beverages</option>
                   <option value="Livestock">Livestock</option>
                 </select>
               </div>
@@ -1230,7 +1196,6 @@ $initialReportBars = [
       </div>
       <div class="admin-beneficiary-modal__body" id="poBeneficiaryModalBody"></div>
       <div class="admin-beneficiary-modal__footer">
-        <button type="button" class="team-action-button team-action-button--primary" id="poBeneficiaryMarkDeceased">Mark as Deceased</button>
         <button type="button" class="team-action-button team-action-button--soft" data-po-beneficiary-modal-close>Close</button>
       </div>
     </section>
