@@ -266,16 +266,6 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
             height: 100%;
             display: block;
         }
-        .report-print-section .reports-pie-chart__slice-label {
-            fill: #ffffff;
-            font-size: 9.5px;
-            font-weight: 800;
-            text-anchor: middle;
-            dominant-baseline: middle;
-            paint-order: stroke fill;
-            stroke: rgba(16, 35, 71, 0.46);
-            stroke-width: 1.25px;
-        }
         .report-print-section .reports-pie-chart__legend {
             width: auto;
             min-width: 220px;
@@ -515,6 +505,28 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                     y: cy + (Math.sin(radians) * r),
                 };
             };
+            const distributionColor = (label, index = 0) => {
+                const normalized = String(label || '').trim().toLowerCase();
+                const explicitMap = new Map([
+                    ['male', '#2563eb'],
+                    ['female', '#16a34a'],
+                    ['none', '#2563eb'],
+                    ['solo parent', '#16a34a'],
+                    ['other - lgbtq', '#f97316'],
+                    ['other-lgbtq', '#f97316'],
+                    ['livestock', '#2563eb'],
+                    ['buy and sell', '#16a34a'],
+                    ['buy & sell', '#16a34a'],
+                    ['establishment', '#f97316'],
+                    ['food and beverages', '#dc2626'],
+                    ['production', '#7c3aed'],
+                    ['microenterprise', '#0891b2'],
+                    ['micro enterprise', '#0891b2'],
+                    ['paluwagan', '#eab308'],
+                    ['services', '#eab308'],
+                ]);
+                return explicitMap.get(normalized) || chartPalette[index % chartPalette.length];
+            };
 
             const setHtml = (selector, html) => {
                 const node = qs(selector);
@@ -547,7 +559,6 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                     return;
                 }
 
-                const paletteOffset = Number(options.paletteOffset || 0);
                 const center = 110;
                 const radius = 74;
                 const strokeWidth = 34;
@@ -556,12 +567,9 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                 const segments = rows.map((row, index) => {
                     const count = Number(row.count || 0);
                     const percent = total > 0 ? (count / total) * 100 : 0;
-                    const stroke = chartPalette[(index + paletteOffset) % chartPalette.length];
+                    const stroke = distributionColor(row.label, index);
                     const dash = (percent / 100) * circumference;
                     const offset = circumference - ((cumulativePercent / 100) * circumference);
-                    const midAngle = ((cumulativePercent + (percent / 2)) / 100) * 360;
-                    const labelRadius = radius + (percent <= 15 ? 8 : percent <= 30 ? 6 : 4);
-                    const labelPoint = polar(center, center, labelRadius, midAngle);
                     cumulativePercent += percent;
                     const percentLabel = percent % 1 === 0 ? String(Math.round(percent)) : percent.toFixed(1);
                     return {
@@ -570,9 +578,6 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                         percent: percentLabel,
                         dash,
                         offset,
-                        labelX: labelPoint.x,
-                        labelY: labelPoint.y,
-                        showLabel: percent > 0,
                         row,
                     };
                 });
@@ -595,11 +600,6 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                                         stroke-linecap="butt"
                                     ></circle>
                                 `).join('')}
-                                ${segments.map((segment) => segment.showLabel ? `
-                                    <text class="reports-pie-chart__slice-label" x="${segment.labelX}" y="${segment.labelY}">
-                                        ${escapeHtml(String(segment.percent))}%
-                                    </text>
-                                ` : '').join('')}
                             </svg>
                         </div>
                         <div class="reports-pie-chart__legend">
