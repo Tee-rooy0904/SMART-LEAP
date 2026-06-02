@@ -52,7 +52,7 @@ class SignupController extends Controller
             response_json($result, 422);
         }
 
-        if (isset($result['user']) && is_array($result['user'])) {
+        if (empty($result['requiresVerification']) && isset($result['user']) && is_array($result['user'])) {
             login_user($result['user']);
         }
 

@@ -89,6 +89,10 @@ $jsonFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_
         <button class="nav-link" type="button" data-section="co-makers">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11a4 4 0 1 0-4-4 4 4 0 0 0 4 4Zm6 1a3 3 0 1 0-3-3 3 3 0 0 0 3 3ZM3 20v-1c0-2.8 3.1-5 6-5s6 2.2 6 5v1H3Zm12 0v-.7c0-1.1-.3-2.1-.9-3 2.4.2 4.9 1.8 4.9 3.7v1H15Z"/></svg><span>Co-makers</span><span class="nav-badge" data-section-badge="co-makers"></span>
         </button>
+        <!-- Support concern oversight and reply workspace. -->
+        <button class="nav-link" type="button" data-section="support">
+          <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H8l-4 4v-4H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm3 5h10v2H7v-2Z"/></svg><span>Support</span><span class="nav-badge" data-section-badge="support"></span>
+        </button>
         <!-- Read-only repayment oversight. -->
         <button class="nav-link" type="button" data-section="repayments">
           <svg class="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12l1 4v14H5V7l1-4Zm2.2 2-.5 2h8.6l-.5-2H8.2ZM8 11h8v2H8v-2Zm0 4h8v2H8v-2Z"/></svg><span>Repayments</span>
@@ -461,6 +465,27 @@ $jsonFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_
                   </tbody>
                 </table>
               </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="support-section" class="admin-section" data-role-section hidden>
+          <div class="sw-page-stack">
+            <section class="sw-support-grid" aria-label="Support concern workspace">
+              <article class="table-card">
+                <div class="section-header">
+                  <div>
+                    <h2>Assigned Support Concerns</h2>
+                    <p class="section-subtitle" data-sw-ticket-count>0 tickets</p>
+                  </div>
+                </div>
+                <div class="sw-ticket-list" data-sw-ticket-list>
+                  <p class="sw-empty">Loading support concerns...</p>
+                </div>
+              </article>
+              <article class="table-card sw-ticket-detail" data-sw-ticket-detail>
+                <p class="sw-empty">Select a support concern to read the conversation and send a reply.</p>
+              </article>
             </section>
           </div>
         </section>

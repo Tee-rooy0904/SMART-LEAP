@@ -82,17 +82,6 @@ $butuanBarangays = array_map(
                     </span>
                     <span data-i18n-key="support">Support</span>
                 </a>
-                <!-- Activity page for beneficiary-side logs and timeline history. -->
-                <a class="sidebar-link" href="#activity-log" data-role="beneficiary">
-                    <span class="sidebar-icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" role="presentation">
-                            <path d="M5 6h14" stroke-linecap="round"/>
-                            <path d="M5 12h14" stroke-linecap="round"/>
-                            <path d="M5 18h8" stroke-linecap="round"/>
-                        </svg>
-                    </span>
-                    <span data-i18n-key="activity">Activity</span>
-                </a>
             </nav>
         </aside>
         <button type="button" class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true" tabindex="-1"></button>
@@ -113,7 +102,7 @@ $butuanBarangays = array_map(
                     <div class="beneficiary-contextbar__notifications" id="beneficiaryNotificationMount"></div>
                     <div class="portal-language-toggle" role="group" aria-label="Select language">
                         <button type="button" class="portal-language-toggle__button is-active" data-language-option="en">English</button>
-                        <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Bisaya</button>
+                        <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Tagalog</button>
                     </div>
                     <div class="mobile-topbar__account">
                         <!-- Mobile account trigger opens profile, password, and sign-out actions. -->
@@ -162,31 +151,31 @@ $butuanBarangays = array_map(
                         <!-- Balance card highlights the beneficiary's current repayment exposure and quick actions. -->
                         <div class="panel beneficiary-balance-card" aria-label="Benepisyaryo repayment summary">
                             <div class="beneficiary-balance-card__body">
-                                <span class="label" id="bannerLabelOutstanding">Kasamtangang balanse</span>
+                                <span class="label" id="bannerLabelOutstanding">Current balance</span>
                                 <strong id="bannerOutstanding">&#8369;0.00</strong>
                             </div>
                             <div class="beneficiary-balance-card__actions" id="overviewBalanceActions"></div>
                         </div>
                     </section>
-                    <section class="panel dash-section panel--summary beneficiary-repayment-hero" aria-label="Snapshot sa repayment">
-                        <h3 class="sr-only" id="repaymentStandingHeading">Snapshot sa repayment</h3>
+                    <section class="panel dash-section panel--summary beneficiary-repayment-hero" aria-label="Repayment snapshot">
+                        <h3 class="sr-only" id="repaymentStandingHeading">Repayment snapshot</h3>
                         <p class="sr-only" id="repaymentStandingCopy">A quick snapshot of your current repayment status.</p>
                         <div class="beneficiary-inline-metrics beneficiary-inline-metrics--hero" role="list">
                             <article class="overview-card overview-card--balance" role="listitem">
                                 <span class="overview-label">Next due</span>
-                                <strong class="overview-value" id="repaymentStandingOutstanding">Nahuman</strong>
+                                <strong class="overview-value" id="repaymentStandingOutstanding">Completed</strong>
                             </article>
                             <article class="overview-card" role="listitem">
                                 <span class="overview-label">Pending verification</span>
                                 <strong class="overview-value" id="repaymentStandingPending">0 resibo</strong>
                             </article>
                             <article class="overview-card" role="listitem">
-                                <span class="overview-label">Na-upload nga resibo</span>
+                                <span class="overview-label">Uploaded receipts</span>
                                 <strong class="overview-value" id="repaymentStandingOverdue">0 resibo</strong>
                             </article>
                             <article class="overview-card" role="listitem">
-                                <span class="overview-label">Kinahanglan follow-up</span>
-                                <strong class="overview-value" id="repaymentStandingVerified">Aktibong benepisyaryo</strong>
+                                <span class="overview-label">Needs follow-up</span>
+                                <strong class="overview-value" id="repaymentStandingVerified">Active beneficiary</strong>
                             </article>
                         </div>
                     </section>
@@ -195,10 +184,10 @@ $butuanBarangays = array_map(
                         <div class="beneficiary-progress-row__main">
                             <div class="beneficiary-progress-row__head">
                                 <div>
-                                    <span class="beneficiary-progress-row__label" id="overviewProgressLabel">Pag-uswag sa repayment</span>
+                                    <span class="beneficiary-progress-row__label" id="overviewProgressLabel">Repayment progress</span>
                                     <strong class="beneficiary-progress-row__value" id="overviewProgress">0/24 months</strong>
                                 </div>
-                                <p class="beneficiary-progress-row__meta" id="overviewRate">0% kompleto</p>
+                                <p class="beneficiary-progress-row__meta" id="overviewRate">0% complete</p>
                             </div>
                             <div class="beneficiary-progress-row__track" role="progressbar" aria-labelledby="beneficiaryKinatibuk-anProgressHeading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
                                 <div class="beneficiary-progress-row__fill" id="overviewProgressFill"></div>
@@ -227,7 +216,7 @@ $butuanBarangays = array_map(
                                 </div>
                                 <div class="beneficiary-update-row">
                                     <span class="chip">Suporta</span>
-                                    <p id="overviewSupport">Nagkinahanglan ug tabang? Kontaka ang imong PDO.</p>
+                                    <p id="overviewSupport">Need help? Contact Social Worker support.</p>
                                 </div>
                             </div>
                         </section>
@@ -237,12 +226,11 @@ $butuanBarangays = array_map(
                             </div>
                             <div class="beneficiary-support-mini">
                                 <div class="beneficiary-support-mini__copy">
-                                    <span class="overview-label">Assigned PDO</span>
-                                    <strong class="support-card__primary" id="overviewSupportPdo">Project Officer</strong>
-                                    <p class="support-card__meta" id="overviewSupportContact">projectofficer@smartleap.gov.ph</p>
-                                    <p class="beneficiary-support-mini__hint">Kontak your PDO for repayment and verification support.</p>
+                                    <span class="overview-label">Social Worker Support</span>
+                                    <strong class="support-card__primary" id="overviewSupportWorker">SMART LEAP Social Worker</strong>
+                                    <p class="support-card__meta" id="overviewSupportWorkerContact">sw@smartleap.local</p>
+                                    <p class="beneficiary-support-mini__hint">Contact Social Worker support for repayment, correction, and verification concerns.</p>
                                 </div>
-                                <button type="button" class="btn-outline small" id="overviewSupportBtn">Ablihi ang Suporta</button>
                             </div>
                         </section>
                     </div>
@@ -255,13 +243,13 @@ $butuanBarangays = array_map(
                             <aside class="profile-photo beneficiary-profile-photo">
                                 <div class="profile-photo__frame">
                                     <img id="profilePhotoPreview" src="" alt="Preview sa litrato sa profile" class="is-hidden">
-                                    <div class="profile-photo__placeholder" id="profilePhotoPlaceholder">Walay litrato</div>
+                                    <div class="profile-photo__placeholder" id="profilePhotoPlaceholder">No photo</div>
                                 </div>
                                 <label class="btn-outline profile-photo__upload">
-                                    I-upload ang litrato
+                                    Upload photo
                                     <input type="file" id="profilePhotoInput" accept=".jpg,.jpeg,.png" hidden>
                                 </label>
-                                <p class="profile-photo__note">JPG o PNG, kutob 5MB.</p>
+                                <p class="profile-photo__note">JPG or PNG, max 5MB.</p>
                             </aside>
                             <!-- Beneficiaries can still correct profile data here while protected fields remain system-owned. -->
                             <form id="beneficiaryProfileForm" class="beneficiary-profile-form">
@@ -282,21 +270,21 @@ $butuanBarangays = array_map(
                                             <input type="email" id="beneficiaryEmail" name="email" required>
                                         </label>
                                         <label class="form-field" id="beneficiaryBirthdateField">
-                                            <span>Petsa sa pagkatawo *</span>
+                                            <span>Birthdate *</span>
                                             <input type="date" id="beneficiaryBirthdate" name="birthdate" required>
                                         </label>
                                         <label class="form-field" id="beneficiaryAgeField">
-                                            <span>Edad</span>
+                                            <span>Age</span>
                                             <input type="number" id="beneficiaryEdad" name="age" readonly>
                                         </label>
                                         <label class="form-field" id="beneficiaryGenderField">
                                             <span>Gender *</span>
                                             <select id="beneficiaryGender" name="gender" required>
-                                                <option value="">Pili ug gender</option>
-                                                <option value="Babaye">Babaye</option>
-                                                <option value="Lalaki">Lalaki</option>
+                                                <option value="">Select gender</option>
+                                                <option value="Babaye">Female</option>
+                                                <option value="Lalaki">Male</option>
                                                 <option value="Non-binary">Non-binary</option>
-                                                <option value="Dili gustong mosulti">Dili gustong mosulti</option>
+                                                <option value="Dili gustong mosulti">Prefer not to say</option>
                                             </select>
                                         </label>
                                         <label class="form-field" id="beneficiaryRelationshipField" hidden>
@@ -311,7 +299,7 @@ $butuanBarangays = array_map(
                                     </div>
                                     <div class="form-grid">
                                         <label class="form-field">
-                                            <span>Ngalan sa negosyo *</span>
+                                            <span>Business name *</span>
                                             <input type="text" id="beneficiaryBusiness" name="businessName" required>
                                         </label>
                                         <label class="form-field">
@@ -588,16 +576,15 @@ $butuanBarangays = array_map(
                         <div>
                             <span class="support-card__eyebrow">SMART LEAP Help Desk</span>
                             <h2>Support Center</h2>
-                            <p>Submit a concern, track staff replies, and get help from SMART LEAP staff.</p>
+                            <p>Submit a concern, track replies, and get help from Social Worker support.</p>
                         </div>
-                        <a class="btn-outline" href="#helpdeskNewConcern">New concern</a>
                     </header>
                     <div class="helpdesk-layout">
                         <div class="helpdesk-main">
                             <section class="panel helpdesk-card" id="helpdeskNewConcern" aria-labelledby="helpdeskFormHeading">
                                 <div class="panel-header">
                                     <h3 id="helpdeskFormHeading">Submit New Concern</h3>
-                                    <p class="panel-subtitle">Tell us what you need help with. Your concern will be routed to the appropriate SMART LEAP staff.</p>
+                                    <p class="panel-subtitle">Tell us what you need help with. Your concern will be routed to Social Worker support.</p>
                                 </div>
                                 <form class="helpdesk-form" data-helpdesk-form novalidate>
                                     <label class="form-field">
@@ -647,45 +634,13 @@ $butuanBarangays = array_map(
                                     </div>
                                 </div>
                                 <div class="helpdesk-ticket-list" data-helpdesk-ticket-list>
-                                    <p class="helpdesk-empty">No concerns submitted yet. Use the form to submit a concern when you need help from SMART LEAP staff.</p>
+                                    <p class="helpdesk-empty">No concerns submitted yet. Use the form to submit a concern when you need help from Social Worker support.</p>
                                 </div>
                             </section>
                         </div>
                     </div>
                 </section>
 
-                <section id="activity-log" class="dash-page dash-section" data-role="beneficiary">
-                    <section class="panel dash-section panel--summary activity-summary-panel" aria-labelledby="activitySummaryHeading">
-                        <div class="panel-header panel-header--compact">
-                            <h3 id="activitySummaryHeading">Activity summary</h3>
-                            <p class="panel-subtitle">A quick read on your recent beneficiary-side activity.</p>
-                        </div>
-                        <div class="beneficiary-inline-metrics" role="list">
-                            <article class="overview-card" role="listitem">
-                                <span class="overview-label">Verified actions</span>
-                                <strong class="overview-value" id="activityVerifiedCount">0</strong>
-                            </article>
-                            <article class="overview-card" role="listitem">
-                                <span class="overview-label">Uploaded actions</span>
-                                <strong class="overview-value" id="activityUploadedCount">0</strong>
-                            </article>
-                            <article class="overview-card activity-latest-card" role="listitem">
-                                <span class="overview-label">Latest activity</span>
-                                <strong class="overview-value" id="activityLatestTitle">No activity yet</strong>
-                                <p class="overview-meta" id="activityLatestMeta">Recent beneficiary actions will appear here.</p>
-                            </article>
-                        </div>
-                    </section>
-                    <section class="panel dash-section panel--review activity-timeline-panel" aria-labelledby="activityTimelineHeading">
-                        <div class="panel-header panel-header--compact">
-                            <h3 id="activityTimelineHeading">Activity timeline</h3>
-                            <p class="panel-subtitle">Recent repayment verification and upload actions in order.</p>
-                        </div>
-                        <ul id="auditList" class="timeline-list">
-                            <li class="empty">No activity yet.</li>
-                        </ul>
-                    </section>
-                </section>
             </main>
 
             <nav class="beneficiary-mobile-tabbar" aria-label="Beneficiary mobile navigation">
@@ -717,16 +672,6 @@ $butuanBarangays = array_map(
                     </span>
                     <span class="beneficiary-tabbar__label" data-i18n-key="support">Support</span>
                 </a>
-                <a class="beneficiary-tabbar__link" href="#activity-log" data-role="beneficiary">
-                    <span class="beneficiary-tabbar__icon" aria-hidden="true">
-                        <svg viewBox="0 0 24 24" role="presentation">
-                            <path d="M5 6h14" stroke-linecap="round"/>
-                            <path d="M5 12h14" stroke-linecap="round"/>
-                            <path d="M5 18h8" stroke-linecap="round"/>
-                        </svg>
-                    </span>
-                    <span class="beneficiary-tabbar__label" data-i18n-key="activity">Activity</span>
-                </a>
             </nav>
 
             <footer class="dash-footer">
@@ -742,8 +687,3 @@ $butuanBarangays = array_map(
     <script src="<?= $baseUrl ?>/assets/js/dashboards/support-helpdesk.js?v=<?= urlencode((string) $supportHelpdeskJsVersion) ?>" defer></script>
 </body>
 </html>
-
-
-
-
-

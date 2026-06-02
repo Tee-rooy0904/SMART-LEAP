@@ -645,9 +645,10 @@
 
     function getRepaymentMetrics() {
         const scheduleItems = getRepaymentScheduleItems();
-        const verifiedPayments = payments.filter((p) => mapPaymentStage(p.stage) === 'verified');
-        const pendingPayments = payments.filter((p) => mapPaymentStage(p.stage) === 'pending');
-        const uploadedPayments = payments.filter((p) => mapPaymentStage(p.stage) === 'uploaded');
+        const displayPayments = getDisplayPayments();
+        const verifiedPayments = displayPayments.filter((p) => mapPaymentStage(p.stage) === 'verified');
+        const pendingPayments = displayPayments.filter((p) => mapPaymentStage(p.stage) === 'pending');
+        const uploadedPayments = displayPayments.filter((p) => mapPaymentStage(p.stage) === 'uploaded');
         const totalVerifiedAmount = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
         const outstanding = Math.max(TOTAL_REPAYMENT_AMOUNT - totalVerifiedAmount, 0);
         const verifiedMonths = verifiedPayments.length;
@@ -744,15 +745,32 @@
             : 'No receipts pending verification.';
         const support = repaymentAccount?.isRepaymentSuccessor
             ? `You are paying for the account of ${String(repaymentAccount.replacementForName || 'the linked deceased beneficiary')}. Open Support for repayment help if needed.`
-            : 'Open Support for PDO contact or repayment help.';
+            : 'Open Support for Social Worker help with repayments, corrections, or verification concerns.';
         return { reminder, verification, support };
+    }
+
+    function getSocialWorkerSupportContact() {
+        const sources = [
+            applicationRecord?.socialWorker,
+            applicationRecord?.assignedSocialWorker,
+            beneficiaryRecord?.socialWorker,
+            beneficiaryRecord?.assignedSocialWorker,
+            beneficiaryRecord?.supportContact,
+            user?.socialWorker,
+        ];
+        const contact = sources.find((item) => item && typeof item === 'object') || {};
+
+        return {
+            name: contact.name || contact.fullName || contact.full_name || 'SMART LEAP Social Worker',
+            email: contact.email || contact.contact || contact.contactNumber || 'sw@smartleap.local',
+        };
     }
 
     function renderSummary() {
         if (roleView === 'beneficiary') {
             const metrics = getRepaymentMetrics();
 
-            setText('bannerLabelOutstanding', 'Kasamtangang balanse');
+            setText('bannerLabelOutstanding', 'Current balance');
             setText('bannerLabelProgress', 'Payment progress');
             setText('bannerLabelNextDue', 'Pending verification');
             setText('bannerLabelRate', 'Aksyon sa repayment');
@@ -790,9 +808,10 @@
 
     function renderProgress() {
         const metrics = getRepaymentMetrics();
-        const submittedCount = payments.length;
+        const displayPayments = getDisplayPayments();
+        const submittedCount = displayPayments.length;
         const pendingVerificationCount = metrics.pendingCount + metrics.uploadedCount;
-        const followUpCount = payments.filter((payment) => {
+        const followUpCount = displayPayments.filter((payment) => {
             const stage = mapPaymentStage(payment.stage);
             return stage === 'needs_correction' || stage === 'rejected';
         }).length;
@@ -854,15 +873,16 @@
         const counter = document.getElementById('historyCounter');
         if (!tbody) return;
 
-        const verifiedCount = payments.filter((p) => mapPaymentStage(p.stage) === 'verified').length;
-        const pendingCount = payments.filter((p) => mapPaymentStage(p.stage) === 'pending').length;
-        const uploadedCount = payments.filter((p) => mapPaymentStage(p.stage) === 'uploaded').length;
+        const displayPayments = getDisplayPayments();
+        const verifiedCount = displayPayments.filter((p) => mapPaymentStage(p.stage) === 'verified').length;
+        const pendingCount = displayPayments.filter((p) => mapPaymentStage(p.stage) === 'pending').length;
+        const uploadedCount = displayPayments.filter((p) => mapPaymentStage(p.stage) === 'uploaded').length;
         setText('historyVerifiedCount', formatCount(verifiedCount, 'receipt'));
         setText('historyPendingCount', formatCount(pendingCount, 'receipt'));
         setText('historyUploadedCount', formatCount(uploadedCount, 'receipt'));
 
         tbody.innerHTML = '';
-        if (!payments.length) {
+        if (!displayPayments.length) {
             tbody.innerHTML = '<tr class="empty"><td colspan="6">No receipts yet. Log the first OR to begin.</td></tr>';
             if (cardList) {
                 cardList.innerHTML = '<article class="history-card history-card--empty">No receipts yet. Log the first OR to begin.</article>';
@@ -873,7 +893,7 @@
 
         const statusFilter = (document.getElementById('historyFilterStatus')?.value || '').toLowerCase();
         const monthFilter = document.getElementById('historyFilterMonth')?.value || '';
-        const filtered = payments.filter((payment) => {
+        const filtered = displayPayments.filter((payment) => {
             const status = mapPaymentStage(payment.stage);
             const statusMatch = !statusFilter || status === statusFilter;
             const monthMatch = !monthFilter || (payment.month || '') === monthFilter;
@@ -1157,7 +1177,6 @@
             profile: 'profile',
             repayments: 'repayments',
             'support-feedback': 'support',
-            'activity-log': 'activity',
         };
         const activeKey = keyMap[activeId] || 'overview';
         title.dataset.i18nKey = activeKey;
@@ -1168,7 +1187,6 @@
             profile: 'Profile',
             repayments: 'Repayments',
             'support-feedback': 'Support',
-            'activity-log': 'Activity',
         };
         title.textContent = translatedLabel || linkLabel || fallbackMap[activeId] || 'Overview';
     }
@@ -1293,9 +1311,9 @@
             }
             setText('overviewReminder', updates.reminder);
             setText('overviewAccountAlert', metrics.pendingVerificationCount > 0 ? updates.verification : attentionSummary.meta);
-            const assignedPdo = applicationRecord?.assignedPdo || beneficiaryRecord?.assignedPdo || {};
-            setText('overviewSupportPdo', assignedPdo.name || beneficiaryRecord?.pdoName || 'Project Officer');
-            setText('overviewSupportContact', assignedPdo.email || beneficiaryRecord?.pdoKontak || 'projectofficer@smartleap.gov.ph');
+            const socialWorkerSupport = getSocialWorkerSupportContact();
+            setText('overviewSupportWorker', socialWorkerSupport.name);
+            setText('overviewSupportWorkerContact', socialWorkerSupport.email);
             setText('overviewSupport', updates.support);
             const repaymentsButton = document.getElementById('overviewRepaymentsBtn');
             if (repaymentsButton) {
@@ -1886,7 +1904,7 @@
         const message = String(input?.value || '').trim();
         if (!message) return;
 
-        setSupportChatStatus('Gipadala...');
+        setSupportChatStatus('Sending...');
         try {
             const result = await postJson('api/support-chat/messages', {
                 recipient: supportRecipient,
@@ -1894,7 +1912,7 @@
             });
             if (input) input.value = '';
             renderSupportChat(result.messages || []);
-            setSupportChatStatus('Napadala ang mensahe.');
+            setSupportChatStatus('Message sent.');
         } catch (error) {
             setSupportChatStatus(error?.message || 'Unable to send your message.');
         }
@@ -1905,7 +1923,7 @@
         if (!stream) return;
 
         if (!Array.isArray(messages) || messages.length === 0) {
-            stream.innerHTML = '<p class="support-chat__empty">Ang mga mensahe sa imong support team makita dinhi.</p>';
+            stream.innerHTML = '<p class="support-chat__empty">Messages from your support team will appear here.</p>';
             return;
         }
 
@@ -2102,7 +2120,7 @@
         const statusMeta = applicationRecord?.reviewedAt || beneficiaryRecord?.releaseDate || '';
         items.push({
             title: 'Approval status',
-            message: `Kasamtangang status: ${status}`,
+            message: `Current status: ${status}`,
             meta: statusMeta ? formatDateTime(statusMeta) : 'Awaiting review'
         });
 
@@ -2383,7 +2401,9 @@
     }
 
     function repaymentStartMonth() {
-        const source = beneficiaryRecord?.approvalDate
+        const source = beneficiaryRecord?.repaymentSourceApprovalDate
+            || beneficiaryRecord?.repaymentSourceApprovedAt
+            || beneficiaryRecord?.approvalDate
             || beneficiaryRecord?.approvedAt
             || applicationRecord?.reviewedAt
             || applicationRecord?.submittedAt
@@ -2396,7 +2416,18 @@
                 .sort()[0];
             return firstPayment || normalizeMonthValue(new Date().toISOString().slice(0, 7));
         }
-        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const firstDueMonth = new Date(date.getFullYear(), date.getMonth() + 1, 1);
+        return `${firstDueMonth.getFullYear()}-${String(firstDueMonth.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function getRepaymentWindowMonths() {
+        const start = repaymentStartMonth();
+        return Array.from({ length: REPAYMENT_PLAN_MONTHS }, (_, index) => addMonths(start, index)).filter(Boolean);
+    }
+
+    function getDisplayPayments() {
+        const validMonths = new Set(getRepaymentWindowMonths());
+        return payments.filter((payment) => validMonths.has(normalizeMonthValue(payment.month)));
     }
 
     function addMonths(month, offset) {
@@ -2440,8 +2471,7 @@
     }
 
     function getRepaymentScheduleItems() {
-        const start = repaymentStartMonth();
-        const months = Array.from({ length: REPAYMENT_PLAN_MONTHS }, (_, index) => addMonths(start, index)).filter(Boolean);
+        const months = getRepaymentWindowMonths();
         return months.map((month) => {
             const payment = bestPaymentForMonth(month);
             const stage = payment ? mapPaymentStage(payment.stage) : 'unpaid';
@@ -2495,7 +2525,7 @@
 
     function getPaymentsForMonth(month) {
         const normalized = normalizeMonthValue(month);
-        return payments.filter((payment) => normalizeMonthValue(payment.month) === normalized);
+        return getDisplayPayments().filter((payment) => normalizeMonthValue(payment.month) === normalized);
     }
 
     function isPaymentLocked(payment) {
@@ -2973,11 +3003,6 @@
         return div.innerHTML;
     }
 })();
-
-
-
-
-
 
 
 

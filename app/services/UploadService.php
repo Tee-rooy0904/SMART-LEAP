@@ -26,6 +26,7 @@ class UploadService
     ];
 
     private const STAGE_ONE_PATHS = [
+        'profilePhoto' => 'profile-photo',
         'businessPhoto' => 'business-photo',
         'validIdPhoto' => 'valid-id',
     ];

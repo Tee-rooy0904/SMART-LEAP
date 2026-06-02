@@ -33,6 +33,7 @@ class ReportService
 
         return $this->buildScopedReport($filters, [
             'scopeStaffProfileId' => $staffProfileId,
+            'useFixedRepaymentTarget' => false,
         ]);
     }
 
@@ -40,12 +41,14 @@ class ReportService
     {
         (new BeneficiaryProfileService())->synchronizeSystemInactivityStatuses();
         $normalizedFilters = $this->normalizeFilters($filters);
+        $useFixedRepaymentTarget = !array_key_exists('useFixedRepaymentTarget', $scope)
+            || (bool) $scope['useFixedRepaymentTarget'];
         $records = $this->fetchRecords(
             isset($scope['beneficiaryIds']) && is_array($scope['beneficiaryIds']) ? $scope['beneficiaryIds'] : null,
             isset($scope['scopeStaffProfileId']) ? (int) $scope['scopeStaffProfileId'] : null
         );
         $filteredRecords = $this->applyFilters($records, $normalizedFilters);
-        $repaymentAnalytics = $this->buildRepaymentAnalytics($filteredRecords, $normalizedFilters);
+        $repaymentAnalytics = $this->buildRepaymentAnalytics($filteredRecords, $normalizedFilters, $useFixedRepaymentTarget);
         $trainingAnalytics = $this->buildTrainingAnalytics($this->beneficiaryIdsFromRecords($filteredRecords), $normalizedFilters);
 
         return [
@@ -357,7 +360,7 @@ class ReportService
         ];
     }
 
-    private function buildRepaymentAnalytics(array $records, array $filters): array
+    private function buildRepaymentAnalytics(array $records, array $filters, bool $useFixedRepaymentTarget = true): array
     {
         $beneficiaryIds = $this->beneficiaryIdsFromRecords($records);
 
@@ -367,10 +370,10 @@ class ReportService
 
         return [
             'obligations' => $filteredObligations,
-            'summary' => $this->summarizeRepaymentObligations($filteredObligations, $filters),
-            'periodMetrics' => $this->summarizeRepaymentObligations($filteredObligations, $filters),
-            'breakdown' => $this->buildRepaymentBreakdown($filteredObligations, $filters),
-            'monthlyBreakdown' => $this->buildRepaymentMonthlyBreakdown($filteredObligations, $filters),
+            'summary' => $this->summarizeRepaymentObligations($filteredObligations, $filters, $useFixedRepaymentTarget),
+            'periodMetrics' => $this->summarizeRepaymentObligations($filteredObligations, $filters, $useFixedRepaymentTarget),
+            'breakdown' => $this->buildRepaymentBreakdown($filteredObligations, $filters, $useFixedRepaymentTarget),
+            'monthlyBreakdown' => $this->buildRepaymentMonthlyBreakdown($filteredObligations, $filters, $useFixedRepaymentTarget),
         ];
     }
 
@@ -726,7 +729,7 @@ class ReportService
         }));
     }
 
-    private function summarizeRepaymentObligations(array $obligations, array $filters = []): array
+    private function summarizeRepaymentObligations(array $obligations, array $filters = [], bool $useFixedRepaymentTarget = true): array
     {
         $actualCollectedAmount = 0.0;
         $statusCounts = [
@@ -750,7 +753,14 @@ class ReportService
             }
         }
 
-        $targetAmount = $this->fixedRepaymentTargetAmount((string) ($filters['period'] ?? 'monthly'), $filters);
+        $targetAmount = $useFixedRepaymentTarget
+            ? $this->fixedRepaymentTargetAmount((string) ($filters['period'] ?? 'monthly'), $filters)
+            : 0.0;
+        if (!$useFixedRepaymentTarget) {
+            foreach ($obligations as $obligation) {
+                $targetAmount += (float) ($obligation['expectedAmount'] ?? self::MONTHLY_REPAYMENT_AMOUNT);
+            }
+        }
         $gapAmount = $targetAmount - $actualCollectedAmount;
         $roiPercent = $targetAmount > 0 ? round(($actualCollectedAmount / $targetAmount) * 100, 2) : 0.0;
 
@@ -770,10 +780,16 @@ class ReportService
         ];
     }
 
-    private function buildRepaymentBreakdown(array $obligations, array $filters): array
+    private function buildRepaymentBreakdown(array $obligations, array $filters, bool $useFixedRepaymentTarget = true): array
     {
         $period = (string) ($filters['period'] ?? 'monthly');
         $periods = $this->seedRepaymentBreakdownPeriods($filters);
+        if ($useFixedRepaymentTarget) {
+            foreach ($periods as $key => &$periodRow) {
+                $periodRow['targetAmount'] = $this->fixedRepaymentTargetAmount($period, $filters, (string) $key);
+            }
+            unset($periodRow);
+        }
 
         foreach ($obligations as $obligation) {
             $periodKey = $period === 'yearly'
@@ -787,11 +803,17 @@ class ReportService
                 $periods[$periodKey] = [
                     'period' => $periodKey,
                     'label' => $this->formatRepaymentPeriodLabel($periodKey, $period),
-                    'targetAmount' => $this->fixedRepaymentTargetAmount($period, $filters, $periodKey),
+                    'targetAmount' => $useFixedRepaymentTarget
+                        ? $this->fixedRepaymentTargetAmount($period, $filters, $periodKey)
+                        : 0.0,
                     'actualCollectedAmount' => 0.0,
                     'gapAmount' => 0.0,
                     'roiPercent' => 0.0,
                 ];
+            }
+
+            if (!$useFixedRepaymentTarget) {
+                $periods[$periodKey]['targetAmount'] += (float) ($obligation['expectedAmount'] ?? self::MONTHLY_REPAYMENT_AMOUNT);
             }
 
             $status = (string) ($obligation['status'] ?? 'overdue_unpaid');
@@ -813,9 +835,9 @@ class ReportService
         }, array_values($periods));
     }
 
-    private function buildRepaymentMonthlyBreakdown(array $obligations, array $filters): array
+    private function buildRepaymentMonthlyBreakdown(array $obligations, array $filters, bool $useFixedRepaymentTarget = true): array
     {
-        return $this->buildRepaymentBreakdown($obligations, $filters + ['period' => 'monthly']);
+        return $this->buildRepaymentBreakdown($obligations, $filters + ['period' => 'monthly'], $useFixedRepaymentTarget);
     }
 
     private function repaymentStackedStatuses(): array
@@ -885,7 +907,7 @@ class ReportService
                 $periods[$key] = [
                     'period' => $key,
                     'label' => $this->formatRepaymentPeriodLabel($key, 'monthly'),
-                    'targetAmount' => $this->fixedRepaymentTargetAmount('monthly', $filters, $key),
+                    'targetAmount' => 0.0,
                     'actualCollectedAmount' => 0.0,
                     'gapAmount' => 0.0,
                     'roiPercent' => 0.0,
@@ -900,7 +922,7 @@ class ReportService
                 $periods[$key] = [
                     'period' => $key,
                     'label' => $this->formatRepaymentPeriodLabel($key, 'quarterly'),
-                    'targetAmount' => $this->fixedRepaymentTargetAmount('quarterly', $filters, $key),
+                    'targetAmount' => 0.0,
                     'actualCollectedAmount' => 0.0,
                     'gapAmount' => 0.0,
                     'roiPercent' => 0.0,
@@ -914,7 +936,7 @@ class ReportService
             $periods[$key] = [
                 'period' => $key,
                 'label' => $key,
-                'targetAmount' => $this->fixedRepaymentTargetAmount('yearly', $filters, $key),
+                'targetAmount' => 0.0,
                 'actualCollectedAmount' => 0.0,
                 'gapAmount' => 0.0,
                 'roiPercent' => 0.0,

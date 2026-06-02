@@ -673,6 +673,18 @@ $initialReportBars = [
                   </header>
                   <div class="data-table-wrapper">
                     <table class="data-table po-repayment-history-table">
+                      <colgroup>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                        <col>
+                      </colgroup>
                       <thead>
                         <tr>
                           <th>Coverage Month</th>

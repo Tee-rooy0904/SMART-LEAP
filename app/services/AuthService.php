@@ -160,27 +160,10 @@ class AuthService
 
     public function registerApplicant(array $input): array
     {
-        $firstName = trim((string) ($input['firstName'] ?? ''));
-        $middleName = trim((string) ($input['middleName'] ?? ''));
-        $lastName = trim((string) ($input['lastName'] ?? ''));
         $email = strtolower(trim((string) ($input['email'] ?? '')));
         $password = (string) ($input['password'] ?? '');
         $errors = [];
-        $fullName = trim(implode(' ', array_filter([$firstName, $middleName, $lastName], static fn (string $value): bool => $value !== '')));
-        $applicationService = new ApplicationService();
         $stageOneRegistration = $this->findSelectedStageOneRegistrationByEmail($email);
-
-        if (mb_strlen($firstName) < 2) {
-            $errors['firstName'] = 'Enter your first name.';
-        }
-
-        if (mb_strlen($lastName) < 2) {
-            $errors['lastName'] = 'Enter your last name.';
-        }
-
-        if (mb_strlen($fullName) < 3) {
-            $errors['general'] = 'Enter your complete name.';
-        }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $errors['email'] = 'Enter a valid email address.';
@@ -192,8 +175,6 @@ class AuthService
             $errors['password'] = 'Password must include uppercase, lowercase, and a number.';
         }
 
-        $errors = array_merge($errors, $applicationService->validateInitialApplicantProfileInput($input));
-
         if ($errors !== []) {
             return ['ok' => false, 'errors' => $errors];
         }
@@ -201,12 +182,37 @@ class AuthService
         if ($stageOneRegistration === null) {
             return [
                 'ok' => false,
-                'errors' => ['email' => 'Only Stage 1 registrants selected for the current batch can create a Stage 2 portal account.'],
+                'errors' => ['email' => 'Only Stage 1 registrants selected for the current batch can activate a portal account.'],
             ];
         }
 
+        $stageOneRegistration = $this->overlayApplicantProfileActivationData($stageOneRegistration);
+
         $existingUser = $this->findUserByEmail($email);
         if ($existingUser !== null) {
+            if (strtolower((string) ($existingUser['verification_status'] ?? 'pending')) !== 'verified') {
+                $challenge = $this->issueVerificationChallenge(
+                    (int) $existingUser['id'],
+                    (string) $existingUser['email'],
+                    (string) $existingUser['full_name'],
+                    self::CHALLENGE_TYPE_ACCOUNT_ACTIVATION
+                );
+
+                if (!$challenge['ok']) {
+                    return [
+                        'ok' => false,
+                        'errors' => ['general' => $challenge['message'] ?? 'Unable to restart account activation right now.'],
+                    ];
+                }
+
+                return [
+                    'ok' => true,
+                    'requiresVerification' => true,
+                    'message' => 'A verification code was sent to your email so you can finish activating your portal account.',
+                    'redirect' => 'verify-account?email=' . urlencode($email) . '&mode=activation&entryPoint=portal',
+                ];
+            }
+
             return [
                 'ok' => true,
                 'message' => 'A SMART LEAP portal account already exists for this approved email. Redirecting you so you can recover access.',
@@ -222,9 +228,24 @@ class AuthService
             ];
         }
 
+        $applicationService = new ApplicationService();
+        $stageOneApplicantInput = $this->stageOneRegistrationToApplicantInput($stageOneRegistration);
+        $validationErrors = $applicationService->validateInitialApplicantProfileInput($stageOneApplicantInput);
+        if ($validationErrors !== []) {
+            return [
+                'ok' => false,
+                'errors' => ['general' => $validationErrors['general'] ?? reset($validationErrors) ?: 'The selected Stage 1 application is incomplete.'],
+            ];
+        }
+
         $passwordService = new PasswordService();
         $passwordHash = $passwordService->hash($password);
-        $nameParts = $this->normalizeNameParts($firstName, $middleName, $lastName);
+        $nameParts = $this->normalizeNameParts(
+            (string) ($stageOneRegistration['first_name'] ?? ''),
+            (string) ($stageOneRegistration['middle_name'] ?? ''),
+            (string) ($stageOneRegistration['last_name'] ?? '')
+        );
+        $fullName = trim((string) ($stageOneRegistration['full_name'] ?? ''));
         $pdo = db();
         $userId = 0;
 
@@ -244,7 +265,7 @@ class AuthService
                     'last_name' => $nameParts['last_name'] ?: null,
                     'email' => $email,
                     'password_hash' => $passwordHash,
-                    'verification_status' => 'verified',
+                    'verification_status' => 'pending',
                 ]);
             } else {
                 $statement = $pdo->prepare(
@@ -256,11 +277,11 @@ class AuthService
                     'full_name' => $fullName,
                     'email' => $email,
                     'password_hash' => $passwordHash,
-                    'verification_status' => 'verified',
+                    'verification_status' => 'pending',
                 ]);
             }
             $userId = (int) $pdo->lastInsertId();
-            $applicationService->createInitialApplicantProfile($userId, $input);
+            $applicationService->createInitialApplicantProfile($userId, $stageOneApplicantInput);
             $pdo->commit();
         } catch (\Throwable $exception) {
             if ($pdo->inTransaction()) {
@@ -273,13 +294,25 @@ class AuthService
             ];
         }
 
-        $user = $this->sessionPayloadForUser($userId);
+        $challenge = $this->issueVerificationChallenge(
+            $userId,
+            $email,
+            $fullName !== '' ? $fullName : 'Applicant',
+            self::CHALLENGE_TYPE_ACCOUNT_ACTIVATION
+        );
+
+        if (!$challenge['ok']) {
+            return [
+                'ok' => false,
+                'errors' => ['general' => $challenge['message'] ?? 'Unable to send your verification code right now.'],
+            ];
+        }
 
         return [
             'ok' => true,
-            'message' => 'Your account and profile are ready. Redirecting to your applicant portal.',
-            'user' => $user,
-            'redirect' => 'applicant-dashboard',
+            'requiresVerification' => true,
+            'message' => 'Your account is almost ready. Check your email for the verification code to finish activation.',
+            'redirect' => 'verify-account?email=' . urlencode($email) . '&mode=activation&entryPoint=portal',
         ];
     }
 
@@ -677,13 +710,7 @@ class AuthService
 
     private function requiresAccountActivation(array $user): bool
     {
-        $role = strtolower((string) ($user['role'] ?? ''));
         $status = strtolower((string) ($user['verification_status'] ?? 'pending'));
-
-        if (str_contains($role, 'beneficiary') || str_contains($role, 'applicant')) {
-            return false;
-        }
-
         return $status !== 'verified';
     }
 
@@ -796,7 +823,10 @@ class AuthService
         }
 
         $statement = db()->prepare(
-            'SELECT id, full_name, email, validation_status
+            'SELECT id, first_name, middle_name, last_name, full_name, email, contact_number, complete_address,
+                    birthdate, age, gender, barangay, is_4ps, educational_attainment, sector, sector_other_specify,
+                    livelihood_type, business_name, profile_photo_path, profile_photo_mime_type,
+                    business_photo_path, business_photo_mime_type, validation_status
              FROM stage_one_registrations
              WHERE LOWER(email) = LOWER(:email)
                AND LOWER(validation_status) IN ("selected", "approved")
@@ -807,6 +837,158 @@ class AuthService
         $row = $statement->fetch(PDO::FETCH_ASSOC);
 
         return is_array($row) ? $row : null;
+    }
+
+    private function stageOneRegistrationToApplicantInput(array $registration): array
+    {
+        return [
+            'birthdate' => (string) ($registration['birthdate'] ?? ''),
+            'age' => (string) ($registration['age'] ?? ''),
+            'gender' => (string) ($registration['gender'] ?? ''),
+            'contactNumber' => (string) ($registration['contact_number'] ?? ''),
+            'address' => (string) ($registration['complete_address'] ?? ''),
+            'barangay' => (string) ($registration['barangay'] ?? ''),
+            'is4ps' => ((int) ($registration['is_4ps'] ?? 0)) === 1 ? 'Yes' : 'No',
+            'educationalAttainment' => (string) ($registration['educational_attainment'] ?? ''),
+            'sector' => (string) ($registration['sector'] ?? ''),
+            'sectorOtherSpecify' => (string) ($registration['sector_other_specify'] ?? ''),
+            'livelihood' => (string) ($registration['livelihood_type'] ?? ''),
+            'businessName' => (string) ($registration['business_name'] ?? ''),
+            'photoDataUrl' => $this->stageOneProfilePhotoToDataUrl($registration),
+        ];
+    }
+
+    private function overlayApplicantProfileActivationData(array $registration): array
+    {
+        $email = strtolower(trim((string) ($registration['email'] ?? '')));
+        if ($email === '') {
+            return $registration;
+        }
+
+        $needsOverlay = trim((string) ($registration['educational_attainment'] ?? '')) === ''
+            || trim((string) ($registration['sector'] ?? '')) === ''
+            || trim((string) ($registration['livelihood_type'] ?? '')) === ''
+            || trim((string) ($registration['business_name'] ?? '')) === ''
+            || trim((string) ($registration['barangay'] ?? '')) === '';
+
+        if (!$needsOverlay) {
+            return $registration;
+        }
+
+        $statement = db()->prepare(
+            'SELECT
+                applicant_profiles.contact_number,
+                applicant_profiles.address_line,
+                applicant_profiles.birthdate,
+                applicant_profiles.age,
+                applicant_profiles.gender,
+                applicant_profiles.is_4ps,
+                applicant_profiles.educational_attainment,
+                applicant_profiles.sector,
+                applicant_profiles.sector_other_specify,
+                applicant_profiles.livelihood_type,
+                applicant_profiles.business_name,
+                barangays.name AS barangay_name
+             FROM users
+             INNER JOIN applicant_profiles ON applicant_profiles.user_id = users.id
+             LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
+             WHERE LOWER(users.email) = LOWER(:email)
+             LIMIT 1'
+        );
+        $statement->execute(['email' => $email]);
+        $profile = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($profile)) {
+            return $registration;
+        }
+
+        $registration['contact_number'] = trim((string) ($registration['contact_number'] ?? '')) !== ''
+            ? (string) $registration['contact_number']
+            : (string) ($profile['contact_number'] ?? '');
+        $registration['complete_address'] = trim((string) ($registration['complete_address'] ?? '')) !== ''
+            ? (string) $registration['complete_address']
+            : (string) ($profile['address_line'] ?? '');
+        $registration['birthdate'] = trim((string) ($registration['birthdate'] ?? '')) !== ''
+            ? (string) $registration['birthdate']
+            : (string) ($profile['birthdate'] ?? '');
+        $registration['age'] = !empty($registration['age'])
+            ? $registration['age']
+            : ($profile['age'] ?? null);
+        $registration['gender'] = trim((string) ($registration['gender'] ?? '')) !== ''
+            ? (string) $registration['gender']
+            : (string) ($profile['gender'] ?? '');
+        $registration['barangay'] = trim((string) ($registration['barangay'] ?? '')) !== ''
+            ? (string) $registration['barangay']
+            : (string) ($profile['barangay_name'] ?? '');
+        $registration['is_4ps'] = $registration['is_4ps'] !== null
+            ? $registration['is_4ps']
+            : ($profile['is_4ps'] ?? null);
+        $registration['educational_attainment'] = trim((string) ($registration['educational_attainment'] ?? '')) !== ''
+            ? (string) $registration['educational_attainment']
+            : (string) ($profile['educational_attainment'] ?? '');
+        $registration['sector'] = trim((string) ($registration['sector'] ?? '')) !== ''
+            ? (string) $registration['sector']
+            : (string) ($profile['sector'] ?? '');
+        $registration['sector_other_specify'] = trim((string) ($registration['sector_other_specify'] ?? '')) !== ''
+            ? (string) $registration['sector_other_specify']
+            : (string) ($profile['sector_other_specify'] ?? '');
+        $registration['livelihood_type'] = trim((string) ($registration['livelihood_type'] ?? '')) !== ''
+            ? (string) $registration['livelihood_type']
+            : (string) ($profile['livelihood_type'] ?? '');
+        $registration['business_name'] = trim((string) ($registration['business_name'] ?? '')) !== ''
+            ? (string) $registration['business_name']
+            : (string) ($profile['business_name'] ?? '');
+
+        return $registration;
+    }
+
+    private function stageOneProfilePhotoToDataUrl(array $registration): string
+    {
+        $relativePath = trim((string) ($registration['profile_photo_path'] ?? ''));
+        $mimeType = trim((string) ($registration['profile_photo_mime_type'] ?? ''));
+        if ($relativePath === '') {
+            $relativePath = trim((string) ($registration['business_photo_path'] ?? ''));
+            $mimeType = trim((string) ($registration['business_photo_mime_type'] ?? ''));
+        }
+        if ($relativePath === '') {
+            return $this->legacyProfilePhotoDataUrlByEmail((string) ($registration['email'] ?? ''));
+        }
+
+        $absolutePath = public_path(str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $relativePath));
+        if (!is_file($absolutePath) || !is_readable($absolutePath)) {
+            return '';
+        }
+
+        $binary = @file_get_contents($absolutePath);
+        if ($binary === false || $binary === '') {
+            return '';
+        }
+
+        if ($mimeType === '') {
+            $detected = @mime_content_type($absolutePath);
+            $mimeType = is_string($detected) ? $detected : 'image/jpeg';
+        }
+
+        return 'data:' . $mimeType . ';base64,' . base64_encode($binary);
+    }
+
+    private function legacyProfilePhotoDataUrlByEmail(string $email): string
+    {
+        $email = strtolower(trim($email));
+        if ($email === '') {
+            return '';
+        }
+
+        $statement = db()->prepare(
+            'SELECT user_profile_photos.image_data
+             FROM users
+             INNER JOIN user_profile_photos ON user_profile_photos.user_id = users.id
+             WHERE LOWER(users.email) = LOWER(:email)
+             LIMIT 1'
+        );
+        $statement->execute(['email' => $email]);
+        $imageData = $statement->fetchColumn();
+
+        return is_string($imageData) ? trim($imageData) : '';
     }
 
     private function sessionPayloadForUser(int $userId): array

@@ -186,6 +186,7 @@
     applications: 'Applicants',
     beneficiaries: 'Beneficiaries',
     'co-makers': 'Co-makers',
+    support: 'Support',
     repayments: 'Repayments',
     reports: 'Reports',
   };
@@ -569,6 +570,8 @@
 
     if (state.section === 'reports') {
       initReports();
+    } else if (state.section === 'support') {
+      loadSupportTickets();
     }
   }
 
@@ -615,6 +618,15 @@
       clearSelectState('swRepaymentStatus');
       forceDefaultSelects(['swRepaymentStatus']);
       renderRepayments();
+      return;
+    }
+    if (section === 'support') {
+      state.activeTicketId = null;
+      const detail = document.querySelector('[data-sw-ticket-detail]');
+      if (detail) {
+        detail.innerHTML = '<p class="sw-empty">Select a support concern to read the conversation and send a reply.</p>';
+      }
+      renderTickets();
     }
   }
 
@@ -1276,6 +1288,15 @@
           <div class="admin-record-sheet__grid admin-record-sheet__grid--two">
             ${oversightField('Email', record.email)}
             ${oversightField('Contact Number', record.contactNumber)}
+            ${oversightField('Birthdate', record.birthdate || '--')}
+            ${oversightField('Age', record.age ?? '--')}
+            ${oversightField('Gender', record.gender || '--')}
+            ${oversightField('Barangay', record.barangay || '--')}
+            ${oversightField('4Ps Membership', record.is4ps || '--')}
+            ${oversightField('Educational Attainment', record.educationalAttainment || '--')}
+            ${oversightField('Sector', record.sector === 'Other' && record.sectorOtherSpecify ? `Other - ${record.sectorOtherSpecify}` : (record.sector || '--'))}
+            ${oversightField('Specific Business Type', record.livelihood || '--')}
+            ${oversightField('Microbusiness Name', record.businessName || '--')}
             ${oversightField('Reviewed By', record.reviewedByName || 'Not reviewed yet')}
             ${oversightField('Validated At', formatDate(record.validatedAt || ''))}
             ${oversightField('Complete Address', record.completeAddress, true)}
@@ -1284,6 +1305,7 @@
         <section class="admin-record-sheet__section admin-record-sheet__section--aqua">
           <div class="admin-record-sheet__section-head"><span>Uploaded Files</span></div>
           <div class="validation-upload-grid">
+            ${uploadCard('Profile Photo', record.profilePhoto)}
             ${uploadCard('Business Photo', record.businessPhoto)}
             ${uploadCard('Valid ID', record.validIdPhoto)}
           </div>
@@ -2111,7 +2133,7 @@
   function initRefresh() {
     document.getElementById('swRefreshButton')?.addEventListener('click', async () => {
       try {
-        await Promise.allSettled([loadOverviewData(), loadApplications(), loadRepayments()]);
+        await Promise.allSettled([loadOverviewData(), loadApplications(), loadRepayments(), loadSupportTickets()]);
         showToast('Social Worker oversight data refreshed.', 'success');
       } catch (error) {
         console.warn('Social worker refresh encountered an issue', error);
@@ -2129,6 +2151,7 @@
     initBeneficiaryFilters();
     initCoMakerFilters();
     initRepaymentFilters();
+    initSupport();
     initRefresh();
     renderOverviewMetrics();
     renderValidation();
@@ -2136,11 +2159,13 @@
     renderBeneficiaries();
     renderCoMakers();
     renderRepayments();
+    renderTickets();
     renderDashboardSummary();
     setSection('dashboard');
     loadOverviewData();
     loadApplications();
     loadRepayments();
+    loadSupportTickets();
   });
 
   window.addEventListener('pageshow', () => {

@@ -1,9 +1,4 @@
 <?php /** @var string $baseUrl */ ?>
-/**
- * SMART LEAP FILE GUIDE
- * Public portal view for v er if y a cc ou nt.
- * Defines one public-facing SMART LEAP page used before or outside the private applicant or beneficiary dashboards.
- */
 <?php /** @var string $email */ ?>
 <?php /** @var string $entryPoint */ ?>
 <?php

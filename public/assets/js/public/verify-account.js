@@ -100,12 +100,12 @@
                 return;
             }
 
-            setFeedback('success', payload.message || 'Account verified. Nag-redirect...');
+            setFeedback('success', payload.message || 'Account verified. Redirecting...');
             isRedirecting = true;
             redirectAfterLoader(payload.redirect || 'applicant-dashboard#profile-page');
         } catch (error) {
             hideLoader();
-            setFeedback('danger', 'Dili ma-verify ang imong account karon.');
+            setFeedback('danger', 'We could not verify your account right now.');
         } finally {
             if (!isRedirecting) {
                 setSubmitting(false, 'Verifying...');
@@ -134,9 +134,9 @@
                 body: new URLSearchParams({ email }).toString(),
             });
             const payload = await response.json();
-            setFeedback(response.ok && payload.ok ? 'success' : 'danger', payload.message || 'Dili mapadala pag-usab ang verification code.');
+            setFeedback(response.ok && payload.ok ? 'success' : 'danger', payload.message || 'We could not resend the verification code.');
         } catch (error) {
-            setFeedback('danger', 'Dili mapadala pag-usab ang verification code karon.');
+            setFeedback('danger', 'We could not resend the verification code right now.');
         } finally {
             hideLoader();
             resendButton.disabled = false;

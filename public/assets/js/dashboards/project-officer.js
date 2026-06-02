@@ -881,6 +881,23 @@
   }
 
   function donutArcPath(cx, cy, outerRadius, innerRadius, startAngle, endAngle) {
+    if (endAngle - startAngle >= 359.999) {
+      const topOuter = polarToCartesian(cx, cy, outerRadius, 0);
+      const bottomOuter = polarToCartesian(cx, cy, outerRadius, 180);
+      const topInner = polarToCartesian(cx, cy, innerRadius, 0);
+      const bottomInner = polarToCartesian(cx, cy, innerRadius, 180);
+
+      return [
+        `M ${topOuter.x} ${topOuter.y}`,
+        `A ${outerRadius} ${outerRadius} 0 1 0 ${bottomOuter.x} ${bottomOuter.y}`,
+        `A ${outerRadius} ${outerRadius} 0 1 0 ${topOuter.x} ${topOuter.y}`,
+        `L ${topInner.x} ${topInner.y}`,
+        `A ${innerRadius} ${innerRadius} 0 1 1 ${bottomInner.x} ${bottomInner.y}`,
+        `A ${innerRadius} ${innerRadius} 0 1 1 ${topInner.x} ${topInner.y}`,
+        'Z',
+      ].join(' ');
+    }
+
     const outerStart = polarToCartesian(cx, cy, outerRadius, endAngle);
     const outerEnd = polarToCartesian(cx, cy, outerRadius, startAngle);
     const innerStart = polarToCartesian(cx, cy, innerRadius, startAngle);
@@ -2226,26 +2243,28 @@
             ${ticks.map((value) => `<span>${escapeHtml(Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}</span>`).join('')}
           </div>
           <div class="reports-monthly-payment-chart__plot">
-            <div class="reports-monthly-payment-chart__guides">
-              ${ticks.map(() => '<i></i>').join('')}
-            </div>
-            <div class="reports-monthly-payment-chart__groups" style="--month-count:${safeRows.length};">
-              ${safeRows.map((row) => `
-                <article class="reports-monthly-payment-chart__group">
-                  <div class="reports-monthly-payment-chart__bars">
-                    ${series.map((item) => {
-                      const value = safeNumber(row[item.key]);
-                      const height = maxValue > 0 ? Math.max(value > 0 ? 3 : 0, (value / maxValue) * 100) : 0;
-                      return `
-                        <span class="reports-monthly-payment-chart__bar" style="--bar-height:${height}%;--bar-color:${item.color};" title="${escapeHtml(item.label)}: ${formatPesoAmount(value)}">
-                          <strong>${escapeHtml(formatReportCurrencyLabel(value))}</strong>
-                        </span>
-                      `;
-                    }).join('')}
-                  </div>
-                  <span class="reports-monthly-payment-chart__month">${escapeHtml(String(row.label || row.period || '').toUpperCase())}</span>
-                </article>
-              `).join('')}
+            <div class="reports-monthly-payment-chart__canvas" style="--month-count:${safeRows.length};">
+              <div class="reports-monthly-payment-chart__guides">
+                ${ticks.map(() => '<i></i>').join('')}
+              </div>
+              <div class="reports-monthly-payment-chart__groups">
+                ${safeRows.map((row) => `
+                  <article class="reports-monthly-payment-chart__group">
+                    <div class="reports-monthly-payment-chart__bars">
+                      ${series.map((item) => {
+                        const value = safeNumber(row[item.key]);
+                        const height = maxValue > 0 ? Math.max(value > 0 ? 3 : 0, (value / maxValue) * 100) : 0;
+                        return `
+                          <span class="reports-monthly-payment-chart__bar" style="--bar-height:${height}%;--bar-color:${item.color};" title="${escapeHtml(item.label)}: ${formatPesoAmount(value)}">
+                            <strong>${escapeHtml(formatReportCurrencyLabel(value))}</strong>
+                          </span>
+                        `;
+                      }).join('')}
+                    </div>
+                    <span class="reports-monthly-payment-chart__month">${escapeHtml(String(row.label || row.period || '').toUpperCase())}</span>
+                  </article>
+                `).join('')}
+              </div>
             </div>
           </div>
           <div class="reports-monthly-payment-chart__legend">

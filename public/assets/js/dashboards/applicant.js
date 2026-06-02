@@ -8,6 +8,7 @@
         loaderStartedAt: Date.now(),
         supportRecipient: 'social_worker',
         supportChatTimer: null,
+        accountSheetOpen: false,
     };
     // Post-approval form cards shown inside the applicant application workspace.
     const APPLICANT_FORM_REQUIREMENTS = [
@@ -20,6 +21,13 @@
     const PORTAL_LOADER_MIN_MS = 3000;
 
     document.addEventListener('DOMContentLoaded', init);
+    window.addEventListener('smartleap:language-change', () => {
+        if (!state.dashboard) {
+            return;
+        }
+        renderDashboard();
+        applyRouteVisibility();
+    });
 
     // Bind static controls first, then hydrate the full applicant dashboard state from the server.
     async function init() {
@@ -30,26 +38,18 @@
     // Register sidebar, mobile account, support, certificate, and route-driven interactions.
     function bindStaticEvents() {
         document.getElementById('applicantLogoutButton')?.addEventListener('click', handleLogout);
-        document.getElementById('mobileAccountLogout')?.addEventListener('click', handleLogout);
         document.getElementById('sidebarToggle')?.addEventListener('click', toggleSidebarMenu);
         document.getElementById('sidebarClose')?.addEventListener('click', closeSidebarMenuOnMobile);
         document.getElementById('sidebarOverlay')?.addEventListener('click', closeSidebarMenuOnMobile);
-        document.getElementById('mobileAccountToggle')?.addEventListener('click', toggleMobileAccountMenu);
-        document.getElementById('mobileAccountProfile')?.addEventListener('click', () => {
-            closeMobileAccountMenu();
-            openSection('profile-page');
-        });
-        document.getElementById('mobileAccountPassword')?.addEventListener('click', () => {
-            closeMobileAccountMenu();
-            openChangePasswordModal();
-        });
-        document.addEventListener('click', (event) => {
-            if (!event.target.closest('.mobile-topbar__account')) {
-                closeMobileAccountMenu();
+        bindApplicantAccountSheet();
+        document.addEventListener('click', handleWorkspaceShortcuts);
+        document.addEventListener('click', handleApplicantAccountOutsideClick);
+        document.addEventListener('smartleap:profile-state', handleProfileStateSync);
+        document.addEventListener('smartleap:notifications-toggle', (event) => {
+            if (event.detail?.open) {
+                closeApplicantAccountSheet();
             }
         });
-        document.addEventListener('click', handleWorkspaceShortcuts);
-        document.addEventListener('smartleap:profile-state', handleProfileStateSync);
         document.getElementById('downloadSertipikoButton')?.addEventListener('click', () => {
             const path = state.dashboard?.certificate?.downloadPath;
             if (path) {
@@ -81,8 +81,7 @@
                 }
 
                 event.preventDefault();
-                window.location.hash = hash;
-                applyRouteVisibility();
+                openSection(hash.slice(1));
                 closeSidebarMenuOnMobile();
             });
         });
@@ -114,7 +113,7 @@
     // Fan out rendering so every applicant sub-workspace stays in sync with the same payload.
     function renderDashboard() {
         if (!state.dashboard) {
-            renderFatalState('Wala magamit ang applicant dashboard state.');
+            renderFatalState('Applicant dashboard data is unavailable.');
             return;
         }
 
@@ -150,7 +149,7 @@
                 ...(state.dashboard.profile || {}),
                 ...detail.profile,
             };
-            setText('sidebarUserBusiness', detail.profile.businessName || detail.profile.livelihood || 'Profile sa aplikante');
+            setText('sidebarUserBusiness', detail.profile.businessName || detail.profile.livelihood || 'Applicant profile');
         }
 
         if (detail.application) {
@@ -171,7 +170,7 @@
         const authUser = state.dashboard.authUser || state.authUser || {};
         const profile = state.dashboard.profile || {};
         const displayName = authUser.name || 'Applicant';
-        const businessName = profile.businessName || profile.livelihood || 'Profile sa aplikante';
+        const businessName = profile.businessName || profile.livelihood || 'Applicant profile';
         const initial = (displayName.trim().charAt(0) || 'A').toUpperCase();
         const photo = getStoredProfilePhoto(authUser);
 
@@ -201,23 +200,31 @@
     }
 
     function setMobileAvatar(fallbackInitial, photo) {
-        const button = document.getElementById('mobileAccountToggle');
+        const button = document.getElementById('applicantAccountToggle');
         const badge = document.getElementById('mobileAccountAvatar');
         if (photo) {
-            button?.classList.add('has-photo');
+            if (button) {
+                button.classList.add('has-photo');
+                button.style.backgroundImage = `url("${photo}")`;
+            }
             if (badge) {
-                badge.textContent = fallbackInitial;
-                badge.style.backgroundImage = `url("${photo}")`;
-                badge.classList.add('has-photo');
+                badge.style.backgroundImage = '';
+                badge.classList.remove('has-photo');
+                badge.textContent = '';
+                badge.setAttribute('aria-hidden', 'true');
             }
             return;
         }
 
-        button?.classList.remove('has-photo');
+        if (button) {
+            button.classList.remove('has-photo');
+            button.style.backgroundImage = '';
+        }
         if (badge) {
             badge.style.backgroundImage = '';
             badge.classList.remove('has-photo');
             badge.textContent = fallbackInitial;
+            badge.setAttribute('aria-hidden', 'true');
         }
     }
 
@@ -393,11 +400,9 @@
         setText('applicationReviewStatusNote', nextStepSummary);
         setText('applicationStatusDates', buildAplikasyonDateMeta(application));
         setText('applicationStatusReviewedDate', application?.reviewedAt ? formatDate(application.reviewedAt) : 'No review yet');
-        const assignedPdo = application?.assignedPdo || null;
+        const assignedPdo = application?.assignedPdo || state.dashboard?.profile?.assignedPdo || null;
         setText('assignedPdoName', assignedPdo?.name || 'Not assigned');
         setText('assignedPdoEmail', assignedPdo?.email || 'Assigned PDO details will appear here once scoped.');
-        setText('supportPdoName', assignedPdo?.name || 'Not yet assigned');
-        setText('supportPdoEmail', assignedPdo?.email || 'Assigned PDO details will appear once scoped.');
 
         const reviewSummary = application?.reviewSummary || { verified: 0, total: 0, pending: 0, issues: 0 };
         setText('requirementReviewValue', `${reviewSummary.verified || 0} verified`);
@@ -417,6 +422,10 @@
                 ? `${latestRemark.actorName || 'CSWDD'}: ${truncateText(latestRemark.comment || 'Applicant-visible note available.', 92)}`
                 : 'Applicant-visible review notes are summarized here.'
         );
+        const latestRemarkPanel = document.getElementById('applicationLatestRemarkPanel');
+        if (latestRemarkPanel) {
+            latestRemarkPanel.hidden = !latestRemark;
+        }
         setText('applicationLatestRemarkTitle', latestRemark?.actorName || 'No message yet');
         setText(
             'applicationLatestRemarkCopy',
@@ -552,7 +561,7 @@
             return;
         }
 
-        setSupportChatStatus('Gipadala...');
+        setSupportChatStatus('Sending...');
         try {
             const payload = await fetchJson('api/support-chat/messages', {
                 method: 'POST',
@@ -566,9 +575,9 @@
                 input.value = '';
             }
             renderSupportChat(payload.messages || []);
-            setSupportChatStatus('Napadala ang mensahe.');
+            setSupportChatStatus('Message sent.');
         } catch (error) {
-            setSupportChatStatus(error.message || 'Dili mapadala ang imong mensahe.');
+            setSupportChatStatus(error.message || 'Unable to send your message.');
         }
     }
 
@@ -579,7 +588,7 @@
         }
 
         if (!Array.isArray(messages) || messages.length === 0) {
-            stream.innerHTML = '<p class="support-chat__empty">Ang mga mensahe sa imong support team makita dinhi.</p>';
+            stream.innerHTML = '<p class="support-chat__empty">Messages from your support team will appear here.</p>';
             return;
         }
 
@@ -771,7 +780,7 @@
                         <small class="table-secondary">${escapeHtml(formatTimeRange(program.startsAt, program.endsAt))}</small>
                     </td>
                     <td><span class="badge-status ${attendanceBadgeClass(invitee.status)}">${escapeHtml(invitee.status || 'Not Scheduled')}</span></td>
-                    <td>${escapeHtml(invitee.remarks || 'Walay remarks yet.')}</td>
+                    <td>${escapeHtml(invitee.remarks || 'No remarks yet.')}</td>
                     <td>${escapeHtml(buildNoticeMeta(invitee))}</td>
                 </tr>
             `;
@@ -790,7 +799,7 @@
                         </div>
                         <p class="attendance-card__meta">${escapeHtml(formatDate(program.startsAt))} | ${escapeHtml(formatTimeRange(program.startsAt, program.endsAt))}</p>
                         <p class="attendance-card__meta">${escapeHtml(program.venue || 'Venue TBA')}</p>
-                        <p class="attendance-card__copy">${escapeHtml(invitee.remarks || 'Walay remarks yet.')}</p>
+                        <p class="attendance-card__copy">${escapeHtml(invitee.remarks || 'No remarks yet.')}</p>
                         <p class="attendance-card__hint">${escapeHtml(buildNoticeMeta(invitee))}</p>
                     </article>
                 `;
@@ -821,7 +830,7 @@
             <li>
                 <div class="timeline-main">
                     <div class="timeline-title">${escapeHtml(transition)}</div>
-                    <div class="timeline-copy">${escapeHtml(item.remarks || 'Walay remarks recorded for this status update.')}</div>
+                    <div class="timeline-copy">${escapeHtml(item.remarks || 'No remarks recorded for this status update.')}</div>
                 </div>
                 <div class="timeline-meta">${escapeHtml(item.actorName || 'System')} | ${escapeHtml(formatDateTime(item.createdAt))}</div>
             </li>
@@ -984,14 +993,17 @@
 
         const activeLink = Array.from(document.querySelectorAll('.sidebar-link')).find((link) => link.classList.contains('is-active')) || null;
         updateMobileTopbarTitle(activeLink, target?.id || 'dashboard-home');
-        closeMobileAccountMenu();
         syncSidebarMenuState();
     }
 
     function openSection(id) {
         const targetId = id || 'dashboard-home';
-        window.location.hash = `#${targetId}`;
-        applyRouteVisibility();
+        const nextHash = `#${targetId}`;
+        if (window.location.hash === nextHash) {
+            applyRouteVisibility();
+            return;
+        }
+        window.location.hash = nextHash;
     }
 
     function navigateToPath(path) {
@@ -1013,7 +1025,7 @@
             return;
         }
 
-        closeMobileAccountMenu();
+        closeApplicantAccountSheet();
         sidebar.classList.toggle('is-open');
         syncSidebarMenuState();
     }
@@ -1030,7 +1042,7 @@
 
     function handleGlobalKeydown(event) {
         if (event.key === 'Escape') {
-            closeMobileAccountMenu();
+            closeApplicantAccountSheet();
             closeSidebarMenuOnMobile();
         }
     }
@@ -1075,7 +1087,6 @@
             sidebar.removeAttribute('aria-modal');
             sidebar.removeAttribute('aria-hidden');
             closeButton?.setAttribute('tabindex', '-1');
-            closeMobileAccountMenu();
             return;
         }
 
@@ -1093,27 +1104,94 @@
         closeButton?.setAttribute('tabindex', isOpen ? '0' : '-1');
     }
 
-    function toggleMobileAccountMenu(event) {
-        event?.stopPropagation();
-        const menu = document.getElementById('mobileAccountMenu');
-        const toggle = document.getElementById('mobileAccountToggle');
-        if (!menu || !toggle) {
-            return;
-        }
-        const willOpen = !menu.classList.contains('is-open');
-        closeMobileAccountMenu();
-        document.dispatchEvent(new CustomEvent('smartleap:close-notifications'));
-        menu.classList.toggle('is-open', willOpen);
-        menu.setAttribute('aria-hidden', willOpen ? 'false' : 'true');
-        toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    function bindApplicantAccountSheet() {
+        document.getElementById('applicantAccountToggle')?.addEventListener('click', toggleApplicantAccountSheet);
+        document.getElementById('applicantAccountClose')?.addEventListener('click', () => closeApplicantAccountSheet());
+        document.getElementById('applicantAccountProfile')?.addEventListener('click', (event) => {
+            runApplicantAccountSheetAction(event, () => openSection('profile-page'));
+        });
+        document.getElementById('applicantAccountPassword')?.addEventListener('click', (event) => {
+            runApplicantAccountSheetAction(event, openChangePasswordModal);
+        });
+        document.getElementById('applicantAccountLogout')?.addEventListener('click', (event) => {
+            runApplicantAccountSheetAction(event, handleLogout);
+        });
     }
 
-    function closeMobileAccountMenu() {
-        const menu = document.getElementById('mobileAccountMenu');
-        const toggle = document.getElementById('mobileAccountToggle');
-        menu?.classList.remove('is-open');
-        menu?.setAttribute('aria-hidden', 'true');
+    function toggleApplicantAccountSheet(event) {
+        event?.preventDefault();
+        event?.stopPropagation();
+        const sheet = document.getElementById('applicantAccountSheet');
+        if (!sheet) {
+            return;
+        }
+        if (!state.accountSheetOpen) {
+            document.dispatchEvent(new CustomEvent('smartleap:close-notifications'));
+            openApplicantAccountSheet();
+            return;
+        }
+        closeApplicantAccountSheet();
+    }
+
+    function openApplicantAccountSheet() {
+        const sheet = document.getElementById('applicantAccountSheet');
+        const toggle = document.getElementById('applicantAccountToggle');
+        if (!sheet || !toggle) {
+            return;
+        }
+
+        state.accountSheetOpen = true;
+        sheet.hidden = false;
+        sheet.style.display = 'grid';
+        sheet.setAttribute('aria-hidden', 'false');
+        toggle.setAttribute('aria-expanded', 'true');
+    }
+
+    function closeApplicantAccountSheet() {
+        const sheet = document.getElementById('applicantAccountSheet');
+        const toggle = document.getElementById('applicantAccountToggle');
+        if (!state.accountSheetOpen && (!sheet || sheet.hidden)) {
+            toggle?.setAttribute('aria-expanded', 'false');
+            return;
+        }
+        state.accountSheetOpen = false;
+        const activeElement = document.activeElement;
+        if (sheet && activeElement instanceof HTMLElement && sheet.contains(activeElement)) {
+            activeElement.blur();
+            toggle?.focus({ preventScroll: true });
+        }
+        if (sheet) {
+            sheet.hidden = true;
+            sheet.style.display = 'none';
+            sheet.setAttribute('aria-hidden', 'true');
+        }
         toggle?.setAttribute('aria-expanded', 'false');
+    }
+
+    function runApplicantAccountSheetAction(event, callback) {
+        event?.preventDefault();
+        event?.stopPropagation();
+        event?.currentTarget?.blur?.();
+        closeApplicantAccountSheet();
+        callback?.();
+    }
+
+    function handleApplicantAccountOutsideClick(event) {
+        if (!state.accountSheetOpen) {
+            return;
+        }
+
+        const target = event.target;
+        const sheet = document.getElementById('applicantAccountSheet');
+        const toggle = document.getElementById('applicantAccountToggle');
+        if (!(target instanceof Node)) {
+            return;
+        }
+        if (sheet?.contains(target) || toggle?.contains(target)) {
+            return;
+        }
+
+        closeApplicantAccountSheet();
     }
 
     function updateMobileTopbarTitle(activeLink, routeId) {
@@ -1163,28 +1241,33 @@
         modal.dataset.centeredModal = 'true';
         modal.innerHTML = `
             <div class="beneficiary-centered-modal__backdrop" data-close-centered-modal></div>
-            <div class="beneficiary-centered-modal__card" role="dialog" aria-modal="true" aria-labelledby="applicantPasswordTitle">
+            <div class="beneficiary-centered-modal__card applicant-password-modal" role="dialog" aria-modal="true" aria-labelledby="applicantPasswordTitle">
                 <button type="button" class="beneficiary-centered-modal__close" data-close-centered-modal aria-label="Close">&times;</button>
-                <div class="beneficiary-centered-modal__header">
-                    <span class="panel-eyebrow">Account Security</span>
+                <div class="beneficiary-centered-modal__header applicant-password-modal__header">
+                    <div class="applicant-password-modal__eyebrow">Account Security</div>
                     <h3 id="applicantPasswordTitle">Change Password</h3>
-                    <p>Update your account password using your current password first.</p>
+                    <p>Update your portal password securely. Enter your current password first, then choose a new one that is easy for you to remember and hard for others to guess.</p>
+                    <div class="applicant-password-modal__tip" aria-hidden="true">
+                        <span class="applicant-password-modal__tip-badge">8+ characters</span>
+                        <span class="applicant-password-modal__tip-copy">Use a mix of uppercase, lowercase, and numbers.</span>
+                    </div>
                 </div>
-                <form id="applicantChangePasswordForm" class="beneficiary-centered-modal__form">
-                    <label class="form-field">
-                        <span>Current password</span>
-                        <input type="password" name="currentPassword" required>
+                <form id="applicantChangePasswordForm" class="beneficiary-centered-modal__form applicant-password-modal__form">
+                    <label class="form-field applicant-password-modal__field">
+                        <span class="applicant-password-modal__label">Current password</span>
+                        <input type="password" name="currentPassword" class="applicant-password-modal__input" autocomplete="current-password" required>
                     </label>
-                    <label class="form-field">
-                        <span>New password</span>
-                        <input type="password" name="newPassword" required minlength="8">
+                    <label class="form-field applicant-password-modal__field">
+                        <span class="applicant-password-modal__label">New password</span>
+                        <input type="password" name="newPassword" class="applicant-password-modal__input" autocomplete="new-password" required minlength="8">
+                        <small class="applicant-password-modal__hint">Choose at least 8 characters for better security.</small>
                     </label>
-                    <label class="form-field">
-                        <span>Confirm new password</span>
-                        <input type="password" name="confirmPassword" required minlength="8">
+                    <label class="form-field applicant-password-modal__field">
+                        <span class="applicant-password-modal__label">Confirm new password</span>
+                        <input type="password" name="confirmPassword" class="applicant-password-modal__input" autocomplete="new-password" required minlength="8">
                     </label>
                     <div class="notice error" id="applicantPasswordError" hidden></div>
-                    <div class="beneficiary-centered-modal__actions">
+                    <div class="beneficiary-centered-modal__actions applicant-password-modal__actions">
                         <button type="button" class="btn-outline" data-close-centered-modal>Back</button>
                         <button type="submit" class="btn-primary">Save Password</button>
                     </div>
@@ -1248,7 +1331,7 @@
 
     function workflowActionLabel(path, fallback) {
         if (isProfileEditorPath(path)) {
-            return 'I-edit ang Profile';
+            return window.SMARTLEAP_I18N?.translatePhrase?.('Edit Profile') || 'Edit Profile';
         }
 
         return fallback;
@@ -1475,7 +1558,7 @@
             return `Last sent ${formatDateTime(invitee.lastNoticeSentAt)}`;
         }
         if (invitee.notifiedAt) {
-            return `Napahibaloan ${formatDateTime(invitee.notifiedAt)}`;
+            return `Notified ${formatDateTime(invitee.notifiedAt)}`;
         }
         return 'No notice sent yet';
     }
@@ -1539,7 +1622,7 @@
         if (tone === 'correction') return 'Correction needed';
         if (tone === 'schedule') return 'Schedule';
         if (tone === 'review') return 'Review update';
-        if (tone === 'success') return 'Nahuman';
+        if (tone === 'success') return 'Completed';
         return 'Reminder';
     }
 

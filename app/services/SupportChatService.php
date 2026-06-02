@@ -74,7 +74,7 @@ class SupportChatService
     {
         return match (strtolower(trim($recipient))) {
             'social_worker', 'social-worker', 'social' => ROLE_SOCIAL_WORKER,
-            'project_officer', 'project-officer', 'pdo', 'project' => ROLE_PROJECT_OFFICER,
+            'project_officer', 'project-officer', 'pdo', 'project' => ROLE_SOCIAL_WORKER,
             default => null,
         };
     }
@@ -133,6 +133,11 @@ class SupportChatService
                     CONSTRAINT fk_support_chat_participant FOREIGN KEY (participant_user_id) REFERENCES users(id),
                     CONSTRAINT fk_support_chat_sender FOREIGN KEY (sender_user_id) REFERENCES users(id)
                 )'
+            );
+            db()->exec(
+                'UPDATE support_chat_messages
+                 SET recipient_role = "' . ROLE_SOCIAL_WORKER . '"
+                 WHERE LOWER(recipient_role) IN ("project officer", "project_officer", "project-officer", "pdo", "project")'
             );
             $ready = true;
         } catch (Throwable $exception) {

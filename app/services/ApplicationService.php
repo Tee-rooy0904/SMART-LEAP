@@ -38,6 +38,9 @@ class ApplicationService
         $user = $this->fetchUser($userId);
         $profile = $this->fetchApplicantProfile($userId);
         $application = $profile ? $this->fetchLatestApplication((int) $profile['id']) : null;
+        if ($application !== null && (($application['assignedPdo']['name'] ?? null) === null) && isset($profile['assignedPdo'])) {
+            $application['assignedPdo'] = $profile['assignedPdo'];
+        }
         $requirements = $application ? $this->fetchRequirementFiles((int) $application['id']) : [];
         if ($application !== null) {
             $application['status'] = $this->deriveApplicantVisibleStatus((string) ($application['status'] ?? ''), $requirements);
@@ -271,7 +274,8 @@ class ApplicationService
         }
 
         $barangayId = $this->resolveBarangayId(trim((string) ($input['barangay'] ?? '')));
-        $this->upsertApplicantProfile($userId, $barangayId, $input, false);
+        $profileId = $this->upsertApplicantProfile($userId, $barangayId, $input, false);
+        $this->upsertApplication($profileId, $barangayId, false, null, []);
         $this->upsertUserProfilePhotoDataUrl($userId, trim((string) ($input['photoDataUrl'] ?? '')));
     }
 
@@ -1914,10 +1918,24 @@ class ApplicationService
     private function fetchApplicantProfile(int $userId): ?array
     {
         $statement = db()->prepare(
-            'SELECT applicant_profiles.*, barangays.name AS barangay_name
+            'SELECT applicant_profiles.*,
+                    barangays.name AS barangay_name,
+                    scoped_users.full_name AS assigned_pdo_name,
+                    scoped_users.email AS assigned_pdo_email
              FROM applicant_profiles
              LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
+             LEFT JOIN staff_barangay_assignments AS scope_assignments
+                    ON scope_assignments.barangay_id = applicant_profiles.barangay_id
+                   AND scope_assignments.ended_at IS NULL
+             LEFT JOIN staff_profiles AS scoped_staff
+                    ON scoped_staff.id = scope_assignments.staff_profile_id
+                   AND scoped_staff.status = "active"
+             LEFT JOIN users AS scoped_users
+                    ON scoped_users.id = scoped_staff.user_id
+                   AND scoped_users.is_active = 1
+                   AND scoped_users.is_disabled = 0
              WHERE applicant_profiles.user_id = :user_id
+             ORDER BY scope_assignments.assigned_at ASC, scope_assignments.id ASC
              LIMIT 1'
         );
         $statement->execute(['user_id' => $userId]);
@@ -1944,13 +1962,36 @@ class ApplicationService
               'businessName' => $profile['business_name'],
               'batchNo' => $profile['batch_no'] ?? '',
               'status' => $profile['profile_status'],
+              'assignedPdo' => [
+                  'name' => $profile['assigned_pdo_name'] ?? null,
+                  'email' => $profile['assigned_pdo_email'] ?? null,
+              ],
           ];
       }
 
     private function fetchLatestApplication(int $profileId): ?array
     {
         $statement = db()->prepare(
-            'SELECT * FROM applications WHERE applicant_profile_id = :profile_id ORDER BY id DESC LIMIT 1'
+            'SELECT applications.*,
+                    COALESCE(assigned_users.full_name, scoped_users.full_name) AS assigned_pdo_name,
+                    COALESCE(assigned_users.email, scoped_users.email) AS assigned_pdo_email
+             FROM applications
+             INNER JOIN applicant_profiles ON applicant_profiles.id = applications.applicant_profile_id
+             LEFT JOIN staff_profiles AS assigned_staff ON assigned_staff.id = applications.assigned_staff_profile_id
+             LEFT JOIN users AS assigned_users ON assigned_users.id = assigned_staff.user_id
+             LEFT JOIN staff_barangay_assignments AS scope_assignments
+                    ON scope_assignments.barangay_id = applicant_profiles.barangay_id
+                   AND scope_assignments.ended_at IS NULL
+             LEFT JOIN staff_profiles AS scoped_staff
+                    ON scoped_staff.id = scope_assignments.staff_profile_id
+                   AND scoped_staff.status = "active"
+             LEFT JOIN users AS scoped_users
+                    ON scoped_users.id = scoped_staff.user_id
+                   AND scoped_users.is_active = 1
+                   AND scoped_users.is_disabled = 0
+             WHERE applications.applicant_profile_id = :profile_id
+             ORDER BY applications.id DESC, scope_assignments.assigned_at ASC, scope_assignments.id ASC
+             LIMIT 1'
         );
         $statement->execute(['profile_id' => $profileId]);
         $application = $statement->fetch();
@@ -1964,6 +2005,10 @@ class ApplicationService
             'submittedAt' => $application['submitted_at'],
             'reviewedAt' => $application['reviewed_at'],
             'updatedAt' => $application['updated_at'],
+            'assignedPdo' => [
+                'name' => $application['assigned_pdo_name'] ?? null,
+                'email' => $application['assigned_pdo_email'] ?? null,
+            ],
         ];
     }
 
@@ -2006,9 +2051,14 @@ class ApplicationService
                     beneficiary_profiles.beneficiary_status,
                     beneficiary_profiles.replacement_for_beneficiary_profile_id,
                     beneficiary_profiles.approval_date,
+                    beneficiary_profiles.approved_at,
+                    replacement_profiles.approval_date AS repayment_source_approval_date,
+                    replacement_profiles.approved_at AS repayment_source_approved_at,
                     assigned_users.full_name AS assigned_pdo_name,
                     assigned_users.email AS assigned_pdo_email
              FROM beneficiary_profiles
+             LEFT JOIN beneficiary_profiles AS replacement_profiles
+                    ON replacement_profiles.id = beneficiary_profiles.replacement_for_beneficiary_profile_id
              LEFT JOIN staff_profiles AS assigned_staff ON assigned_staff.id = beneficiary_profiles.assigned_staff_profile_id
              LEFT JOIN users AS assigned_users ON assigned_users.id = assigned_staff.user_id
              WHERE beneficiary_profiles.user_id = :user_id
@@ -2024,6 +2074,9 @@ class ApplicationService
             'id' => (int) $row['id'],
             'status' => (string) ($row['beneficiary_status'] ?? ''),
             'approvalDate' => $row['approval_date'] ?? null,
+            'approvedAt' => $row['approved_at'] ?? null,
+            'repaymentSourceApprovalDate' => $row['repayment_source_approval_date'] ?? null,
+            'repaymentSourceApprovedAt' => $row['repayment_source_approved_at'] ?? null,
             'replacementForBeneficiaryId' => isset($row['replacement_for_beneficiary_profile_id']) && $row['replacement_for_beneficiary_profile_id'] !== null
                 ? (int) $row['replacement_for_beneficiary_profile_id']
                 : null,
@@ -2147,16 +2200,17 @@ class ApplicationService
 
     private function resolveBarangayId(string $barangayName): int
     {
-        $statement = db()->prepare('SELECT id FROM barangays WHERE name = :name LIMIT 1');
+        $pdo = db();
+        $statement = $pdo->prepare('SELECT id FROM barangays WHERE name = :name LIMIT 1');
         $statement->execute(['name' => $barangayName]);
         $barangayId = $statement->fetchColumn();
         if ($barangayId !== false) {
             return (int) $barangayId;
         }
 
-        $insert = db()->prepare('INSERT INTO barangays (name) VALUES (:name)');
+        $insert = $pdo->prepare('INSERT INTO barangays (name) VALUES (:name)');
         $insert->execute(['name' => $barangayName]);
-        return (int) db()->lastInsertId();
+        return (int) $pdo->lastInsertId();
     }
 
     private function findBarangayIdByName(string $barangayName): ?int
@@ -2170,6 +2224,7 @@ class ApplicationService
 
       private function upsertApplicantProfile(int $userId, int $barangayId, array $input, bool $submit): int
       {
+          $pdo = db();
           $existing = $this->fetchApplicantProfile($userId);
           $profileStatus = $submit ? 'submitted' : 'draft';
           $age = trim((string) ($input['age'] ?? ''));
@@ -2218,7 +2273,7 @@ class ApplicationService
               $setColumns[] = 'profile_status = :profile_status';
               $setColumns[] = 'completion_submitted_at = :completion_submitted_at';
               $setColumns[] = 'updated_at = NOW()';
-              $statement = db()->prepare(
+              $statement = $pdo->prepare(
                   'UPDATE applicant_profiles
                    SET ' . implode(', ', $setColumns) . '
                    WHERE user_id = :user_id'
@@ -2300,14 +2355,14 @@ class ApplicationService
           $insertParameters['profile_status'] = $profileStatus;
           $insertParameters['completion_submitted_at'] = $submit ? date('Y-m-d H:i:s') : null;
 
-        $statement = db()->prepare(
+        $statement = $pdo->prepare(
             'INSERT INTO applicant_profiles
              (' . $insertColumns . ')
              VALUES (' . $insertValues . ')'
         );
         $statement->execute($insertParameters);
 
-        return (int) db()->lastInsertId();
+        return (int) $pdo->lastInsertId();
     }
 
       private function updateApplicantProfileRecord(int $userId, int $barangayId, array $input): void
@@ -2407,6 +2462,7 @@ class ApplicationService
 
     private function upsertApplication(int $profileId, int $barangayId, bool $submit, ?array $currentApplication = null, array $existingRequirements = []): int
     {
+        $pdo = db();
         $current = $currentApplication ?? $this->fetchLatestApplication($profileId);
         $assignedStaffProfileId = $this->resolveAssignedProjectOfficerProfileId($barangayId);
         $statusData = $this->resolveApplicantSubmissionState($current, $existingRequirements, $submit);
@@ -2414,7 +2470,7 @@ class ApplicationService
         $submittedAt = $statusData['submittedAt'];
 
         if ($current !== null) {
-            $statement = db()->prepare(
+            $statement = $pdo->prepare(
                 'UPDATE applications
                  SET status = :status, submitted_at = :submitted_at, assigned_staff_profile_id = :assigned_staff_profile_id, updated_at = NOW()
                  WHERE id = :id'
@@ -2429,7 +2485,7 @@ class ApplicationService
             return (int) $current['id'];
         }
 
-        $statement = db()->prepare(
+        $statement = $pdo->prepare(
             'INSERT INTO applications (applicant_profile_id, status, submitted_at, assigned_staff_profile_id)
              VALUES (:applicant_profile_id, :status, :submitted_at, :assigned_staff_profile_id)'
         );
@@ -2440,7 +2496,7 @@ class ApplicationService
             'assigned_staff_profile_id' => $assignedStaffProfileId,
         ]);
 
-        return (int) db()->lastInsertId();
+        return (int) $pdo->lastInsertId();
     }
 
     private function resolveApplicantSubmissionState(?array $application, array $requirements, bool $submit): array

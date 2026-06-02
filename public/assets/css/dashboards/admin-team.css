@@ -8,9 +8,21 @@
 }
 
 .admin-section#team-section .applications-filters {
-  grid-template-columns: minmax(360px, 2fr) repeat(3, minmax(150px, 0.72fr)) minmax(92px, max-content);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+  padding: 18px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: var(--surface-tint);
+  box-shadow: var(--shadow-1);
   padding-top: 18px;
   padding-bottom: 18px;
+}
+
+.admin-section#team-section .applications-filters > .filter-group--search {
+  grid-column: 1 / -1;
 }
 
 .admin-section#team-section .applications-filters > .filter-actions {
@@ -675,11 +687,11 @@ body.team-modal-open {
 
 @media (max-width: 1440px) {
   .admin-section#team-section .applications-filters {
-    grid-template-columns: minmax(320px, 1.4fr) repeat(3, minmax(180px, 1fr)) minmax(86px, max-content);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .admin-section#team-section .applications-filters > .filter-group--search {
-    grid-column: auto;
+    grid-column: 1 / -1;
   }
 }
 

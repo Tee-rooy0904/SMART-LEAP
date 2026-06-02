@@ -93,7 +93,6 @@
     from: '',
     to: '',
     district: '',
-    barangay: '',
     sector: '',
     serviceType: '',
     gender: '',
@@ -158,7 +157,6 @@
       ['from', filters.from],
       ['to', filters.to],
       ['district', normalizeFilterValue(filters.district)],
-      ['barangay', normalizeFilterValue(filters.barangay)],
       ['sector', normalizeFilterValue(filters.sector)],
       ['serviceType', normalizeFilterValue(filters.serviceType)],
       ['gender', normalizeFilterValue(filters.gender)],
@@ -284,7 +282,7 @@
           <div class="reports-filter-group reports-search">
             <span class="reports-label">Search</span>
             <i class="fas fa-search" aria-hidden="true"></i>
-            <input type="search" id="reports-search" placeholder="Search person, barangay, business, or PDO" value="${escapeHtml(filters.search)}">
+            <input type="search" id="reports-search" placeholder="Search person, business, or PDO" value="${escapeHtml(filters.search)}">
           </div>
           <div class="reports-field">
             <span class="reports-label">View Type</span>
@@ -301,13 +299,6 @@
             <select id="reports-district">
               <option value="" ${selectedAttr(filters.district, '')}>All districts</option>
               ${optionList(options.districts).map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.district, value)}>${escapeHtml(value)}</option>`).join('')}
-            </select>
-          </div>
-          <div class="reports-field">
-            <span class="reports-label">Barangay</span>
-            <select id="reports-barangay">
-              <option value="" ${selectedAttr(filters.barangay, '')}>All barangays</option>
-              ${optionList(options.barangays).map((value) => `<option value="${escapeHtml(value)}" ${selectedAttr(filters.barangay, value)}>${escapeHtml(value)}</option>`).join('')}
             </select>
           </div>
           <div class="reports-field">
@@ -379,6 +370,23 @@
   };
 
   const donutArcPath = (cx, cy, outerRadius, innerRadius, startAngle, endAngle) => {
+    if (endAngle - startAngle >= 359.999) {
+      const topOuter = polarToCartesian(cx, cy, outerRadius, 0);
+      const bottomOuter = polarToCartesian(cx, cy, outerRadius, 180);
+      const topInner = polarToCartesian(cx, cy, innerRadius, 0);
+      const bottomInner = polarToCartesian(cx, cy, innerRadius, 180);
+
+      return [
+        `M ${topOuter.x} ${topOuter.y}`,
+        `A ${outerRadius} ${outerRadius} 0 1 0 ${bottomOuter.x} ${bottomOuter.y}`,
+        `A ${outerRadius} ${outerRadius} 0 1 0 ${topOuter.x} ${topOuter.y}`,
+        `L ${topInner.x} ${topInner.y}`,
+        `A ${innerRadius} ${innerRadius} 0 1 1 ${bottomInner.x} ${bottomInner.y}`,
+        `A ${innerRadius} ${innerRadius} 0 1 1 ${topInner.x} ${topInner.y}`,
+        'Z',
+      ].join(' ');
+    }
+
     const outerStart = polarToCartesian(cx, cy, outerRadius, endAngle);
     const outerEnd = polarToCartesian(cx, cy, outerRadius, startAngle);
     const innerStart = polarToCartesian(cx, cy, innerRadius, startAngle);
@@ -507,26 +515,28 @@
             ${ticks.map((value) => `<span>${escapeHtml(Number(value).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))}</span>`).join('')}
           </div>
           <div class="reports-monthly-payment-chart__plot">
-            <div class="reports-monthly-payment-chart__guides">
-              ${ticks.map(() => '<i></i>').join('')}
-            </div>
-            <div class="reports-monthly-payment-chart__groups" style="--month-count:${rows.length};">
-              ${rows.map((row) => `
-                <article class="reports-monthly-payment-chart__group">
-                  <div class="reports-monthly-payment-chart__bars">
-                    ${series.map((item) => {
-                      const value = Number(row[item.key] || 0);
-                      const height = maxValue > 0 ? Math.max(value > 0 ? 3 : 0, (value / maxValue) * 100) : 0;
-                      return `
-                        <span class="reports-monthly-payment-chart__bar" style="--bar-height:${height}%;--bar-color:${item.color};" title="${escapeHtml(item.label)}: ${formatCurrency(value)}">
-                          <strong>${escapeHtml(formatChartCurrencyLabel(value))}</strong>
-                        </span>
-                      `;
-                    }).join('')}
-                  </div>
-                  <span class="reports-monthly-payment-chart__month">${escapeHtml(String(row.label || row.period || '').toUpperCase())}</span>
-                </article>
-              `).join('')}
+            <div class="reports-monthly-payment-chart__canvas" style="--month-count:${rows.length};">
+              <div class="reports-monthly-payment-chart__guides">
+                ${ticks.map(() => '<i></i>').join('')}
+              </div>
+              <div class="reports-monthly-payment-chart__groups">
+                ${rows.map((row) => `
+                  <article class="reports-monthly-payment-chart__group">
+                    <div class="reports-monthly-payment-chart__bars">
+                      ${series.map((item) => {
+                        const value = Number(row[item.key] || 0);
+                        const height = maxValue > 0 ? Math.max(value > 0 ? 3 : 0, (value / maxValue) * 100) : 0;
+                        return `
+                          <span class="reports-monthly-payment-chart__bar" style="--bar-height:${height}%;--bar-color:${item.color};" title="${escapeHtml(item.label)}: ${formatCurrency(value)}">
+                            <strong>${escapeHtml(formatChartCurrencyLabel(value))}</strong>
+                          </span>
+                        `;
+                      }).join('')}
+                    </div>
+                    <span class="reports-monthly-payment-chart__month">${escapeHtml(String(row.label || row.period || '').toUpperCase())}</span>
+                  </article>
+                `).join('')}
+              </div>
             </div>
           </div>
           <div class="reports-monthly-payment-chart__legend">
@@ -702,7 +712,6 @@
       else if (id === 'reports-from') state.filters.reports.from = event.target.value;
       else if (id === 'reports-to') state.filters.reports.to = event.target.value;
       else if (id === 'reports-district') state.filters.reports.district = event.target.value;
-      else if (id === 'reports-barangay') state.filters.reports.barangay = event.target.value;
       else if (id === 'reports-pdo') state.filters.reports.pdo = event.target.value;
       else if (id === 'reports-sector') state.filters.reports.sector = event.target.value;
       else if (id === 'reports-service-type') state.filters.reports.serviceType = event.target.value;

@@ -220,6 +220,18 @@ class RepaymentLedgerService
         if ($coverageMonth !== '' && !preg_match('/^\d{4}-\d{2}$/', $coverageMonth)) {
             return ['ok' => false, 'message' => 'Coverage month must use YYYY-MM format.'];
         }
+        if ($coverageMonth !== '') {
+            $coverageWindow = $this->repaymentCoverageWindow((int) ($repayment['beneficiary_profile_id'] ?? 0));
+            if ($coverageWindow !== null && !$this->isCoverageMonthWithinWindow($coverageMonth, $coverageWindow)) {
+                return [
+                    'ok' => false,
+                    'message' => sprintf(
+                        'Repayments for this beneficiary can only start at %s.',
+                        $this->formatCoverageMonthLabel($coverageWindow['start'])
+                    ),
+                ];
+            }
+        }
 
         if ($hardCopyOfficeStatus === null) {
             return ['ok' => false, 'message' => 'Unsupported hard copy office status.'];
@@ -852,6 +864,7 @@ class RepaymentLedgerService
     private function validateRecords(array $records, int $beneficiaryProfileId): array
     {
         $errors = [];
+        $coverageWindow = $this->repaymentCoverageWindow($beneficiaryProfileId);
         foreach ($records as $index => $record) {
             $month = trim((string) ($record['month'] ?? ''));
             $paymentDate = trim((string) ($record['paymentDate'] ?? ''));
@@ -861,6 +874,13 @@ class RepaymentLedgerService
 
             if (!preg_match('/^\d{4}-\d{2}$/', $month)) {
                 $errors[] = 'One or more repayment rows use an invalid coverage month.';
+                break;
+            }
+            if ($coverageWindow !== null && !$this->isCoverageMonthWithinWindow($month, $coverageWindow)) {
+                $errors[] = sprintf(
+                    'Repayments for this beneficiary can only start at %s.',
+                    $this->formatCoverageMonthLabel($coverageWindow['start'])
+                );
                 break;
             }
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $paymentDate)) {
@@ -895,6 +915,73 @@ class RepaymentLedgerService
         }
 
         return $errors;
+    }
+
+    private function repaymentCoverageWindow(int $beneficiaryProfileId): ?array
+    {
+        if ($beneficiaryProfileId <= 0) {
+            return null;
+        }
+
+        $statement = db()->prepare(
+            'SELECT COALESCE(source_profiles.approval_date, beneficiary_profiles.approval_date) AS approval_date,
+                    COALESCE(source_profiles.approved_at, beneficiary_profiles.approved_at) AS approved_at
+             FROM beneficiary_profiles
+             LEFT JOIN beneficiary_profiles AS source_profiles
+                    ON source_profiles.id = beneficiary_profiles.replacement_for_beneficiary_profile_id
+             WHERE beneficiary_profiles.id = :beneficiary_profile_id
+             LIMIT 1'
+        );
+        $statement->execute(['beneficiary_profile_id' => $beneficiaryProfileId]);
+        $row = $statement->fetch(PDO::FETCH_ASSOC);
+        if (!is_array($row)) {
+            return null;
+        }
+
+        $firstDueDate = (new RepaymentScheduleService())->firstDueDateForBeneficiaryContext(
+            (string) ($row['approved_at'] ?? ''),
+            (string) ($row['approval_date'] ?? '')
+        );
+        if (!is_string($firstDueDate) || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $firstDueDate)) {
+            return null;
+        }
+
+        $start = substr($firstDueDate, 0, 7);
+        return [
+            'start' => $start,
+            'end' => $this->addMonthsToCoverageMonth($start, 23),
+        ];
+    }
+
+    private function isCoverageMonthWithinWindow(string $month, array $window): bool
+    {
+        $start = (string) ($window['start'] ?? '');
+        $end = (string) ($window['end'] ?? '');
+        if ($start === '' || $end === '') {
+            return true;
+        }
+
+        return $month >= $start && $month <= $end;
+    }
+
+    private function addMonthsToCoverageMonth(string $month, int $offset): string
+    {
+        $date = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $month . '-01 00:00:00');
+        if (!$date instanceof \DateTimeImmutable) {
+            return $month;
+        }
+
+        return $date->modify(($offset >= 0 ? '+' : '') . $offset . ' months')->format('Y-m');
+    }
+
+    private function formatCoverageMonthLabel(string $month): string
+    {
+        $date = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $month . '-01 00:00:00');
+        if (!$date instanceof \DateTimeImmutable) {
+            return $month;
+        }
+
+        return $date->format('F Y');
     }
 
     private function normalizeAmount(mixed $value): float

@@ -78,28 +78,32 @@ $butuanBarangays = array_map(
                     <div class="applicant-contextbar__notifications" id="applicantNotificationMount"></div>
                     <div class="portal-language-toggle" role="group" aria-label="Select language">
                         <button type="button" class="portal-language-toggle__button is-active" data-language-option="en">English</button>
-                        <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Bisaya</button>
+                        <button type="button" class="portal-language-toggle__button" data-language-option="ceb">Tagalog</button>
                     </div>
                     <div class="mobile-topbar__account">
                         <!-- Mobile account trigger opens profile, password, and sign-out actions. -->
                         <button
                             type="button"
                             class="mobile-topbar__avatar"
-                            id="mobileAccountToggle"
+                            id="applicantAccountToggle"
                             aria-label="Open account menu"
                             aria-haspopup="menu"
                             aria-expanded="false"
                         >
                             <span class="mobile-topbar__avatar-initial" id="mobileAccountAvatar" aria-hidden="true">A</span>
                         </button>
-                        <div class="mobile-account-menu" id="mobileAccountMenu" role="menu" aria-hidden="true">
-                            <button type="button" class="mobile-account-menu__item" id="mobileAccountProfile" role="menuitem" data-i18n-key="profile">Profile</button>
-                            <button type="button" class="mobile-account-menu__item" id="mobileAccountPassword" role="menuitem" data-i18n-key="changePassword">Change Password</button>
-                            <button type="button" class="mobile-account-menu__item" id="mobileAccountLogout" role="menuitem" data-i18n-key="signOut">Sign Out</button>
-                        </div>
                     </div>
                 </div>
             </header>
+            <div class="applicant-account-sheet" id="applicantAccountSheet" role="menu" aria-hidden="true" hidden>
+                <div class="applicant-account-sheet__header">
+                    <strong class="applicant-account-sheet__title">Account</strong>
+                    <button type="button" class="applicant-account-sheet__close" id="applicantAccountClose" aria-label="Close account menu">&times;</button>
+                </div>
+                <button type="button" class="applicant-account-sheet__item" id="applicantAccountProfile" role="menuitem" data-i18n-key="profile">Profile</button>
+                <button type="button" class="applicant-account-sheet__item" id="applicantAccountPassword" role="menuitem" data-i18n-key="changePassword">Change Password</button>
+                <button type="button" class="applicant-account-sheet__item" id="applicantAccountLogout" role="menuitem" data-i18n-key="signOut">Sign Out</button>
+            </div>
             <main class="dash-main">
                 <section id="dashboard-home" class="dash-page dash-page--home">
                     <section class="panel dash-section panel--hero applicant-current-step" aria-labelledby="nextStepHeading">
@@ -165,7 +169,7 @@ $butuanBarangays = array_map(
                     <section class="dashboard-attention-grid">
                         <section class="panel dash-section panel--review applicant-alerts-panel" aria-labelledby="importantUpdatesHeading">
                             <div class="panel-header">
-                                <h3 id="importantUpdatesHeading">Importante nga updates</h3>
+                                <h3 id="importantUpdatesHeading">Important updates</h3>
                                 <p class="panel-subtitle">Only items that need attention or explain the next movement in your application.</p>
                             </div>
                             <ul class="attention-list" id="applicantAlertList">
@@ -182,7 +186,7 @@ $butuanBarangays = array_map(
                                 <span class="status-label">Application status</span>
                                 <strong id="statusValue">Draft</strong>
                                 <span class="status-dot" aria-hidden="true"></span>
-                                <span class="status-updated">Katapusang update: <span id="statusUpdated">--</span></span>
+                                <span class="status-updated">Last updated: <span id="statusUpdated">--</span></span>
                             </div>
                             <div class="status-remark" id="statusRemark" hidden></div>
                         </div>
@@ -344,7 +348,7 @@ $butuanBarangays = array_map(
                             <p class="panel-meta">
                                 <span>Required: <span class="docs-total-count">4</span> documents (Valid ID, Health Certificate, Community Tax Certificate, Barangay Clearance)</span>
                                 <span class="meta-sep">&bull;</span>
-                                <span class="meta-badge">Na-upload: <span id="docsUploadedCount">0</span>/<span class="docs-total-count">4</span></span>
+                                <span class="meta-badge">Uploaded: <span id="docsUploadedCount">0</span>/<span class="docs-total-count">4</span></span>
                             </p>
                         </div>
                         <div class="doc-grid" id="docGrid"></div>
@@ -356,12 +360,12 @@ $butuanBarangays = array_map(
                             <div class="doc-grid applicant-form-card-grid" id="applicationFormCards"></div>
                         </section>
                         <div class="review-block application-upload-panel__review">
-                            <h3>Checklist sa dokumento</h3>
+                            <h3>Document checklist</h3>
                             <div class="review-list" id="reviewDocs"></div>
                         </div>
                         <div class="action-bar application-action-bar">
-                            <button type="button" class="btn-outline" id="saveDraftButton">I-save ang Draft</button>
-                            <button type="button" class="btn-primary" id="submitProfileButton">Isumite para sa verification</button>
+                            <button type="button" class="btn-outline" id="saveDraftButton">Save draft</button>
+                            <button type="button" class="btn-primary" id="submitProfileButton">Submit for verification</button>
                         </div>
                     </section>
                     <div class="application-focus-grid application-focus-grid--workspace">
@@ -381,7 +385,7 @@ $butuanBarangays = array_map(
                             <article class="overview-card"><span class="overview-label">Reviewed</span><strong class="overview-value" id="requirementReviewValue">0 verified</strong><p class="overview-meta" id="requirementReviewNote">No requirement review activity yet.</p></article>
                             <article class="overview-card overview-card--soft"><span class="overview-label">Needs correction</span><strong class="overview-value" id="applicationRemarkCount">0 remarks</strong><p class="overview-meta" id="applicationRemarkNote">Reviewer notes visible to the applicant are summarized here.</p></article>
                         </div>
-                        <div class="application-review-latest">
+                        <div class="application-review-latest" id="applicationLatestRemarkPanel" hidden>
                             <article class="application-review-latest__card">
                                 <span class="overview-label">Latest reviewer message</span>
                                 <strong class="overview-value" id="applicationLatestRemarkTitle">No message yet</strong>
@@ -434,7 +438,7 @@ $butuanBarangays = array_map(
                         <div>
                             <span class="support-card__eyebrow">SMART LEAP Help Desk</span>
                             <h2>Support Center</h2>
-                            <p>Submit a concern, track staff replies, and get help from SMART LEAP staff.</p>
+                            <p>Submit a concern, track replies, and get help from Social Worker support.</p>
                         </div>
                         <a class="btn-outline" href="#helpdeskNewConcern">New concern</a>
                     </header>
@@ -443,7 +447,7 @@ $butuanBarangays = array_map(
                             <section class="panel helpdesk-card" id="helpdeskNewConcern" aria-labelledby="helpdeskFormHeading">
                                 <div class="panel-header">
                                     <h3 id="helpdeskFormHeading">Submit New Concern</h3>
-                                    <p class="panel-subtitle">Tell us what you need help with. Your concern will be routed to the appropriate SMART LEAP staff.</p>
+                                    <p class="panel-subtitle">Tell us what you need help with. Your concern will be routed to Social Worker support.</p>
                                 </div>
                                 <form class="helpdesk-form" data-helpdesk-form novalidate>
                                     <label class="form-field">
@@ -497,7 +501,7 @@ $butuanBarangays = array_map(
                                     </div>
                                 </div>
                                 <div class="helpdesk-ticket-list" data-helpdesk-ticket-list>
-                                    <p class="helpdesk-empty">No concerns submitted yet. Use the form to submit a concern when you need help from SMART LEAP staff.</p>
+                                    <p class="helpdesk-empty">No concerns submitted yet. Use the form to submit a concern when you need help from Social Worker support.</p>
                                 </div>
                             </section>
                         </div>
@@ -534,8 +538,8 @@ $butuanBarangays = array_map(
                     </div>
                     <div class="modal-body" id="previewBody"></div>
                     <div class="modal-footer">
-                        <button type="button" class="btn-outline" id="replacePreview">Ilisi</button>
-                        <button type="button" class="btn-primary" id="closePreviewFooter">Sirado</button>
+                        <button type="button" class="btn-outline" id="replacePreview">Replace</button>
+                        <button type="button" class="btn-primary" id="closePreviewFooter">Close</button>
                     </div>
                 </div>
             </div>

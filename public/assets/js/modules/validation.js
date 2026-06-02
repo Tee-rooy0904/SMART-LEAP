@@ -319,9 +319,45 @@
               <span class="validation-record-card__label">Contact</span>
               <strong>${escapeHtml(record.contactNumber)}</strong>
             </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Birthdate</span>
+              <strong>${escapeHtml(record.birthdate || '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Age</span>
+              <strong>${escapeHtml(record.age ?? '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Gender</span>
+              <strong>${escapeHtml(record.gender || '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Barangay</span>
+              <strong>${escapeHtml(record.barangay || '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">4Ps Membership</span>
+              <strong>${escapeHtml(record.is4ps || '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Educational Attainment</span>
+              <strong>${escapeHtml(record.educationalAttainment || '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Sector</span>
+              <strong>${escapeHtml(record.sector === 'Other' && record.sectorOtherSpecify ? `Other - ${record.sectorOtherSpecify}` : (record.sector || '--'))}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Specific Business Type</span>
+              <strong>${escapeHtml(record.livelihood || '--')}</strong>
+            </article>
+            <article class="validation-record-card">
+              <span class="validation-record-card__label">Microbusiness Name</span>
+              <strong>${escapeHtml(record.businessName || '--')}</strong>
+            </article>
             ${record.statusKey === 'selected' ? `
             <article class="validation-record-card validation-email-card">
-              <span class="validation-record-card__label">Stage 2 Email Invite</span>
+              <span class="validation-record-card__label">Account Activation Email</span>
               ${emailStatusMarkup(record)}
             </article>` : ''}
             <article class="validation-record-card validation-record-card--wide">
@@ -331,6 +367,7 @@
           </section>
 
           <section class="validation-upload-grid">
+            ${fileCardMarkup('Profile Photo', record.profilePhoto)}
             ${fileCardMarkup('Existing Business Photo', record.businessPhoto)}
             ${fileCardMarkup('Valid ID', record.validIdPhoto)}
           </section>
@@ -342,7 +379,7 @@
           <button type="button" class="btn btn-success" data-validation-action="approve" data-registration-id="${record.id}">Approve for Current Batch</button>`
             : ''}
           ${record.statusKey === 'selected'
-            ? `<button type="button" class="btn btn-outline-primary" data-validation-action="resend-email" data-registration-id="${record.id}">${record.selectionEmailNeedsResend ? 'Resend Stage 2 Email' : 'Send Stage 2 Email Again'}</button>`
+            ? `<button type="button" class="btn btn-outline-primary" data-validation-action="resend-email" data-registration-id="${record.id}">${record.selectionEmailNeedsResend ? 'Resend Activation Email' : 'Send Activation Email Again'}</button>`
             : ''}
         </div>
       </div>

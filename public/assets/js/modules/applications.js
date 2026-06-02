@@ -12,6 +12,8 @@
     data: { applications: [], summary: {}, barangays: [], assignedPdos: [] },
     activeApplication: null,
     activePreviewToken: '',
+    activePreviewOwnerId: null,
+    assistanceReceivedSelection: false,
   };
   const livelihoodCategories = ['Establishment', 'Livestock', 'Buy & Sell', 'Agriculture', 'Food and Beverages', 'Other'];
 
@@ -106,10 +108,14 @@
     const target = section();
     if (!target) return;
     setHTML(target, `
-      <div id="applications-kpis"></div>
-      <div class="applications-filters" id="applications-filters"></div>
-      <div id="applications-table"></div>
-      <div class="notice" id="applications-notice" hidden></div>
+      <div class="po-section-shell applications-review-shell">
+        <section class="po-section-board">
+          <div id="applications-kpis"></div>
+          <div id="applications-filters"></div>
+          <div id="applications-table"></div>
+        </section>
+        <div class="notice" id="applications-notice" hidden></div>
+      </div>
     `);
   };
 
@@ -118,31 +124,37 @@
     const root = qs('#applications-kpis');
     if (!root) return;
     setHTML(root, `
-      <section class="applications-kpis metric-grid">
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">In Progress</span>
-          <div class="metric-card__body">
-            <strong class="metric-card__value">${summary.inProgress || 0}</strong>
-          </div>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Ready for Review</span>
-          <div class="metric-card__body">
-            <strong class="metric-card__value">${summary.readyForReview || 0}</strong>
-          </div>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Approved</span>
-          <div class="metric-card__body">
-            <strong class="metric-card__value">${summary.approved || 0}</strong>
-          </div>
-        </article>
-        <article class="metric-card metric-card--soft">
-          <span class="metric-card__label">Needs Correction</span>
-          <div class="metric-card__body">
-            <strong class="metric-card__value">${summary.needsCorrection || 0}</strong>
-          </div>
-        </article>
+      <section class="po-application-toolbar po-application-toolbar--admin">
+        <div class="po-application-toolbar__summary">
+          <article class="po-snapshot-card po-application-stat">
+            <div class="po-snapshot-card__eyebrow">In Progress</div>
+            <div class="po-snapshot-card__body">
+              <strong>${summary.inProgress || 0}</strong>
+              <span>Still preparing submissions and requirements</span>
+            </div>
+          </article>
+          <article class="po-snapshot-card po-application-stat">
+            <div class="po-snapshot-card__eyebrow">Ready for Review</div>
+            <div class="po-snapshot-card__body">
+              <strong>${summary.readyForReview || 0}</strong>
+              <span>Ready for review and assessment movement</span>
+            </div>
+          </article>
+          <article class="po-snapshot-card po-application-stat">
+            <div class="po-snapshot-card__eyebrow">Approved</div>
+            <div class="po-snapshot-card__body">
+              <strong>${summary.approved || 0}</strong>
+              <span>Approved and moved forward in the pipeline</span>
+            </div>
+          </article>
+          <article class="po-snapshot-card po-application-stat">
+            <div class="po-snapshot-card__eyebrow">Needs Correction</div>
+            <div class="po-snapshot-card__body">
+              <strong>${summary.needsCorrection || 0}</strong>
+              <span>Cases still waiting on applicant updates</span>
+            </div>
+          </article>
+        </div>
       </section>
     `);
   };
@@ -153,43 +165,44 @@
 
     const statuses = ['', 'Submitted', 'Under Review', 'Requirements Verified', 'For Assessment', 'Approved for Training', 'Rejected', 'Needs Documents', 'Needs Correction'];
     setHTML(root, `
-      <div class="filter-group filter-group--search">
-        <span class="filter-label">Search</span>
-        <div class="filter-search applications-search">
-          <i class="fas fa-search"></i>
-          <input type="search" id="applications-search" placeholder="Search applicant by name or email" value="${escapeHtml(state.filters.search)}">
+      <section class="po-application-toolbar po-application-toolbar--admin">
+        <div class="po-application-toolbar__controls po-application-toolbar__controls--admin">
+          <label class="po-filter-field po-filter-field--search" for="applications-search">
+            <span>Search</span>
+            <input id="applications-search" class="section-filter" type="search" placeholder="Search applicant, barangay, business, or email" value="${escapeHtml(state.filters.search)}">
+          </label>
+          <label class="po-filter-field" for="applications-status">
+            <span>Status Filter</span>
+            <select id="applications-status" class="section-filter">
+              ${statuses.map((status) => `<option value="${status}" ${state.filters.status === status ? 'selected' : ''}>${status || 'All statuses'}</option>`).join('')}
+            </select>
+          </label>
+          <label class="po-filter-field" for="applications-livelihood-category">
+            <span>Livelihood Category</span>
+            <select id="applications-livelihood-category" class="section-filter">
+              <option value="">All categories</option>
+              ${livelihoodCategories.map((category) => `<option value="${category}" ${state.filters.livelihoodCategory === category ? 'selected' : ''}>${category}</option>`).join('')}
+            </select>
+          </label>
+          <label class="po-filter-field" for="applications-barangay">
+            <span>Barangay</span>
+            <select id="applications-barangay" class="section-filter">
+              <option value="">All barangays</option>
+              ${(state.data.barangays || []).map((barangay) => `<option value="${barangay.id}" ${String(state.filters.barangayId) === String(barangay.id) ? 'selected' : ''}>${barangay.name}</option>`).join('')}
+            </select>
+          </label>
+          <label class="po-filter-field" for="applications-assigned-pdo">
+            <span>Assigned PDO</span>
+            <select id="applications-assigned-pdo" class="section-filter">
+              <option value="">All PDOs</option>
+              ${(state.data.assignedPdos || []).map((pdo) => `<option value="${pdo.id}" ${String(state.filters.assignedPdoId) === String(pdo.id) ? 'selected' : ''}>${pdo.name}</option>`).join('')}
+            </select>
+          </label>
+          <div class="applications-toolbar__actions">
+            <button class="app-btn-ghost" id="applications-reset">Reset</button>
+          </div>
         </div>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Status</span>
-        <select id="applications-status" class="filter-select">
-          ${statuses.map((status) => `<option value="${status}" ${state.filters.status === status ? 'selected' : ''}>${status || 'All statuses'}</option>`).join('')}
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Barangay</span>
-        <select id="applications-barangay" class="filter-select">
-          <option value="">All barangays</option>
-          ${(state.data.barangays || []).map((barangay) => `<option value="${barangay.id}" ${String(state.filters.barangayId) === String(barangay.id) ? 'selected' : ''}>${barangay.name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Assigned PDO</span>
-        <select id="applications-assigned-pdo" class="filter-select">
-          <option value="">All PDOs</option>
-          ${(state.data.assignedPdos || []).map((pdo) => `<option value="${pdo.id}" ${String(state.filters.assignedPdoId) === String(pdo.id) ? 'selected' : ''}>${pdo.name}</option>`).join('')}
-        </select>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Livelihood Category</span>
-        <select id="applications-livelihood-category" class="filter-select">
-          <option value="">All categories</option>
-          ${livelihoodCategories.map((category) => `<option value="${category}" ${state.filters.livelihoodCategory === category ? 'selected' : ''}>${category}</option>`).join('')}
-        </select>
-      </div>
-      <div class="filter-actions filter-actions--inline">
-        <button class="app-btn-ghost" id="applications-reset">Reset</button>
-      </div>
+      </section>
     `);
   };
 
@@ -199,17 +212,39 @@
     const rows = (state.data.applications || []).map((application) => `
       <tr>
         <td>
-          <div class="applicant-cell">
-            <strong>${escapeHtml(application.applicantName)}</strong>
-            <span>${escapeHtml(application.email)}</span>
+          <div class="po-application-identity">
+            <div class="table-primary">${escapeHtml(application.applicantName)}</div>
+            <div class="table-secondary">${escapeHtml(application.businessName || 'No business name recorded')}</div>
+            <div class="table-tertiary">${escapeHtml(application.email || application.contactNumber || '--')}</div>
           </div>
         </td>
-        <td>${escapeHtml(application.barangay || '--')}</td>
-        <td><span class="batch-badge">${escapeHtml(formatBatchNo(application.batchNo))}</span></td>
-        <td>${escapeHtml(application.assignedPdoName || '--')}</td>
-        <td>${application.uploadedRequirementCount}/${application.requiredRequirementCount} uploaded</td>
-        <td><span class="status-badge ${statusClass(application.status)}">${escapeHtml(application.status)}</span></td>
-        <td>${formatDate(application.submittedAt)}</td>
+        <td>
+          <div class="po-location-cell">
+            <strong>${escapeHtml(application.barangay || '--')}</strong>
+            <span>${escapeHtml(application.contactNumber || 'No contact number')}</span>
+          </div>
+        </td>
+        <td><span class="po-batch-pill">${escapeHtml(formatBatchNo(application.batchNo))}</span></td>
+        <td>
+          <div class="po-progress-cell">
+            <strong>${application.verifiedRequirementCount || application.uploadedRequirementCount || 0} / ${application.requiredRequirementCount || 0}</strong>
+            <span>verified of required requirements</span>
+          </div>
+        </td>
+        <td><span class="po-status-pill po-status-pill--workflow ${statusClass(application.status)}">${escapeHtml(application.status || '--')}</span></td>
+        <td><span class="po-status-pill po-status-pill--readiness ${readinessBadgeClass(application.status)}">${escapeHtml(readinessLabel(application.status))}</span></td>
+        <td>
+          <div class="po-location-cell po-location-cell--pdo">
+            <strong>${escapeHtml(application.assignedPdoName || '--')}</strong>
+            <span>${escapeHtml(application.assignedPdoEmail || application.assignedPdoUsername || 'Review owner')}</span>
+          </div>
+        </td>
+        <td>
+          <div class="po-date-cell">
+            <strong>${formatDate(application.submittedAt)}</strong>
+            <span>submission date</span>
+          </div>
+        </td>
         <td class="actions">
           <button class="action-button action-button--review" data-open-application="${application.id}">
             <i class="fas fa-folder-open"></i>
@@ -219,17 +254,24 @@
       </tr>
     `).join('');
 
+    const total = (state.data.applications || []).length;
+    const caption = state.filters.status ? `${state.filters.status} queue` : 'Queue review list';
     setHTML(root, `
-      <div class="table-card applications-table-shell">
+      <div class="data-table-card applications-table-shell">
+        <header class="data-table-card__header">
+          <h3>Application review queue</h3>
+          <span class="chip">${total} ${total === 1 ? 'application' : 'applications'} | ${escapeHtml(caption)}</span>
+        </header>
         <div class="table-wrapper">
-          <table class="data-table">
+          <table class="data-table applications-table applications-table--modern">
             <colgroup>
               <col class="applications-table__col--applicant">
               <col class="applications-table__col--barangay">
               <col class="applications-table__col--batch">
-              <col class="applications-table__col--pdo">
               <col class="applications-table__col--requirements">
               <col class="applications-table__col--status">
+              <col class="applications-table__col--readiness">
+              <col class="applications-table__col--pdo">
               <col class="applications-table__col--submitted">
               <col class="applications-table__col--actions">
             </colgroup>
@@ -238,14 +280,15 @@
                 <th>Applicant</th>
                 <th>Barangay</th>
                 <th>Batch</th>
+                <th>Uploads</th>
+                <th>Application Status</th>
+                <th>Readiness</th>
                 <th>Assigned PDO</th>
-                <th>Requirements</th>
-                <th>Status</th>
                 <th>Submitted</th>
                 <th class="actions">Actions</th>
               </tr>
             </thead>
-            <tbody>${rows || '<tr><td colspan="8">No applications found.</td></tr>'}</tbody>
+            <tbody>${rows || '<tr><td colspan="9" class="text-center text-muted">No applications found.</td></tr>'}</tbody>
           </table>
         </div>
       </div>
@@ -260,10 +303,12 @@
     renderRequirementNavigator();
     renderPreviewPanel();
     renderRequirementInspector();
+    renderAssistanceStatus(application);
   };
 
   const buildModalMarkup = (application) => {
     const readiness = application.approvalReadiness || {};
+    const trainingApproval = application.trainingApprovalReadiness || {};
     const uploadSummary = readiness.uploadSummary || { approved: 0, total: 0 };
     const formSummary = readiness.formSummary || { approved: 0, total: 0 };
     const trainingStatus = readiness.trainingStatus || {};
@@ -277,7 +322,7 @@
           <div class="modal-header">
             <div class="po-modal-title-block">
               <span class="po-panel-label po-modal-eyebrow">Application Case</span>
-              <h3 class="modal-title">${escapeHtml(application.applicantName || '--')}</h3>
+              <h3 class="modal-title">Application Review</h3>
               <small class="po-modal-subtitle">Submitted on <span>${formatDate(application.submittedAt)}</span></small>
             </div>
             <div class="po-modal-header-actions">
@@ -292,15 +337,24 @@
                 <strong>${escapeHtml(application.applicantName || '--')}</strong>
                 <div class="po-case-identity__row"><span>Business</span><strong>${escapeHtml(application.businessName || '--')}</strong></div>
                 <div class="po-case-identity__row"><span>Barangay</span><strong>${escapeHtml(application.barangay || '--')}</strong></div>
-                <div class="po-case-identity__row"><span>Batch</span><strong>${escapeHtml(formatBatchNo(application.batchNo))}</strong></div>
-                <div class="po-case-identity__row"><span>Assigned PDO</span><strong>${escapeHtml(application.assignedPdoName || '--')}</strong></div>
               </article>
               <article class="po-case-identity__block">
                 <span class="po-panel-label">Case Details</span>
                 <div class="po-case-identity__row"><span>Contact</span><strong>${escapeHtml(application.contactNumber || application.email || '--')}</strong></div>
+                <div class="po-case-identity__row"><span>Batch No</span><strong>${escapeHtml(formatBatchNo(application.batchNo))}</strong></div>
+                <div class="po-case-identity__row">
+                  <span>General category</span>
+                  <select id="admin-app-modal-livelihood-category-input" class="section-filter">
+                    <option value="">Select category</option>
+                    <option value="Establishment" ${application.livelihoodCategory === 'Establishment' ? 'selected' : ''}>Establishments</option>
+                    <option value="Buy &amp; Sell" ${application.livelihoodCategory === 'Buy & Sell' ? 'selected' : ''}>Buy &amp; Sell</option>
+                    <option value="Food and Beverages" ${application.livelihoodCategory === 'Food and Beverages' ? 'selected' : ''}>Food and Beverages</option>
+                    <option value="Livestock" ${application.livelihoodCategory === 'Livestock' ? 'selected' : ''}>Livestock</option>
+                  </select>
+                </div>
+                <div class="po-case-identity__row"><span>Specific business type</span><strong>${escapeHtml(application.livelihood || '--')}</strong></div>
                 <div class="po-case-identity__row"><span>Sector</span><strong>${escapeHtml(application.sector || '--')}</strong></div>
-                <div class="po-case-identity__row"><span>Livelihood</span><strong>${escapeHtml(application.livelihood || '--')}</strong></div>
-                <div class="po-case-identity__row"><span>Household</span><strong>${escapeHtml(String(application.householdSize ?? '--'))}</strong></div>
+                <div class="po-case-identity__row"><span>Other sector</span><strong>${escapeHtml(application.sectorOtherSpecify || '--')}</strong></div>
               </article>
             </section>
             <section class="po-readiness-panel">
@@ -314,7 +368,7 @@
               <div class="po-readiness-grid">
                 <article class="po-readiness-card"><span>Upload Requirements</span><strong>${uploadSummary.approved || 0} / ${uploadSummary.total || 0}</strong></article>
                 <article class="po-readiness-card"><span>Fill-up Form Requirements</span><strong>${formSummary.approved || 0} / ${formSummary.total || 0}</strong></article>
-                <article class="po-readiness-card"><span>Training Status</span><strong>${escapeHtml(trainingStatus.status || '--')}</strong></article>
+                <article class="po-readiness-card"><span>Training Status</span><strong>${escapeHtml(trainingStatus.displayStatus || trainingStatus.status || '--')}</strong></article>
               </div>
               <div class="po-blocker-box">
                 <span class="po-panel-label">Blocking Reasons</span>
@@ -364,6 +418,20 @@
                 ${(application.history || []).map((entry) => `<li><div><strong>${escapeHtml(entry.toStatus)}</strong><div>${escapeHtml(entry.actorName)} • ${formatDate(entry.createdAt)}</div></div><span>${escapeHtml(entry.remarks || '--')}</span></li>`).join('') || '<li>No status history yet.</li>'}
               </ul>
             </section>
+            <section class="po-decision-panel">
+              <label class="po-toggle-field" for="admin-app-modal-assisted">
+                <input type="checkbox" id="admin-app-modal-assisted" ${String(application.status || '').toLowerCase() === 'completed' ? 'checked' : ''}>
+                <span>
+                  <strong>Already received assistance</strong>
+                  <small>Tag this applicant as already assisted so the case moves directly to the beneficiary record.</small>
+                </span>
+              </label>
+              <article class="po-assisted-status-box" id="admin-app-assisted-status" hidden>
+                <strong id="admin-app-assisted-status-title">Already an approved beneficiary</strong>
+                <small id="admin-app-assisted-status-copy">Assistance approval details will appear here.</small>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="admin-app-assisted-record" hidden>Record Assistance Received Now</button>
+              </article>
+            </section>
           </div>
           <div class="modal-footer">
             <div class="po-decision-rail">
@@ -375,7 +443,8 @@
               <div class="po-decision-rail__actions">
                 <button type="button" class="btn btn-outline-secondary" data-close-modal>Close</button>
                 <button type="button" class="btn btn-danger" data-review-action="reject">Reject</button>
-                <button type="button" class="btn btn-success" data-review-action="approve" ${readiness.canApprove ? '' : 'disabled title="Resolve the blocking reasons before approval."'}>Approve</button>
+                <button type="button" class="btn btn-primary" data-review-action="approve_for_training" ${trainingApproval.canApproveForTraining ? '' : 'disabled'} title="${escapeAttribute(((trainingApproval.blockers || []).slice(0, 2).join(' | ')) || 'Resolve the upload review requirements before training approval.')}">${trainingApproval.alreadyApprovedForTraining ? 'Already Approved for Training' : 'Approve for Training'}</button>
+                <button type="button" class="btn btn-success" data-review-action="approve" ${readiness.canApprove ? '' : 'disabled'} title="${escapeAttribute(((readiness.blockers || []).slice(0, 2).join(' | ')) || 'Resolve the blocking reasons before approval.')}">Approve</button>
               </div>
             </div>
           </div>
@@ -390,13 +459,18 @@
   };
 
   const ensureActivePreview = (application) => {
+    const appId = Number(application?.id || 0) || null;
+    if (state.activePreviewOwnerId !== appId) {
+      state.activePreviewToken = '';
+      state.activePreviewOwnerId = appId;
+    }
     if (resolvePreviewItem(state.activePreviewToken, application)) return;
     const firstUpload = (application.requirements || []).find((item) => item.file?.url);
     if (firstUpload) {
       state.activePreviewToken = `upload:${String(firstUpload.key)}`;
       return;
     }
-    const firstForm = (application.formRequirements || []).find((item) => item.reviewUrl);
+    const firstForm = (application.formRequirements || []).find((item) => formReviewUrl(item, true));
     state.activePreviewToken = firstForm ? `form:${String(firstForm.id)}` : '';
   };
 
@@ -456,9 +530,10 @@
     setHTML(root, items.map(({ token, kind, item }) => {
       const selected = state.activePreviewToken === token;
       const itemKey = String(kind === 'upload' ? item.key : item.id);
+      const formUploadKey = String(kind === 'form' ? item.key || item.id : itemKey);
       const uploadedFormFile = kind === 'form' ? formRequirementFile(item) : null;
       const uploadControl = kind === 'form'
-        ? `<div class="po-requirement-card__actions"><input class="po-review-upload-input" id="admin-form-upload-${escapeAttribute(itemKey)}" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" data-form-upload-input="${escapeAttribute(itemKey)}" hidden><button type="button" class="action-button action-button--quiet po-requirement-card__upload" data-trigger-form-upload="${escapeAttribute(itemKey)}">${uploadedFormFile?.url ? 'Replace uploaded file' : 'Upload file'}</button></div>`
+        ? `<div class="po-requirement-card__actions"><input class="po-review-upload-input" id="admin-form-upload-${escapeAttribute(formUploadKey)}" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" data-form-upload-input="${escapeAttribute(formUploadKey)}" hidden><button type="button" class="action-button action-button--quiet po-requirement-card__upload" data-trigger-form-upload="${escapeAttribute(formUploadKey)}">${uploadedFormFile?.url ? 'Replace uploaded file' : 'Upload file'}</button></div>`
         : '';
       return `<article class="po-requirement-card ${selected ? 'is-active' : ''}"><button type="button" class="po-requirement-card__select" data-select-requirement="${escapeAttribute(token)}"><div class="po-requirement-card__top"><strong>${escapeHtml(item.label || '--')}</strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(requirementStatusLabel(item.status))}</span></div><div class="po-requirement-card__meta"><span>${escapeHtml(item.typeLabel || '--')}</span><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></div></button>${uploadControl}</article>`;
     }).join(''));
@@ -506,15 +581,16 @@
       return;
     }
 
-    if (!item.reviewUrl) {
+    const reviewUrl = formReviewUrl(item, true);
+    if (!reviewUrl) {
       setHTML(root, '<div class="po-preview-empty">Form preview is not available for this requirement.</div>');
       return;
     }
-    setHTML(root, `<div class="po-native-form-preview"><div class="po-preview-loading">Loading form...</div><iframe class="po-native-form-loader" src="${escapeHtml(item.reviewUrl)}" title="${escapeHtml(item.label || 'Fill-up form review')}"></iframe><div class="po-native-form-content"></div></div>`);
-    hydrateNativeFormPreview(root, state.activePreviewToken);
+    setHTML(root, `<div class="po-native-form-preview"><div class="po-preview-loading">Loading form...</div><iframe class="po-native-form-loader" src="${escapeHtml(reviewUrl)}" title="${escapeHtml(item.label || 'Fill-up form review')}"></iframe><div class="po-native-form-content"></div></div>`);
+    hydrateNativeFormPreview(root, state.activePreviewToken, state.activePreviewOwnerId);
   };
 
-  const hydrateNativeFormPreview = (root, token) => {
+  const hydrateNativeFormPreview = (root, token, ownerId) => {
     const iframe = root.querySelector('.po-native-form-loader');
     const content = root.querySelector('.po-native-form-content');
     const loading = root.querySelector('.po-preview-loading');
@@ -522,7 +598,7 @@
 
     iframe.addEventListener('load', () => {
       window.setTimeout(() => {
-        if (state.activePreviewToken !== token) return;
+        if (state.activePreviewToken !== token || state.activePreviewOwnerId !== ownerId) return;
         try {
           const doc = iframe.contentDocument;
           const applicantCard = doc?.querySelector('#reviewApplicantCard');
@@ -560,7 +636,60 @@
     const uploadedFormFile = kind === 'form' ? formRequirementFile(item) : null;
     if (title) title.textContent = item.label || 'Requirement';
     if (chip) chip.textContent = item.typeLabel || '--';
-    setHTML(root, `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Submission State</span><strong><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></strong></div><div class="po-inspector-summary__row"><span>Requirement Status</span><strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(statusLabel)}</span></strong></div></div>${kind === 'form' ? `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Uploaded form file</span><strong>${escapeHtml(uploadedFormFile?.name || 'No file uploaded yet')}</strong></div><div class="po-inspector-summary__row"><span>Staff upload</span><strong>${uploadedFormFile?.uploadedAt ? escapeHtml(formatDate(uploadedFormFile.uploadedAt)) : '--'}</strong></div></div>` : ''}`);
+    const canReviewUpload = kind === 'upload' && !!item.file?.url;
+    const canReviewForm = kind === 'form' && (item.canReview !== false) && (requirementSubmissionLabel(kind, item) === 'Submitted');
+    const canReviewItem = canReviewUpload || canReviewForm;
+    const reviewActions = canReviewItem
+      ? `<div class="po-inspector-actions">
+          <button type="button" class="action-button action-button--success" data-review-item="${escapeAttribute(kind)}:${escapeAttribute(itemKey)}:approve">Approve</button>
+          <button type="button" class="action-button action-button--warning" data-review-item="${escapeAttribute(kind)}:${escapeAttribute(itemKey)}:needs_correction">Needs Correction</button>
+        </div>`
+      : '';
+    const reviewNote = canReviewItem
+      ? ''
+      : `<div class="po-inspector-note">${
+        kind === 'upload'
+          ? 'This requirement cannot be reviewed until a file is uploaded.'
+          : 'This form requirement cannot be reviewed until the staff form upload is submitted.'
+      }</div>`;
+    setHTML(root, `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Submission State</span><strong><span class="po-status-pill ${requirementSubmissionClass(kind, item)}">${escapeHtml(requirementSubmissionLabel(kind, item))}</span></strong></div><div class="po-inspector-summary__row"><span>Requirement Status</span><strong><span class="po-status-pill ${requirementStatusClass(item.status)}">${escapeHtml(statusLabel)}</span></strong></div></div>${kind === 'form' ? `<div class="po-inspector-summary"><div class="po-inspector-summary__row"><span>Uploaded form file</span><strong>${escapeHtml(uploadedFormFile?.name || 'No file uploaded yet')}</strong></div><div class="po-inspector-summary__row"><span>Staff upload</span><strong>${uploadedFormFile?.uploadedAt ? escapeHtml(formatDate(uploadedFormFile.uploadedAt)) : '--'}</strong></div></div>` : ''}${reviewActions}${reviewNote}`);
+  };
+
+  const renderAssistanceStatus = (application = state.activeApplication) => {
+    const root = qs('#admin-app-assisted-status');
+    const title = qs('#admin-app-assisted-status-title');
+    const copy = qs('#admin-app-assisted-status-copy');
+    const recordButton = qs('#admin-app-assisted-record');
+    const assistanceToggle = qs('#admin-app-modal-assisted');
+    if (!root || !title || !copy) return;
+
+    const assistance = application?.assistanceStatus || null;
+    const previewEnabled = !!assistanceToggle?.checked;
+    if (recordButton) recordButton.hidden = true;
+    if (assistance?.isApprovedBeneficiary) {
+      title.textContent = 'Already an approved beneficiary';
+      copy.textContent = assistance.approvedAt
+        ? `Assistance received on ${formatDate(assistance.approvedAt)}. First repayment due date is ${formatDate(assistance.firstRepaymentDueDate)}.`
+        : 'This beneficiary is active, but the assistance received date has not been recorded yet.';
+      if (recordButton) {
+        recordButton.textContent = 'Record Assistance Received Now';
+        recordButton.hidden = !!assistance.approvedAt;
+      }
+      root.hidden = false;
+      return;
+    }
+
+    if (previewEnabled) {
+      title.textContent = 'Will become an approved beneficiary on approval';
+      copy.textContent = 'Once you approve this as already assisted, the system will record the assistance date and move the case straight into the beneficiary record.';
+      root.hidden = false;
+      return;
+    }
+
+    root.hidden = true;
+    title.textContent = '';
+    copy.textContent = '';
+    if (recordButton) recordButton.hidden = true;
   };
 
   const load = async () => {
@@ -606,27 +735,105 @@
     }
   };
 
-  const uploadFormFile = async (taskId, file) => {
+  const uploadFormFile = async (requirementKey, file) => {
+    if (!state.activeApplication?.id) return;
     const formData = new FormData();
-    formData.append('taskId', String(taskId));
-    formData.append('fieldKey', 'reviewAttachment');
+    formData.append('applicationId', String(state.activeApplication.id));
+    formData.append('requirementKey', String(requirementKey));
     formData.append('file', file);
-    const response = await apiFormPost('api/post-approval-review/upload', formData);
+    const response = await apiFormPost('api/applications/upload-form-requirement', formData);
     if (!response.ok) {
       showNotice(firstError(response.errors) || response.message || 'Unable to upload the form file.', 'danger');
       return;
     }
-    await refreshActiveApplication();
+    if (response.application) {
+      state.activeApplication = response.application;
+      renderModal(state.activeApplication);
+    } else {
+      await refreshActiveApplication();
+    }
     showNotice('Form file uploaded.', 'success');
+  };
+
+  const handleLivelihoodCategoryChange = async (event) => {
+    if (!state.activeApplication?.id) return;
+    const input = event.target;
+    if (!(input instanceof HTMLSelectElement)) return;
+    const livelihoodCategory = String(input.value || '').trim();
+    const response = await apiPost('api/applications/update-livelihood-category', {
+      applicationId: state.activeApplication.id,
+      livelihoodCategory,
+    });
+
+    if (!response.ok) {
+      showNotice(firstError(response.errors) || response.message || 'Unable to save the generalized business category.', 'danger');
+      input.value = state.activeApplication?.livelihoodCategory || '';
+      return;
+    }
+
+    if (response.application) {
+      state.activeApplication = response.application;
+      renderModal(state.activeApplication);
+    }
+    await load();
+    showNotice('Generalized business category saved.', 'success');
+  };
+
+  const submitRequirementReview = async (kind, itemKey, decision) => {
+    if (!state.activeApplication?.id) return;
+    const preview = resolvePreviewItem(`${kind}:${itemKey}`, state.activeApplication);
+    if (!preview?.item) return;
+
+    const isCorrection = decision === 'needs_correction';
+    const correctionRemark = isCorrection
+      ? String(window.prompt(`Enter the correction note for ${preview.item.label || 'this requirement'}.`, 'Please review and resubmit this requirement.') || '').trim()
+      : '';
+    if (isCorrection && !correctionRemark) return;
+
+    let response;
+    if (kind === 'upload') {
+      response = await apiPost('api/applications/review-requirement', {
+        applicationId: state.activeApplication.id,
+        requirementKey: itemKey,
+        decision,
+        remarks: isCorrection ? correctionRemark : 'Requirement approved by reviewer.',
+        applicantRemark: correctionRemark,
+      });
+    } else {
+      const taskResponse = await apiGet('api/post-approval-review/task', { task_id: itemKey });
+      if (!taskResponse.ok || !taskResponse.task) {
+        showNotice(taskResponse.message || 'Unable to load the form details for review.', 'danger');
+        return;
+      }
+      response = await apiJsonPost('api/post-approval-review/review', {
+        taskId: Number(itemKey),
+        status: decision === 'approve' ? 'Verified' : 'Needs Correction',
+        remarks: isCorrection ? correctionRemark : 'Form requirement approved by reviewer.',
+        applicantVisibleRemark: correctionRemark,
+        staffForm: taskResponse.task?.payload?.staffReview || {},
+      });
+    }
+
+    if (!response.ok) {
+      showNotice(firstError(response.errors) || response.message || 'Unable to save this requirement review.', 'danger');
+      return;
+    }
+
+    await refreshActiveApplication();
+    showNotice(isCorrection ? 'Requirement marked for correction.' : 'Requirement approved.', 'success');
   };
 
   const submitReview = async (decision) => {
     if (!state.activeApplication) return;
     const remarks = decision === 'reject' ? 'Application rejected by reviewer.' : '';
+    const receivedAssistance = decision === 'approve'
+      ? (state.assistanceReceivedSelection || !!qs('#admin-app-modal-assisted')?.checked)
+      : false;
     const response = await apiPost('api/applications/review', {
       applicationId: state.activeApplication.id,
       decision,
       remarks,
+      receivedAssistance: receivedAssistance ? '1' : '0',
     });
     if (response.redirect) {
       window.location.href = routeUrl(response.redirect);
@@ -636,8 +843,36 @@
       showNotice(firstError(response.errors) || 'Unable to update application.', 'danger');
       return;
     }
-    showNotice('Application updated.', 'success');
+    if (decision === 'approve' && receivedAssistance && response.application?.assistanceStatus?.isApprovedBeneficiary) {
+      const assistance = response.application.assistanceStatus;
+      showNotice(
+        `Approved beneficiary recorded ${formatDate(assistance.approvedAt)}. First repayment due date is ${formatDate(assistance.firstRepaymentDueDate)}.`,
+        'success'
+      );
+    } else {
+      showNotice(response.message || 'Application updated.', 'success');
+    }
+    state.assistanceReceivedSelection = false;
     closeModal();
+    await load();
+  };
+
+  const recordAssistanceReceivedNow = async () => {
+    if (!state.activeApplication?.id) return;
+    if (!window.confirm('Record the assistance received date as now and rebuild this beneficiary repayment schedule?')) return;
+    const button = qs('#admin-app-assisted-record');
+    if (button) button.disabled = true;
+    const response = await apiPost('api/applications/assistance-received', {
+      applicationId: state.activeApplication.id,
+    });
+    if (button) button.disabled = false;
+    if (!response.ok) {
+      showNotice(firstError(response.errors) || response.message || 'Unable to record assistance release.', 'danger');
+      return;
+    }
+    state.activeApplication = response.application || state.activeApplication;
+    renderModal(state.activeApplication);
+    showNotice(response.message || 'Assistance received date recorded.', 'success');
     await load();
   };
 
@@ -645,6 +880,8 @@
     setHTML(qs('#modal-root'), '');
     state.activeApplication = null;
     state.activePreviewToken = '';
+    state.activePreviewOwnerId = null;
+    state.assistanceReceivedSelection = false;
   };
 
   const showNotice = (message, tone = 'info') => {
@@ -721,6 +958,20 @@
         return;
       }
 
+      const reviewItem = event.target.closest('[data-review-item]');
+      if (reviewItem) {
+        const [kind, itemKey, decision] = String(reviewItem.dataset.reviewItem || '').split(':');
+        if (!kind || !itemKey || !decision) return;
+        submitRequirementReview(kind, itemKey, decision);
+        return;
+      }
+
+      const assistanceRecord = event.target.closest('#admin-app-assisted-record');
+      if (assistanceRecord) {
+        recordAssistanceReceivedNow();
+        return;
+      }
+
       const action = event.target.closest('[data-review-action]');
       if (action) {
         submitReview(action.dataset.reviewAction);
@@ -728,13 +979,22 @@
     });
 
     on(document, 'change', async (event) => {
+      if (event.target.id === 'admin-app-modal-livelihood-category-input') {
+        await handleLivelihoodCategoryChange(event);
+        return;
+      }
+      if (event.target.id === 'admin-app-modal-assisted') {
+        state.assistanceReceivedSelection = !!event.target.checked;
+        renderAssistanceStatus();
+        return;
+      }
       const input = event.target.closest('[data-form-upload-input]');
       if (!(input instanceof HTMLInputElement) || !input.files?.[0]) return;
-      const taskId = Number(input.dataset.formUploadInput || 0);
-      if (taskId <= 0) return;
+      const requirementKey = String(input.dataset.formUploadInput || '').trim();
+      if (!requirementKey) return;
       const file = input.files[0];
       input.value = '';
-      await uploadFormFile(taskId, file);
+      await uploadFormFile(requirementKey, file);
     });
   };
 
@@ -744,6 +1004,23 @@
     if (['rejected', 'flagged', 'missing', 'missed'].includes(value)) return 'is-danger';
     if (['needs documents', 'needs correction', 'submitted', 'under review', 'pending', 'for assessment', 'requirements verified', 'notified', 'scheduled'].includes(value)) return 'is-warning';
     if (value === 'info') return 'is-info';
+    return 'is-muted';
+  };
+
+  const readinessLabel = (status) => {
+    const value = String(status || '').toLowerCase();
+    if (['approved for training', 'approved', 'requirements verified'].includes(value)) return 'Ready';
+    if (['needs correction', 'rejected'].includes(value)) return 'Needs Correction';
+    if (['needs documents'].includes(value)) return 'Needs Documents';
+    if (['submitted', 'under review', 'for assessment'].includes(value)) return 'Under Review';
+    return status || 'Under Review';
+  };
+
+  const readinessBadgeClass = (status) => {
+    const readiness = readinessLabel(status).toLowerCase();
+    if (readiness === 'ready') return 'is-success';
+    if (readiness === 'needs correction') return 'is-danger';
+    if (readiness === 'needs documents') return 'is-warning';
     return 'is-muted';
   };
 
@@ -763,6 +1040,14 @@
   const cssEscape = (value) => {
     if (window.CSS && typeof window.CSS.escape === 'function') return window.CSS.escape(String(value));
     return String(value).replace(/"/g, '\\"');
+  };
+
+  const formReviewUrl = (item, embedded = false) => {
+    const taskId = Number(item?.id || 0);
+    if (taskId > 0) {
+      return routeUrl(`post-approval-review?task_id=${encodeURIComponent(String(taskId))}${embedded ? '&embed=1' : ''}`);
+    }
+    return String(item?.reviewUrl || '');
   };
 
   const formRequirementFile = (item) => (item && typeof item === 'object' && item.file ? item.file : null);

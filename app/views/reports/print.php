@@ -1,4 +1,4 @@
-﻿<?php /** @var string $baseUrl */ ?>
+<?php /** @var string $baseUrl */ ?>
 <?php /** @var array|null $authUser */ ?>
 <?php /** @var array $report */ ?>
 <?php /** @var array $filters */ ?>
@@ -11,6 +11,123 @@ $periodLabel = (string) (($report['filters']['periodLabel'] ?? $filters['period'
 $repaymentMetrics = $report['repaymentAnalytics']['periodMetrics'] ?? ($report['summary']['repaymentPerformance'] ?? []);
 $adminReportsCssVersion = @filemtime(base_path('public/assets/css/dashboards/admin-reports.css')) ?: time();
 $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+$distributionColor = static function (mixed $label, int $index = 0): string {
+    $palette = ['#2563eb', '#16a34a', '#f97316', '#dc2626', '#7c3aed', '#0891b2', '#eab308', '#be185d', '#475569', '#65a30d'];
+    $map = [
+        'male' => '#2563eb',
+        'female' => '#16a34a',
+        'none' => '#2563eb',
+        'solo parent' => '#16a34a',
+        'other - lgbtq' => '#f97316',
+        'other-lgbtq' => '#f97316',
+        'livestock' => '#2563eb',
+        'buy and sell' => '#16a34a',
+        'buy & sell' => '#16a34a',
+        'establishment' => '#f97316',
+        'food and beverages' => '#dc2626',
+        'production' => '#7c3aed',
+        'microenterprise' => '#0891b2',
+        'micro enterprise' => '#0891b2',
+        'paluwagan' => '#eab308',
+        'services' => '#eab308',
+    ];
+    $key = strtolower(trim((string) $label));
+    return $map[$key] ?? $palette[$index % count($palette)];
+};
+$tintColor = static function (string $hex, float $alpha = 0.10): string {
+    $value = ltrim(trim($hex), '#');
+    if (strlen($value) !== 6) {
+        return 'rgba(37, 99, 235, ' . $alpha . ')';
+    }
+    $red = hexdec(substr($value, 0, 2));
+    $green = hexdec(substr($value, 2, 2));
+    $blue = hexdec(substr($value, 4, 2));
+    return sprintf('rgba(%d, %d, %d, %.2F)', $red, $green, $blue, $alpha);
+};
+$renderDistributionFallback = static function (array $rows, string $label) use ($e, $distributionColor): string {
+    $total = array_reduce($rows, static fn(float $sum, array $row): float => $sum + (float) ($row['count'] ?? 0), 0.0);
+    if ($rows === [] || $total <= 0) {
+        return '<p class="reports-empty">No data available.</p>';
+    }
+
+    $polar = static function (float $cx, float $cy, float $radius, float $angle): array {
+        $radians = (($angle - 90) * pi()) / 180;
+        return [
+            'x' => $cx + ($radius * cos($radians)),
+            'y' => $cy + ($radius * sin($radians)),
+        ];
+    };
+    $arcPath = static function (float $cx, float $cy, float $outerRadius, float $innerRadius, float $startAngle, float $endAngle) use ($polar): string {
+        $outerStart = $polar($cx, $cy, $outerRadius, $endAngle);
+        $outerEnd = $polar($cx, $cy, $outerRadius, $startAngle);
+        $innerStart = $polar($cx, $cy, $innerRadius, $startAngle);
+        $innerEnd = $polar($cx, $cy, $innerRadius, $endAngle);
+        $largeArcFlag = ($endAngle - $startAngle) <= 180 ? '0' : '1';
+        return sprintf(
+            'M %.2F %.2F A %.2F %.2F 0 %s 0 %.2F %.2F L %.2F %.2F A %.2F %.2F 0 %s 1 %.2F %.2F Z',
+            $outerStart['x'],
+            $outerStart['y'],
+            $outerRadius,
+            $outerRadius,
+            $largeArcFlag,
+            $outerEnd['x'],
+            $outerEnd['y'],
+            $innerStart['x'],
+            $innerStart['y'],
+            $innerRadius,
+            $innerRadius,
+            $largeArcFlag,
+            $innerEnd['x'],
+            $innerEnd['y']
+        );
+    };
+
+    $cx = 160.0;
+    $cy = 160.0;
+    $outerRadius = 122.0;
+    $innerRadius = 66.0;
+    $labelRadius = $innerRadius + (($outerRadius - $innerRadius) / 2);
+    $runningAngle = 0.0;
+    $paths = '';
+    $labels = '';
+    $legend = '';
+
+    foreach ($rows as $index => $row) {
+        $count = (float) ($row['count'] ?? 0);
+        $percentage = $total > 0 ? ($count / $total) * 100 : 0;
+        $sweepAngle = $total > 0 ? ($count / $total) * 360 : 0;
+        $startAngle = $runningAngle;
+        $drawSweepAngle = min($sweepAngle, 359.99);
+        $endAngle = $runningAngle + $drawSweepAngle;
+        $runningAngle += $sweepAngle;
+        $midAngle = $startAngle + (($endAngle - $startAngle) / 2);
+        $point = $polar($cx, $cy, $labelRadius, $midAngle);
+        $color = $distributionColor($row['label'] ?? '', $index);
+        $percentLabel = number_format($percentage, 1);
+        $share = $endAngle - $startAngle;
+        $countFont = $share <= 34 ? 13 : 16;
+        $percentFont = $share <= 34 ? 10.5 : 12.5;
+        $dyOffset = 9;
+
+        $paths .= '<path d="' . $e($arcPath($cx, $cy, $outerRadius, $innerRadius, $startAngle, $endAngle)) . '" fill="' . $e($color) . '"></path>';
+        $labels .= '<text class="reports-donut__slice-label" x="' . $e(number_format($point['x'], 2, '.', '')) . '" y="' . $e(number_format($point['y'], 2, '.', '')) . '" fill="#ffffff">'
+            . '<tspan class="reports-donut__slice-count" x="' . $e(number_format($point['x'], 2, '.', '')) . '" dy="-' . $dyOffset . '" style="font-size:' . $countFont . 'px;">' . $e((string) (int) $count) . '</tspan>'
+            . '<tspan class="reports-donut__slice-percent" x="' . $e(number_format($point['x'], 2, '.', '')) . '" dy="' . ($dyOffset + 12) . '" style="font-size:' . $percentFont . 'px;">' . $e($percentLabel) . '%</tspan>'
+            . '</text>';
+        $legend .= '<div class="reports-donut__legend-row">'
+            . '<span class="reports-donut__legend-swatch" style="--legend-color:' . $e($color) . ';"></span>'
+            . '<span class="reports-donut__legend-label">' . $e($row['label'] ?? '') . '</span>'
+            . '<strong class="reports-donut__legend-count">' . $e((string) (int) $count) . '</strong>'
+            . '<span class="reports-donut__legend-percent">' . $e($percentLabel) . '%</span>'
+            . '</div>';
+    }
+
+    return '<div class="reports-donut reports-donut--print" role="img" aria-label="' . $e($label) . '">'
+        . '<div class="reports-donut__chart-shell"><svg class="reports-donut__svg" viewBox="0 0 320 320" aria-hidden="true">'
+        . '<circle class="reports-donut__track" cx="160" cy="160" r="122"></circle>' . $paths . $labels
+        . '</svg></div><div class="reports-donut__legend">' . $legend . '</div></div>';
+};
+$summary = $report['summary'] ?? [];
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -322,6 +439,31 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
             font-size: 0.82rem;
             font-weight: 700;
         }
+        .report-print-section .reports-donut {
+            grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
+            gap: 14px;
+            min-height: 206px;
+        }
+        .report-print-section .reports-donut__chart-shell {
+            min-height: 206px;
+        }
+        .report-print-section .reports-donut__svg {
+            width: min(100%, 218px);
+        }
+        .report-print-section .reports-donut__legend {
+            gap: 7px;
+        }
+        .report-print-section .reports-donut__legend-row {
+            border-radius: 0;
+            padding: 6px 8px;
+            grid-template-columns: 14px minmax(0, 1fr) minmax(18px, auto) minmax(44px, auto);
+            gap: 7px;
+        }
+        .report-print-section .reports-donut__legend-label,
+        .report-print-section .reports-donut__legend-count,
+        .report-print-section .reports-donut__legend-percent {
+            font-size: 0.74rem;
+        }
         .report-print-section .chart-card--distribution .chart-wrap.medium {
             min-height: 0;
         }
@@ -445,21 +587,21 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                                 <div class="chart-card__header">
                                     <h4>Gender Segregation</h4>
                                 </div>
-                                <div class="chart-wrap medium" id="reports-gender-donut"></div>
+                                <div class="chart-wrap medium" id="reports-gender-donut"><?= $renderDistributionFallback($summary['genderDistribution'] ?? [], 'Gender distribution donut chart') ?></div>
                             </div>
 
                             <div class="chart-card chart-card--distribution">
                                 <div class="chart-card__header">
                                     <h4>Service Type Distribution</h4>
                                 </div>
-                                <div class="chart-wrap medium" id="reports-service-donut"></div>
+                                <div class="chart-wrap medium" id="reports-service-donut"><?= $renderDistributionFallback($summary['serviceTypeDistribution'] ?? [], 'Service type distribution donut chart') ?></div>
                             </div>
 
                             <div class="chart-card chart-card--distribution">
                                 <div class="chart-card__header">
                                     <h4>Sector Distribution</h4>
                                 </div>
-                                <div class="chart-wrap medium" id="reports-sector-donut"></div>
+                                <div class="chart-wrap medium" id="reports-sector-donut"><?= $renderDistributionFallback($summary['sectorDistribution'] ?? [], 'Sector distribution donut chart') ?></div>
                             </div>
                         </div>
                     </section>
@@ -505,6 +647,35 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                     y: cy + (Math.sin(radians) * r),
                 };
             };
+            const donutArcPath = (cx, cy, outerRadius, innerRadius, startAngle, endAngle) => {
+                const outerStart = polar(cx, cy, outerRadius, endAngle);
+                const outerEnd = polar(cx, cy, outerRadius, startAngle);
+                const innerStart = polar(cx, cy, innerRadius, startAngle);
+                const innerEnd = polar(cx, cy, innerRadius, endAngle);
+                const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+                return [
+                    `M ${outerStart.x} ${outerStart.y}`,
+                    `A ${outerRadius} ${outerRadius} 0 ${largeArcFlag} 0 ${outerEnd.x} ${outerEnd.y}`,
+                    `L ${innerStart.x} ${innerStart.y}`,
+                    `A ${innerRadius} ${innerRadius} 0 ${largeArcFlag} 1 ${innerEnd.x} ${innerEnd.y}`,
+                    'Z',
+                ].join(' ');
+            };
+            const sliceLabelMarkup = (slice, cx, cy, labelRadius, ringThickness) => {
+                const midAngle = slice.startAngle + ((slice.endAngle - slice.startAngle) / 2);
+                const point = polar(cx, cy, labelRadius, midAngle);
+                const share = slice.endAngle - slice.startAngle;
+                const countFontSize = share <= 34 ? 13 : 16;
+                const percentFontSize = share <= 34 ? 10.5 : 12.5;
+                const dyOffset = Math.min(10, Math.max(7, ringThickness * 0.16));
+                return `
+                    <text class="reports-donut__slice-label" x="${point.x.toFixed(2)}" y="${point.y.toFixed(2)}" fill="#ffffff">
+                        <tspan class="reports-donut__slice-count" x="${point.x.toFixed(2)}" dy="-${dyOffset}" style="font-size:${countFontSize}px;">${escapeHtml(String(slice.count))}</tspan>
+                        <tspan class="reports-donut__slice-percent" x="${point.x.toFixed(2)}" dy="${dyOffset + 12}" style="font-size:${percentFontSize}px;">${escapeHtml(String(segmentPercent(slice.percentage)))}</tspan>
+                    </text>
+                `;
+            };
+            const segmentPercent = (value) => `${Number(value || 0).toFixed(1)}%`;
             const distributionColor = (label, index = 0) => {
                 const normalized = String(label || '').trim().toLowerCase();
                 const explicitMap = new Map([
@@ -559,65 +730,55 @@ $reportPayload = json_encode($report, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UN
                     return;
                 }
 
-                const center = 110;
-                const radius = 74;
-                const strokeWidth = 34;
-                const circumference = 2 * Math.PI * radius;
-                let cumulativePercent = 0;
+                const cx = 160;
+                const cy = 160;
+                const outerRadius = 122;
+                const innerRadius = 66;
+                const ringThickness = outerRadius - innerRadius;
+                const labelRadius = innerRadius + (ringThickness / 2);
+                let runningAngle = 0;
                 const segments = rows.map((row, index) => {
                     const count = Number(row.count || 0);
-                    const percent = total > 0 ? (count / total) * 100 : 0;
+                    const percentage = total > 0 ? (count / total) * 100 : 0;
+                    const sweepAngle = total > 0 ? (count / total) * 360 : 0;
+                    const startAngle = runningAngle;
+                    const drawSweepAngle = Math.min(sweepAngle, 359.99);
+                    const endAngle = runningAngle + drawSweepAngle;
+                    runningAngle += sweepAngle;
                     const stroke = distributionColor(row.label, index);
-                    const dash = (percent / 100) * circumference;
-                    const offset = circumference - ((cumulativePercent / 100) * circumference);
-                    cumulativePercent += percent;
-                    const percentLabel = percent % 1 === 0 ? String(Math.round(percent)) : percent.toFixed(1);
                     return {
                         stroke,
                         count,
-                        percent: percentLabel,
-                        dash,
-                        offset,
+                        percentage,
                         row,
+                        startAngle,
+                        endAngle,
+                        path: donutArcPath(cx, cy, outerRadius, innerRadius, startAngle, endAngle),
                     };
                 });
 
                 root.innerHTML = `
-                    <div class="reports-pie-chart reports-pie-chart--donut" role="img" aria-label="${escapeHtml(options.label || 'Distribution donut chart')}">
-                        <div class="reports-pie-chart__graphic">
-                            <svg viewBox="0 0 220 220" aria-hidden="true">
-                                <circle cx="${center}" cy="${center}" r="${radius}" fill="none" stroke="#e7eef8" stroke-width="${strokeWidth}"></circle>
-                                ${segments.map((segment) => `
-                                    <circle
-                                        cx="${center}"
-                                        cy="${center}"
-                                        r="${radius}"
-                                        fill="none"
-                                        stroke="${segment.stroke}"
-                                        stroke-width="${strokeWidth}"
-                                        stroke-dasharray="${segment.dash} ${circumference - segment.dash}"
-                                        stroke-dashoffset="${segment.offset}"
-                                        stroke-linecap="butt"
-                                    ></circle>
-                                `).join('')}
+                    <div class="reports-donut reports-donut--print" role="img" aria-label="${escapeHtml(options.label || 'Distribution donut chart')}">
+                        <div class="reports-donut__chart-shell">
+                            <svg class="reports-donut__svg" viewBox="0 0 320 320" aria-hidden="true">
+                                <circle class="reports-donut__track" cx="${cx}" cy="${cy}" r="${outerRadius}"></circle>
+                                ${segments.map((segment) => `<path d="${segment.path}" fill="${segment.stroke}"></path>`).join('')}
+                                ${segments.map((segment) => sliceLabelMarkup(segment, cx, cy, labelRadius, ringThickness)).join('')}
                             </svg>
                         </div>
-                        <div class="reports-pie-chart__legend">
-                            ${segments.map((segment) => {
-                                return `
-                                    <span class="reports-pie-chart__legend-item" style="background:${tintColor(segment.stroke, 0.10)}; border-color:${tintColor(segment.stroke, 0.22)};">
-                                        <span class="reports-pie-chart__swatch" style="--swatch-color:${segment.stroke};"></span>
-                                        <span class="reports-pie-chart__legend-label">${escapeHtml(segment.row.label)}</span>
-                                        <strong>${escapeHtml(String(segment.count))}</strong>
-                                        <small>${escapeHtml(String(segment.percent))}%</small>
-                                    </span>
-                                `;
-                            }).join('')}
+                        <div class="reports-donut__legend">
+                            ${segments.map((segment) => `
+                                <div class="reports-donut__legend-row">
+                                    <span class="reports-donut__legend-swatch" style="--legend-color:${segment.stroke};"></span>
+                                    <span class="reports-donut__legend-label">${escapeHtml(segment.row.label)}</span>
+                                    <strong class="reports-donut__legend-count">${escapeHtml(String(segment.count))}</strong>
+                                    <span class="reports-donut__legend-percent">${escapeHtml(segmentPercent(segment.percentage))}</span>
+                                </div>
+                            `).join('')}
                         </div>
                     </div>
                 `;
             };
-
             const renderPaymentChart = (root, rows, period = 'monthly') => {
                 if (!root) return;
                 if (!rows.length) {

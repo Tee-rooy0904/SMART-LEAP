@@ -2,7 +2,6 @@
     const form = document.getElementById('signupForm');
     if (!form) return;
 
-    const PROFILE_PHOTO_MAX_SIZE = 5 * 1024 * 1024;
     const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const AUTH_LOADER_MIN_MS = 2400;
     const signupMode = String(window.SMARTLEAP_SIGNUP_MODE || 'applicant').toLowerCase();
@@ -53,6 +52,10 @@
 
     let authLoaderStartedAt = 0;
     let photoDataUrl = '';
+
+    function fieldValue(field) {
+        return field ? field.value : '';
+    }
 
     function autoResizeTextarea(textarea) {
         if (!textarea) return;
@@ -147,13 +150,20 @@
         });
     }
 
+    function firstFieldErrorMessage() {
+        const firstError = form.querySelector('[data-error-for][data-visible="true"]');
+        return firstError ? String(firstError.textContent || '').trim() : '';
+    }
+
     function disableForm(state) {
         submitBtn.disabled = state;
         submitBtn.textContent = state
-            ? (isCoMakerMode ? 'Saving co-maker account...' : 'Saving account...')
-            : (isCoMakerMode ? 'Create co-maker account' : 'Create account');
-        confirmSubmitBtn.disabled = state;
-        confirmSubmitBtn.textContent = state ? 'Saving...' : 'Yes, save and continue';
+            ? (isCoMakerMode ? 'Saving co-maker account...' : 'Activating account...')
+            : (isCoMakerMode ? 'Create co-maker account' : 'Activate account');
+        if (confirmSubmitBtn) {
+            confirmSubmitBtn.disabled = state;
+            confirmSubmitBtn.textContent = state ? 'Saving...' : 'Yes, save and continue';
+        }
     }
 
     function sanitizeText(value) {
@@ -239,32 +249,24 @@
                 ['Relationship document', fields.relationshipDocumentInput?.files?.[0]?.name || '']
             ]
             : [
-                ['Full name', [values.firstName, values.middleName, values.lastName].filter(Boolean).join(' ')],
                 ['Email address', values.email],
-                ['Birthdate', values.birthdate],
-                ['Age', values.age],
-                ['Gender', values.gender],
-                ['Contact number', values.contactNumber],
-                ['Complete address', values.address],
-                ['Barangay', values.barangay],
-                ['4Ps membership', values.is4ps],
-                ['Educational attainment', values.educationalAttainment],
-                ['Sector', values.sector === 'Other' && values.sectorOtherSpecify ? `Other - ${values.sectorOtherSpecify}` : values.sector],
-                ['Specific business type', values.livelihood],
-                ['Microbusiness name', values.businessName]
+                ['Password', 'Ready to set'],
+                ['Verification', 'Email code required after saving']
             ];
 
-        confirmName.textContent = summaryItems[0][1] || '--';
+        confirmName.textContent = isCoMakerMode
+            ? (summaryItems[0][1] || '--')
+            : 'Applicant account activation';
         confirmEmail.textContent = values.email || '--';
 
-        if (!isCoMakerMode && photoDataUrl) {
-            confirmPhoto.src = photoDataUrl;
-            confirmPhoto.hidden = false;
-            confirmPhotoPlaceholder.hidden = true;
-        } else {
+        if (isCoMakerMode || !photoDataUrl) {
             confirmPhoto.src = '';
             confirmPhoto.hidden = true;
             confirmPhotoPlaceholder.hidden = false;
+        } else {
+            confirmPhoto.src = photoDataUrl;
+            confirmPhoto.hidden = false;
+            confirmPhotoPlaceholder.hidden = true;
         }
 
         confirmGrid.innerHTML = summaryItems.map(([label, value]) => (
@@ -273,6 +275,9 @@
     }
 
     function openConfirmModal() {
+        if (!confirmModal || !confirmGrid || !confirmName || !confirmEmail || !confirmPhoto || !confirmPhotoPlaceholder) {
+            return;
+        }
         if (!validate()) {
             return;
         }
@@ -283,6 +288,7 @@
     }
 
     function closeConfirmModal() {
+        if (!confirmModal) return;
         confirmModal.hidden = true;
         confirmModal.setAttribute('hidden', 'hidden');
         document.body.classList.remove('signup-confirm-open');
@@ -292,24 +298,24 @@
         const payload = {
             registrationMode: fields.registrationMode?.value || (isCoMakerMode ? 'co-maker' : 'applicant'),
             beneficiaryProfileId: fields.beneficiaryProfileId?.value || '',
-            firstName: fields.firstName.value.trim(),
-            middleName: fields.middleName.value.trim(),
-            lastName: fields.lastName.value.trim(),
-            email: fields.email.value.trim(),
-            password: fields.password.value,
-            contactNumber: fields.contactNumber?.value.trim() || '',
-            relationshipToPrimaryBeneficiary: fields.relationshipToPrimaryBeneficiary?.value.trim() || '',
-            birthdate: fields.birthdate?.value || '',
-            age: fields.age?.value || '',
-            gender: fields.gender?.value || '',
-            address: fields.address?.value.trim() || '',
-            barangay: fields.barangay?.value || '',
-            is4ps: fields.is4ps?.value || '',
-            educationalAttainment: fields.educationalAttainment?.value || '',
-            sector: fields.sector?.value || '',
-            sectorOtherSpecify: fields.sectorOtherSpecify?.value.trim() || '',
-            livelihood: fields.livelihood?.value.trim() || '',
-            businessName: fields.businessName?.value.trim() || '',
+            firstName: fieldValue(fields.firstName).trim(),
+            middleName: fieldValue(fields.middleName).trim(),
+            lastName: fieldValue(fields.lastName).trim(),
+            email: fieldValue(fields.email).trim(),
+            password: fieldValue(fields.password),
+            contactNumber: fieldValue(fields.contactNumber).trim(),
+            relationshipToPrimaryBeneficiary: fieldValue(fields.relationshipToPrimaryBeneficiary).trim(),
+            birthdate: fieldValue(fields.birthdate),
+            age: fieldValue(fields.age),
+            gender: fieldValue(fields.gender),
+            address: fieldValue(fields.address).trim(),
+            barangay: fieldValue(fields.barangay),
+            is4ps: fieldValue(fields.is4ps),
+            educationalAttainment: fieldValue(fields.educationalAttainment),
+            sector: fieldValue(fields.sector),
+            sectorOtherSpecify: fieldValue(fields.sectorOtherSpecify).trim(),
+            livelihood: fieldValue(fields.livelihood).trim(),
+            businessName: fieldValue(fields.businessName).trim(),
             photoDataUrl: photoDataUrl
         };
 
@@ -333,21 +339,9 @@
                 ['signupRelationshipToPrimaryBeneficiary', payload.relationshipToPrimaryBeneficiary, 'Enter your relationship to the primary beneficiary.'],
             ]
             : [
-                ['signupFirstName', payload.firstName, 'Enter your first name.'],
-                ['signupLastName', payload.lastName, 'Enter your last name.'],
                 ['signupEmail', payload.email, 'Enter your email address.'],
                 ['signupPassword', payload.password, 'Enter your password.'],
                 ['signupPasswordConfirm', fields.confirmPassword.value, 'Confirm your password.'],
-                ['signupBirthdate', payload.birthdate, 'Enter your birthdate.'],
-                ['signupGender', payload.gender, 'Select your gender.'],
-                ['signupContactNumber', payload.contactNumber, 'Enter your contact number.'],
-                ['signupAddress', payload.address, 'Enter your complete address.'],
-                ['signupBarangay', payload.barangay, 'Select your barangay.'],
-                ['signup4ps', payload.is4ps, 'Select your 4Ps membership.'],
-                ['signupEducationalAttainment', payload.educationalAttainment, 'Select your educational attainment.'],
-                ['signupSector', payload.sector, 'Select your sector.'],
-                ['signupLivelihood', payload.livelihood, 'Enter your specific business type.'],
-                ['signupBusinessName', payload.businessName, 'Enter your microbusiness name.'],
             ];
 
         requiredTextFields.forEach(([fieldId, value, message]) => {
@@ -357,12 +351,12 @@
             }
         });
 
-        if (!payload.firstName || payload.firstName.length < 2) {
+        if (isCoMakerMode && (!payload.firstName || payload.firstName.length < 2)) {
             valid = false;
             setFieldError('signupFirstName', 'Enter your first name.');
         }
 
-        if (!payload.lastName || payload.lastName.length < 2) {
+        if (isCoMakerMode && (!payload.lastName || payload.lastName.length < 2)) {
             valid = false;
             setFieldError('signupLastName', 'Enter your last name.');
         }
@@ -385,15 +379,7 @@
             setFieldError('signupPasswordConfirm', 'Passwords do not match.');
         }
 
-        if (!isCoMakerMode) {
-            const age = calculateAge(payload.birthdate);
-            if (!age) {
-                valid = false;
-                setFieldError('signupBirthdate', 'Birthdate is invalid.');
-            } else if (fields.age) {
-                fields.age.value = age;
-            }
-        } else {
+        if (isCoMakerMode) {
             const age = Number(payload.age || 0);
             if (!Number.isFinite(age) || age < 1 || age > 120) {
                 valid = false;
@@ -401,13 +387,13 @@
             }
         }
 
-        const contactDigits = payload.contactNumber.replace(/\D+/g, '');
-        if (contactDigits.length < 10 || contactDigits.length > 13) {
-            valid = false;
-            setFieldError('signupContactNumber', 'Enter a valid contact number.');
-        }
-
         if (isCoMakerMode) {
+            const contactDigits = payload.contactNumber.replace(/\D+/g, '');
+            if (contactDigits.length < 10 || contactDigits.length > 13) {
+                valid = false;
+                setFieldError('signupContactNumber', 'Enter a valid contact number.');
+            }
+
             if (!fields.validIdInput?.files?.[0]) {
                 valid = false;
                 setFieldError('signupValidIdInput', 'Upload your valid ID.');
@@ -415,16 +401,6 @@
             if (!fields.relationshipDocumentInput?.files?.[0]) {
                 valid = false;
                 setFieldError('signupRelationshipDocumentInput', 'Upload your relationship document.');
-            }
-        } else {
-            if (payload.sector === 'Other' && !payload.sectorOtherSpecify) {
-                valid = false;
-                setFieldError('signupSectorOtherSpecify', 'Please specify the other sector.');
-            }
-
-            if (!photoDataUrl) {
-                valid = false;
-                setFieldError('signupPhotoInput', 'Profile photo is required.');
             }
         }
 
@@ -463,19 +439,6 @@
                     password: 'signupPassword',
                     beneficiaryProfileId: 'signupBeneficiaryProfileId',
                     relationshipToPrimaryBeneficiary: 'signupRelationshipToPrimaryBeneficiary',
-                    birthdate: 'signupBirthdate',
-                    age: 'signupAge',
-                    gender: 'signupGender',
-                    contactNumber: 'signupContactNumber',
-                    address: 'signupAddress',
-                    barangay: 'signupBarangay',
-                    is4ps: 'signup4ps',
-                    educationalAttainment: 'signupEducationalAttainment',
-                    sector: 'signupSector',
-                    sectorOtherSpecify: 'signupSectorOtherSpecify',
-                    livelihood: 'signupLivelihood',
-                    businessName: 'signupBusinessName',
-                    photoDataUrl: 'signupPhotoInput',
                     validId: 'signupValidIdInput',
                     relationshipDocument: 'signupRelationshipDocumentInput'
                 };
@@ -546,7 +509,7 @@
             return;
         }
 
-        if (file.size > PROFILE_PHOTO_MAX_SIZE) {
+        if (file.size > 5 * 1024 * 1024) {
             setFieldError('signupPhotoInput', 'Profile photo must be 5 MB or less.');
             event.target.value = '';
             setPhotoPreview('');
@@ -564,10 +527,12 @@
         button.addEventListener('click', closeConfirmModal);
     });
 
-    confirmSubmitBtn.addEventListener('click', () => {
-        if (confirmSubmitBtn.disabled) return;
-        submitSignup();
-    });
+    if (confirmSubmitBtn) {
+        confirmSubmitBtn.addEventListener('click', () => {
+            if (confirmSubmitBtn.disabled) return;
+            submitSignup();
+        });
+    }
 
     form.addEventListener('submit', (event) => {
         event.preventDefault();
@@ -576,11 +541,16 @@
         const isValid = validate();
         if (!isValid) {
             closeConfirmModal();
-            setFeedback('danger', 'Please complete the required fields before continuing.');
+            setFeedback('danger', firstFieldErrorMessage() || 'Please review the highlighted fields before continuing.');
             return;
         }
 
-        openConfirmModal();
+        if (isCoMakerMode) {
+            openConfirmModal();
+            return;
+        }
+
+        submitSignup();
     });
 
     updatePasswordHints(fields.password?.value || '');

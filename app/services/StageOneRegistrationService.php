@@ -12,6 +12,8 @@ class StageOneRegistrationService
     public const STATUS_SELECTED = 'selected';
     public const STATUS_SAVED = 'saved_next_batch';
     public const STATUS_ARCHIVED = 'archived';
+    private ?array $applicantProfileColumns = null;
+    private array $legacyProfilePhotoCache = [];
 
     public function submit(array $input, array $files): array
     {
@@ -23,8 +25,24 @@ class StageOneRegistrationService
             'lastName' => trim((string) ($input['lastName'] ?? '')),
             'email' => strtolower(trim((string) ($input['email'] ?? ''))),
             'contactNumber' => trim((string) ($input['contactNumber'] ?? '')),
-            'completeAddress' => trim((string) ($input['completeAddress'] ?? '')),
+            'completeAddress' => trim((string) ($input['address'] ?? $input['completeAddress'] ?? '')),
+            'birthdate' => trim((string) ($input['birthdate'] ?? '')),
+            'age' => trim((string) ($input['age'] ?? '')),
+            'gender' => trim((string) ($input['gender'] ?? '')),
+            'barangay' => trim((string) ($input['barangay'] ?? '')),
+            'is4ps' => trim((string) ($input['is4ps'] ?? '')),
+            'educationalAttainment' => trim((string) ($input['educationalAttainment'] ?? '')),
+            'sector' => trim((string) ($input['sector'] ?? '')),
+            'sectorOtherSpecify' => trim((string) ($input['sectorOtherSpecify'] ?? '')),
+            'livelihood' => trim((string) ($input['livelihood'] ?? '')),
+            'businessName' => trim((string) ($input['businessName'] ?? '')),
         ];
+        if ($clean['age'] === '') {
+            $derivedAge = $this->calculateAgeFromBirthdate($clean['birthdate']);
+            if ($derivedAge !== null) {
+                $clean['age'] = (string) $derivedAge;
+            }
+        }
         $clean['fullName'] = trim(implode(' ', array_filter([
             $clean['firstName'],
             $clean['middleName'],
@@ -61,6 +79,7 @@ class StageOneRegistrationService
         $pdo->beginTransaction();
 
         try {
+            $profilePhoto = $uploadService->storeStageOneAsset('profilePhoto', $files['profilePhoto'] ?? null);
             $businessPhoto = $uploadService->storeStageOneAsset('businessPhoto', $files['businessPhoto'] ?? null);
             $validIdPhoto = $uploadService->storeStageOneAsset('validIdPhoto', $files['validIdPhoto'] ?? null);
             $referenceCode = $this->generateReferenceCode($pdo);
@@ -71,10 +90,14 @@ class StageOneRegistrationService
             $statement = $pdo->prepare(
                 'INSERT INTO stage_one_registrations
                  (reference_code, first_name, middle_name, last_name, full_name, email, contact_number, complete_address,
+                  birthdate, age, gender, barangay, is_4ps, educational_attainment, sector, sector_other_specify, livelihood_type, business_name,
+                  profile_photo_path, profile_photo_original_name, profile_photo_mime_type, profile_photo_file_size,
                   business_photo_path, business_photo_original_name, business_photo_mime_type, business_photo_file_size,
                   valid_id_path, valid_id_original_name, valid_id_mime_type, valid_id_file_size, validation_status, created_at, updated_at)
                  VALUES
                  (:reference_code, :first_name, :middle_name, :last_name, :full_name, :email, :contact_number, :complete_address,
+                  :birthdate, :age, :gender, :barangay, :is_4ps, :educational_attainment, :sector, :sector_other_specify, :livelihood_type, :business_name,
+                  :profile_photo_path, :profile_photo_original_name, :profile_photo_mime_type, :profile_photo_file_size,
                   :business_photo_path, :business_photo_original_name, :business_photo_mime_type, :business_photo_file_size,
                   :valid_id_path, :valid_id_original_name, :valid_id_mime_type, :valid_id_file_size, :validation_status, NOW(), NOW())'
             );
@@ -87,6 +110,20 @@ class StageOneRegistrationService
                 'email' => $clean['email'],
                 'contact_number' => $clean['contactNumber'],
                 'complete_address' => $clean['completeAddress'],
+                'birthdate' => $clean['birthdate'] !== '' ? $clean['birthdate'] : null,
+                'age' => $clean['age'] !== '' ? (int) $clean['age'] : null,
+                'gender' => $clean['gender'] !== '' ? $clean['gender'] : null,
+                'barangay' => $clean['barangay'] !== '' ? $clean['barangay'] : null,
+                'is_4ps' => $clean['is4ps'] !== '' ? (strcasecmp($clean['is4ps'], 'yes') === 0 ? 1 : 0) : null,
+                'educational_attainment' => $clean['educationalAttainment'] !== '' ? $clean['educationalAttainment'] : null,
+                'sector' => $clean['sector'] !== '' ? $clean['sector'] : null,
+                'sector_other_specify' => $clean['sectorOtherSpecify'] !== '' ? $clean['sectorOtherSpecify'] : null,
+                'livelihood_type' => $clean['livelihood'] !== '' ? $clean['livelihood'] : null,
+                'business_name' => $clean['businessName'] !== '' ? $clean['businessName'] : null,
+                'profile_photo_path' => $profilePhoto['file_path'],
+                'profile_photo_original_name' => $profilePhoto['original_name'],
+                'profile_photo_mime_type' => $profilePhoto['mime_type'],
+                'profile_photo_file_size' => $profilePhoto['file_size'],
                 'business_photo_path' => $businessPhoto['file_path'],
                 'business_photo_original_name' => $businessPhoto['original_name'],
                 'business_photo_mime_type' => $businessPhoto['mime_type'],
@@ -115,7 +152,7 @@ class StageOneRegistrationService
             'ok' => true,
             'message' => $initialStatus === self::STATUS_SAVED
                 ? 'Registration submitted and saved for the next SMART LEAP batch.'
-                : 'Registration submitted. Watch your email for the next steps if you are selected.',
+                : 'Registration submitted. Watch your email for account activation once you are selected.',
             'referenceCode' => $referenceCode,
             'registration' => $this->getRegistrationDetail($registrationId),
         ];
@@ -125,6 +162,7 @@ class StageOneRegistrationService
     {
         $this->ensureSchema();
         $this->syncLegacySelectedApplicants();
+        $this->hydrateLegacySelectedRegistrations();
         $this->syncOverflowRegistrationsToSaved();
 
         $rows = db()->query(
@@ -160,6 +198,8 @@ class StageOneRegistrationService
     public function getRegistrationDetail(int $registrationId): ?array
     {
         $this->ensureSchema();
+        $this->syncLegacySelectedApplicants();
+        $this->hydrateLegacySelectedRegistrations();
         if ($registrationId < 1) {
             return null;
         }
@@ -235,7 +275,7 @@ class StageOneRegistrationService
             'message' => $targetStatus === self::STATUS_SELECTED
                 ? ($emailSent
                     ? 'Stage 1 applicant selected for the current batch. Email notice sent.'
-                    : 'Stage 1 applicant selected for the current batch, but the email notice could not be sent. Please resend the Stage 2 signup email before telling the applicant to proceed.')
+                    : 'Stage 1 applicant selected for the current batch, but the account activation email could not be sent. Please resend it before telling the applicant to proceed.')
                 : 'Stage 1 applicant saved for the next SMART LEAP batch.',
             'registration' => $updatedRegistration,
             'state' => $this->validationState(),
@@ -254,7 +294,7 @@ class StageOneRegistrationService
         }
 
         if (($registration['statusKey'] ?? '') !== self::STATUS_SELECTED) {
-            return ['ok' => false, 'message' => 'Only selected registrants can receive the Stage 2 signup email.'];
+            return ['ok' => false, 'message' => 'Only selected registrants can receive the account activation email.'];
         }
 
         $emailSent = $this->sendSelectionEmail($registration);
@@ -264,8 +304,8 @@ class StageOneRegistrationService
         return [
             'ok' => $emailSent,
             'message' => $emailSent
-                ? 'Stage 2 signup email resent successfully.'
-                : 'Unable to resend the Stage 2 signup email right now. Please review the mail configuration or try again.',
+                ? 'Account activation email resent successfully.'
+                : 'Unable to resend the account activation email right now. Please review the mail configuration or try again.',
             'registration' => $updatedRegistration,
             'state' => $this->validationState(),
             'emailSent' => $emailSent,
@@ -317,6 +357,51 @@ class StageOneRegistrationService
             $errors['completeAddress'] = 'Enter your complete address.';
         }
 
+        if ($clean['birthdate'] === '' || strtotime($clean['birthdate']) === false) {
+            $errors['birthdate'] = 'Enter a valid birthdate.';
+        }
+
+        $age = $clean['age'] !== '' ? (int) $clean['age'] : 0;
+        if ($age < 1 || $age > 120) {
+            $errors['age'] = 'Age must be between 1 and 120.';
+        }
+
+        if ($clean['gender'] === '') {
+            $errors['gender'] = 'Select your gender.';
+        }
+
+        if ($clean['barangay'] === '') {
+            $errors['barangay'] = 'Select your barangay.';
+        }
+
+        if ($clean['is4ps'] === '') {
+            $errors['is4ps'] = 'Select your 4Ps membership.';
+        }
+
+        if ($clean['educationalAttainment'] === '') {
+            $errors['educationalAttainment'] = 'Select your educational attainment.';
+        }
+
+        if ($clean['sector'] === '') {
+            $errors['sector'] = 'Select your sector.';
+        }
+
+        if (strcasecmp($clean['sector'], 'Other') === 0 && $clean['sectorOtherSpecify'] === '') {
+            $errors['sectorOtherSpecify'] = 'Please specify your sector.';
+        }
+
+        if ($clean['livelihood'] === '') {
+            $errors['livelihood'] = 'Enter your specific business type.';
+        }
+
+        if ($clean['businessName'] === '') {
+            $errors['businessName'] = 'Enter your microbusiness name.';
+        }
+
+        if (!is_array($files['profilePhoto'] ?? null) || (int) (($files['profilePhoto']['error'] ?? UPLOAD_ERR_NO_FILE)) === UPLOAD_ERR_NO_FILE) {
+            $errors['profilePhoto'] = 'Upload a profile photo.';
+        }
+
         if (!is_array($files['businessPhoto'] ?? null) || (int) (($files['businessPhoto']['error'] ?? UPLOAD_ERR_NO_FILE)) === UPLOAD_ERR_NO_FILE) {
             $errors['businessPhoto'] = 'Upload a photo of your existing business.';
         }
@@ -326,6 +411,26 @@ class StageOneRegistrationService
         }
 
         return $errors;
+    }
+
+    private function calculateAgeFromBirthdate(string $birthdate): ?int
+    {
+        if ($birthdate === '') {
+            return null;
+        }
+
+        try {
+            $birth = new \DateTimeImmutable($birthdate);
+            $today = new \DateTimeImmutable('today');
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($birth > $today) {
+            return null;
+        }
+
+        return $birth->diff($today)->y;
     }
 
     private function formatRegistrationRow(array $row): array
@@ -342,6 +447,16 @@ class StageOneRegistrationService
             'email' => (string) ($row['email'] ?? ''),
             'contactNumber' => (string) ($row['contact_number'] ?? ''),
             'completeAddress' => (string) ($row['complete_address'] ?? ''),
+            'birthdate' => (string) ($row['birthdate'] ?? ''),
+            'age' => $row['age'] !== null ? (int) $row['age'] : null,
+            'gender' => (string) ($row['gender'] ?? ''),
+            'barangay' => (string) ($row['barangay'] ?? ''),
+            'is4ps' => ((int) ($row['is_4ps'] ?? 0)) === 1 ? 'Yes' : 'No',
+            'educationalAttainment' => (string) ($row['educational_attainment'] ?? ''),
+            'sector' => (string) ($row['sector'] ?? ''),
+            'sectorOtherSpecify' => (string) ($row['sector_other_specify'] ?? ''),
+            'livelihood' => (string) ($row['livelihood_type'] ?? ''),
+            'businessName' => (string) ($row['business_name'] ?? ''),
             'statusKey' => $statusKey,
             'statusLabel' => match ($statusKey) {
                 self::STATUS_SELECTED => 'Selected for Current Batch',
@@ -356,6 +471,13 @@ class StageOneRegistrationService
             'submittedAt' => (string) ($row['created_at'] ?? ''),
             'validatedAt' => (string) ($row['validated_at'] ?? ''),
             'reviewedByName' => (string) ($row['reviewed_by_name'] ?? ''),
+            'profilePhoto' => $this->formatUploadMeta(
+                (string) ($row['profile_photo_path'] ?? ''),
+                (string) ($row['profile_photo_original_name'] ?? ''),
+                (string) ($row['profile_photo_mime_type'] ?? ''),
+                (int) ($row['profile_photo_file_size'] ?? 0),
+                (string) ($row['email'] ?? '')
+            ),
             'businessPhoto' => $this->formatUploadMeta(
                 (string) ($row['business_photo_path'] ?? ''),
                 (string) ($row['business_photo_original_name'] ?? ''),
@@ -371,17 +493,75 @@ class StageOneRegistrationService
         ];
     }
 
-    private function formatUploadMeta(string $path, string $name, string $mimeType, int $fileSize): array
+    private function formatUploadMeta(string $path, string $name, string $mimeType, int $fileSize, string $email = ''): array
     {
         $mimeType = strtolower(trim($mimeType));
+        $url = $path !== '' ? app_url($path) : '';
+        $resolvedName = $name;
+        $resolvedMimeType = $mimeType;
+        $resolvedPath = $path;
+        $resolvedSize = $fileSize;
+
+        if ($resolvedPath === '' && $email !== '') {
+            $legacyPhoto = $this->legacyProfilePhotoMetaByEmail($email);
+            if ($legacyPhoto !== null) {
+                $url = $legacyPhoto['url'];
+                $resolvedName = $legacyPhoto['name'];
+                $resolvedMimeType = $legacyPhoto['mimeType'];
+                $resolvedSize = $legacyPhoto['fileSize'];
+            }
+        }
+
         return [
-            'path' => $path,
-            'name' => $name,
-            'mimeType' => $mimeType,
-            'fileSize' => $fileSize,
-            'url' => $path !== '' ? app_url($path) : '',
-            'isImage' => str_starts_with($mimeType, 'image/'),
+            'path' => $resolvedPath,
+            'name' => $resolvedName,
+            'mimeType' => $resolvedMimeType,
+            'fileSize' => $resolvedSize,
+            'url' => $url,
+            'isImage' => str_starts_with($resolvedMimeType, 'image/'),
         ];
+    }
+
+    private function legacyProfilePhotoMetaByEmail(string $email): ?array
+    {
+        $cacheKey = strtolower(trim($email));
+        if ($cacheKey === '') {
+            return null;
+        }
+
+        if (array_key_exists($cacheKey, $this->legacyProfilePhotoCache)) {
+            return $this->legacyProfilePhotoCache[$cacheKey];
+        }
+
+        $statement = db()->prepare(
+            'SELECT user_profile_photos.image_data
+             FROM users
+             INNER JOIN user_profile_photos ON user_profile_photos.user_id = users.id
+             WHERE LOWER(users.email) = LOWER(:email)
+             LIMIT 1'
+        );
+        $statement->execute(['email' => $cacheKey]);
+        $imageData = $statement->fetchColumn();
+
+        if (!is_string($imageData) || trim($imageData) === '') {
+            $this->legacyProfilePhotoCache[$cacheKey] = null;
+            return null;
+        }
+
+        $mimeType = 'image/jpeg';
+        if (preg_match('/^data:([^;]+);base64,/', $imageData, $matches)) {
+            $mimeType = strtolower(trim((string) ($matches[1] ?? 'image/jpeg')));
+        }
+
+        $meta = [
+            'url' => $imageData,
+            'name' => 'Legacy profile photo',
+            'mimeType' => $mimeType,
+            'fileSize' => 0,
+        ];
+        $this->legacyProfilePhotoCache[$cacheKey] = $meta;
+
+        return $meta;
     }
 
     private function normalizeStatusKey(string $status): string
@@ -431,6 +611,8 @@ class StageOneRegistrationService
         }
 
         $pdo = db();
+        $supportsEducationalAttainment = in_array('educational_attainment', $this->applicantProfileColumns(), true);
+        $supportsSectorOtherSpecify = in_array('sector_other_specify', $this->applicantProfileColumns(), true);
 
         try {
             $rows = $pdo->query(
@@ -440,6 +622,20 @@ class StageOneRegistrationService
                     users.email,
                     applicant_profiles.contact_number,
                     applicant_profiles.address_line,
+                    applicant_profiles.birthdate,
+                    applicant_profiles.age,
+                    applicant_profiles.gender,
+                    applicant_profiles.is_4ps,
+                    applicant_profiles.sector,
+                    ' . ($supportsEducationalAttainment ? 'applicant_profiles.educational_attainment AS profile_educational_attainment,' : 'NULL AS profile_educational_attainment,') . '
+                    ' . ($supportsSectorOtherSpecify ? 'applicant_profiles.sector_other_specify AS profile_sector_other_specify,' : 'NULL AS profile_sector_other_specify,') . '
+                    applicant_profiles.livelihood_type,
+                    applicant_profiles.business_name,
+                    barangays.name AS profile_barangay_name,
+                    latest_valid_id.file_path AS valid_id_path,
+                    latest_valid_id.original_name AS valid_id_original_name,
+                    latest_valid_id.mime_type AS valid_id_mime_type,
+                    latest_valid_id.file_size AS valid_id_file_size,
                     latest_applications.created_at AS application_created_at,
                     applicant_profiles.updated_at AS profile_updated_at
                  FROM applicant_profiles
@@ -453,6 +649,19 @@ class StageOneRegistrationService
                         GROUP BY applicant_profile_id
                     ) latest_application ON latest_application.latest_id = applications.id
                  ) AS latest_applications ON latest_applications.applicant_profile_id = applicant_profiles.id
+                 LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
+                 LEFT JOIN (
+                    SELECT files.application_id, files.file_path, files.original_name, files.mime_type, files.file_size
+                    FROM initial_requirement_files AS files
+                    INNER JOIN initial_requirement_types AS types ON types.id = files.requirement_type_id
+                    INNER JOIN (
+                        SELECT files.application_id, MAX(files.id) AS latest_id
+                        FROM initial_requirement_files AS files
+                        INNER JOIN initial_requirement_types AS types ON types.id = files.requirement_type_id
+                        WHERE types.code = "valid_id"
+                        GROUP BY files.application_id
+                    ) latest_valid_id ON latest_valid_id.latest_id = files.id
+                 ) AS latest_valid_id ON latest_valid_id.application_id = latest_applications.id
                  LEFT JOIN stage_one_registrations AS stage_one
                     ON LOWER(stage_one.email) COLLATE utf8mb4_unicode_ci
                      = LOWER(users.email) COLLATE utf8mb4_unicode_ci
@@ -485,11 +694,15 @@ class StageOneRegistrationService
             $statement = $pdo->prepare(
                 'INSERT INTO stage_one_registrations
                  (reference_code, first_name, middle_name, last_name, full_name, email, contact_number, complete_address,
+                  birthdate, age, gender, barangay, is_4ps, educational_attainment, sector, sector_other_specify, livelihood_type, business_name,
+                  profile_photo_path, profile_photo_original_name, profile_photo_mime_type, profile_photo_file_size,
                   business_photo_path, business_photo_original_name, business_photo_mime_type, business_photo_file_size,
                   valid_id_path, valid_id_original_name, valid_id_mime_type, valid_id_file_size,
                   validation_status, validated_by_user_id, validated_at, selection_email_sent_at, created_at, updated_at)
                  VALUES
                  (:reference_code, :first_name, :middle_name, :last_name, :full_name, :email, :contact_number, :complete_address,
+                  :birthdate, :age, :gender, :barangay, :is_4ps, :educational_attainment, :sector, :sector_other_specify, :livelihood_type, :business_name,
+                  :profile_photo_path, :profile_photo_original_name, :profile_photo_mime_type, :profile_photo_file_size,
                   :business_photo_path, :business_photo_original_name, :business_photo_mime_type, :business_photo_file_size,
                   :valid_id_path, :valid_id_original_name, :valid_id_mime_type, :valid_id_file_size,
                   :validation_status, NULL, :validated_at, :selection_email_sent_at, :created_at, :updated_at)'
@@ -513,14 +726,36 @@ class StageOneRegistrationService
                     'email' => strtolower(trim((string) ($row['email'] ?? ''))),
                     'contact_number' => (string) ($row['contact_number'] ?? ''),
                     'complete_address' => (string) ($row['address_line'] ?? ''),
+                    'birthdate' => (string) ($row['birthdate'] ?? ''),
+                    'age' => isset($row['age']) ? (int) $row['age'] : null,
+                    'gender' => (string) ($row['gender'] ?? ''),
+                    'barangay' => (string) ($row['profile_barangay_name'] ?? '') !== ''
+                        ? (string) $row['profile_barangay_name']
+                        : $this->barangayNameFromAddress((string) ($row['address_line'] ?? '')),
+                    'is_4ps' => isset($row['is_4ps']) ? (int) $row['is_4ps'] : null,
+                    'educational_attainment' => (string) ($row['profile_educational_attainment'] ?? '') !== ''
+                        ? (string) $row['profile_educational_attainment']
+                        : null,
+                    'sector' => (string) ($row['sector'] ?? ''),
+                    'sector_other_specify' => (string) ($row['profile_sector_other_specify'] ?? '') !== ''
+                        ? (string) $row['profile_sector_other_specify']
+                        : null,
+                    'livelihood_type' => (string) ($row['livelihood_type'] ?? ''),
+                    'business_name' => (string) ($row['business_name'] ?? ''),
+                    'profile_photo_path' => '',
+                    'profile_photo_original_name' => '',
+                    'profile_photo_mime_type' => null,
+                    'profile_photo_file_size' => null,
                     'business_photo_path' => '',
                     'business_photo_original_name' => '',
                     'business_photo_mime_type' => null,
                     'business_photo_file_size' => null,
-                    'valid_id_path' => '',
-                    'valid_id_original_name' => '',
-                    'valid_id_mime_type' => null,
-                    'valid_id_file_size' => null,
+                    'valid_id_path' => (string) ($row['valid_id_path'] ?? ''),
+                    'valid_id_original_name' => (string) ($row['valid_id_original_name'] ?? ''),
+                    'valid_id_mime_type' => (string) ($row['valid_id_mime_type'] ?? '') !== ''
+                        ? (string) $row['valid_id_mime_type']
+                        : null,
+                    'valid_id_file_size' => isset($row['valid_id_file_size']) ? (int) $row['valid_id_file_size'] : null,
                     'validation_status' => self::STATUS_SELECTED,
                     'validated_at' => $createdAt,
                     'selection_email_sent_at' => $createdAt,
@@ -536,6 +771,178 @@ class StageOneRegistrationService
                 $pdo->rollBack();
             }
             log_database_query_failure('stage_one_registration.sync_legacy_selected.insert', $exception);
+        }
+    }
+
+    private function hydrateLegacySelectedRegistrations(): void
+    {
+        static $hydrated = false;
+        if ($hydrated) {
+            return;
+        }
+
+        $pdo = db();
+        $supportsEducationalAttainment = in_array('educational_attainment', $this->applicantProfileColumns(), true);
+        $supportsSectorOtherSpecify = in_array('sector_other_specify', $this->applicantProfileColumns(), true);
+
+        try {
+            $rows = $pdo->query(
+                'SELECT
+                    stage_one.id,
+                    stage_one.email,
+                    stage_one.contact_number,
+                    stage_one.complete_address,
+                    stage_one.birthdate,
+                    stage_one.age,
+                    stage_one.gender,
+                    stage_one.barangay,
+                    stage_one.is_4ps,
+                    stage_one.educational_attainment,
+                    stage_one.sector,
+                    stage_one.sector_other_specify,
+                    stage_one.livelihood_type,
+                    stage_one.business_name,
+                    stage_one.valid_id_path,
+                    stage_one.valid_id_original_name,
+                    stage_one.valid_id_mime_type,
+                    stage_one.valid_id_file_size,
+                    applicant_profiles.contact_number AS profile_contact_number,
+                    applicant_profiles.address_line AS profile_address_line,
+                    applicant_profiles.birthdate AS profile_birthdate,
+                    applicant_profiles.age AS profile_age,
+                    applicant_profiles.gender AS profile_gender,
+                    applicant_profiles.is_4ps AS profile_is_4ps,
+                    applicant_profiles.sector AS profile_sector,
+                    barangays.name AS profile_barangay_name,
+                    ' . ($supportsEducationalAttainment ? 'applicant_profiles.educational_attainment AS profile_educational_attainment,' : 'NULL AS profile_educational_attainment,') . '
+                    ' . ($supportsSectorOtherSpecify ? 'applicant_profiles.sector_other_specify AS profile_sector_other_specify,' : 'NULL AS profile_sector_other_specify,') . '
+                    applicant_profiles.livelihood_type AS profile_livelihood_type,
+                    applicant_profiles.business_name AS profile_business_name,
+                    latest_valid_id.file_path AS latest_valid_id_path,
+                    latest_valid_id.original_name AS latest_valid_id_original_name,
+                    latest_valid_id.mime_type AS latest_valid_id_mime_type,
+                    latest_valid_id.file_size AS latest_valid_id_file_size
+                 FROM stage_one_registrations AS stage_one
+                 INNER JOIN users
+                    ON LOWER(users.email) COLLATE utf8mb4_unicode_ci
+                     = LOWER(stage_one.email) COLLATE utf8mb4_unicode_ci
+                 INNER JOIN applicant_profiles ON applicant_profiles.user_id = users.id
+                 LEFT JOIN barangays ON barangays.id = applicant_profiles.barangay_id
+                 LEFT JOIN (
+                    SELECT files.application_id, files.file_path, files.original_name, files.mime_type, files.file_size
+                    FROM initial_requirement_files AS files
+                    INNER JOIN initial_requirement_types AS types ON types.id = files.requirement_type_id
+                    INNER JOIN (
+                        SELECT files.application_id, MAX(files.id) AS latest_id
+                        FROM initial_requirement_files AS files
+                        INNER JOIN initial_requirement_types AS types ON types.id = files.requirement_type_id
+                        WHERE types.code = "valid_id"
+                        GROUP BY files.application_id
+                    ) latest_valid_id ON latest_valid_id.latest_id = files.id
+                 ) AS latest_valid_id ON latest_valid_id.application_id = (
+                    SELECT applications.id
+                    FROM applications
+                    WHERE applications.applicant_profile_id = applicant_profiles.id
+                    ORDER BY applications.id DESC
+                    LIMIT 1
+                 )
+                 WHERE stage_one.validation_status = "selected"'
+            )->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (Throwable $exception) {
+            log_database_query_failure('stage_one_registration.hydrate_legacy_selected.fetch', $exception);
+            return;
+        }
+
+        if ($rows === []) {
+            $hydrated = true;
+            return;
+        }
+
+        $statement = $pdo->prepare(
+            'UPDATE stage_one_registrations
+             SET contact_number = :contact_number,
+                 complete_address = :complete_address,
+                 birthdate = :birthdate,
+                 age = :age,
+                 gender = :gender,
+                 barangay = :barangay,
+                 is_4ps = :is_4ps,
+                 educational_attainment = :educational_attainment,
+                 sector = :sector,
+                 sector_other_specify = :sector_other_specify,
+                 livelihood_type = :livelihood_type,
+                 business_name = :business_name,
+                 valid_id_path = :valid_id_path,
+                 valid_id_original_name = :valid_id_original_name,
+                 valid_id_mime_type = :valid_id_mime_type,
+                 valid_id_file_size = :valid_id_file_size,
+                 updated_at = NOW()
+             WHERE id = :id'
+        );
+
+        try {
+            foreach ($rows as $row) {
+                $completeAddress = trim((string) ($row['complete_address'] ?? '')) !== ''
+                    ? (string) $row['complete_address']
+                    : (string) ($row['profile_address_line'] ?? '');
+                $barangay = trim((string) ($row['barangay'] ?? '')) !== ''
+                    ? (string) $row['barangay']
+                    : ((string) ($row['profile_barangay_name'] ?? '') !== ''
+                        ? (string) $row['profile_barangay_name']
+                        : $this->barangayNameFromAddress((string) ($row['profile_address_line'] ?? '')));
+
+                $statement->execute([
+                    'id' => (int) ($row['id'] ?? 0),
+                    'contact_number' => trim((string) ($row['contact_number'] ?? '')) !== ''
+                        ? (string) $row['contact_number']
+                        : (string) ($row['profile_contact_number'] ?? ''),
+                    'complete_address' => $completeAddress,
+                    'birthdate' => trim((string) ($row['birthdate'] ?? '')) !== ''
+                        ? (string) $row['birthdate']
+                        : ((string) ($row['profile_birthdate'] ?? '') !== '' ? (string) $row['profile_birthdate'] : null),
+                    'age' => !empty($row['age'])
+                        ? (int) $row['age']
+                        : (!empty($row['profile_age']) ? (int) $row['profile_age'] : null),
+                    'gender' => trim((string) ($row['gender'] ?? '')) !== ''
+                        ? (string) $row['gender']
+                        : (string) ($row['profile_gender'] ?? ''),
+                    'barangay' => $barangay !== '' ? $barangay : null,
+                    'is_4ps' => $row['is_4ps'] !== null
+                        ? (int) $row['is_4ps']
+                        : ($row['profile_is_4ps'] !== null ? (int) $row['profile_is_4ps'] : null),
+                    'educational_attainment' => trim((string) ($row['educational_attainment'] ?? '')) !== ''
+                        ? (string) $row['educational_attainment']
+                        : ((string) ($row['profile_educational_attainment'] ?? '') !== '' ? (string) $row['profile_educational_attainment'] : null),
+                    'sector' => trim((string) ($row['sector'] ?? '')) !== ''
+                        ? (string) $row['sector']
+                        : (string) ($row['profile_sector'] ?? ''),
+                    'sector_other_specify' => trim((string) ($row['sector_other_specify'] ?? '')) !== ''
+                        ? (string) $row['sector_other_specify']
+                        : ((string) ($row['profile_sector_other_specify'] ?? '') !== '' ? (string) $row['profile_sector_other_specify'] : null),
+                    'livelihood_type' => trim((string) ($row['livelihood_type'] ?? '')) !== ''
+                        ? (string) $row['livelihood_type']
+                        : (string) ($row['profile_livelihood_type'] ?? ''),
+                    'business_name' => trim((string) ($row['business_name'] ?? '')) !== ''
+                        ? (string) $row['business_name']
+                        : (string) ($row['profile_business_name'] ?? ''),
+                    'valid_id_path' => trim((string) ($row['valid_id_path'] ?? '')) !== ''
+                        ? (string) $row['valid_id_path']
+                        : (string) ($row['latest_valid_id_path'] ?? ''),
+                    'valid_id_original_name' => trim((string) ($row['valid_id_original_name'] ?? '')) !== ''
+                        ? (string) $row['valid_id_original_name']
+                        : (string) ($row['latest_valid_id_original_name'] ?? ''),
+                    'valid_id_mime_type' => trim((string) ($row['valid_id_mime_type'] ?? '')) !== ''
+                        ? (string) $row['valid_id_mime_type']
+                        : ((string) ($row['latest_valid_id_mime_type'] ?? '') !== '' ? (string) $row['latest_valid_id_mime_type'] : null),
+                    'valid_id_file_size' => !empty($row['valid_id_file_size'])
+                        ? (int) $row['valid_id_file_size']
+                        : (!empty($row['latest_valid_id_file_size']) ? (int) $row['latest_valid_id_file_size'] : null),
+                ]);
+            }
+
+            $hydrated = true;
+        } catch (Throwable $exception) {
+            log_database_query_failure('stage_one_registration.hydrate_legacy_selected.update', $exception);
         }
     }
 
@@ -561,19 +968,19 @@ class StageOneRegistrationService
         }
 
         $name = htmlspecialchars((string) ($registration['fullName'] ?? 'Applicant'), ENT_QUOTES);
-        $signupUrl = htmlspecialchars(app_url('signup'), ENT_QUOTES);
+        $activationUrl = htmlspecialchars(app_url('signup?email=' . urlencode($recipient)), ENT_QUOTES);
         $portalLoginUrl = htmlspecialchars(app_url('portal-login'), ENT_QUOTES);
-        $subject = 'SMART LEAP Registration Approved';
+        $subject = 'SMART LEAP Account Activation';
         $body = sprintf(
             '<p>Hello %s,</p>'
             . '<p>Your SMART LEAP registration has been selected for the current batch.</p>'
-            . '<p>You may now create your SMART LEAP portal account using this link:</p>'
+            . '<p>You may now activate your SMART LEAP portal account using this link:</p>'
             . '<p><a href="%s">%s</a></p>'
-            . '<p>After creating your account, sign in through the applicant portal to continue your application.</p>'
+            . '<p>After opening the link, set your password and complete the verification step to activate your portal access.</p>'
             . '<p>Applicant Portal Login: <a href="%s">%s</a></p>',
             $name,
-            $signupUrl,
-            $signupUrl,
+            $activationUrl,
+            $activationUrl,
             $portalLoginUrl,
             $portalLoginUrl
         );
@@ -599,7 +1006,7 @@ class StageOneRegistrationService
             );
             $statement->execute([
                 'recipient_email' => $recipientEmail,
-                'subject' => 'SMART LEAP Registration Approved',
+                'subject' => 'SMART LEAP Account Activation',
             ]);
             $errorMessage = $statement->fetchColumn();
             $errorMessage = is_string($errorMessage) ? trim($errorMessage) : null;
@@ -618,6 +1025,28 @@ class StageOneRegistrationService
             'selection_email_error' => $emailSent ? null : ($errorMessage !== '' ? $errorMessage : 'Email delivery failed.'),
             'id' => $registrationId,
         ]);
+    }
+
+    private function applicantProfileColumns(): array
+    {
+        if ($this->applicantProfileColumns !== null) {
+            return $this->applicantProfileColumns;
+        }
+
+        try {
+            $rows = db()->query('SHOW COLUMNS FROM applicant_profiles')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        } catch (Throwable $exception) {
+            log_database_query_failure('stage_one_registration.applicant_profile_columns', $exception);
+            $this->applicantProfileColumns = [];
+            return $this->applicantProfileColumns;
+        }
+
+        $this->applicantProfileColumns = array_values(array_filter(array_map(
+            static fn (array $row): string => (string) ($row['Field'] ?? ''),
+            $rows
+        )));
+
+        return $this->applicantProfileColumns;
     }
 
     private function emailExistsInPortalUsers(string $email): bool
@@ -673,6 +1102,20 @@ class StageOneRegistrationService
                 email VARCHAR(160) NOT NULL,
                 contact_number VARCHAR(40) NOT NULL,
                 complete_address TEXT NOT NULL,
+                birthdate DATE NULL,
+                age TINYINT UNSIGNED NULL,
+                gender VARCHAR(40) NULL,
+                barangay VARCHAR(120) NULL,
+                is_4ps TINYINT(1) NULL,
+                educational_attainment VARCHAR(80) NULL,
+                sector VARCHAR(120) NULL,
+                sector_other_specify VARCHAR(180) NULL,
+                livelihood_type VARCHAR(160) NULL,
+                business_name VARCHAR(180) NULL,
+                profile_photo_path VARCHAR(255) NOT NULL DEFAULT "",
+                profile_photo_original_name VARCHAR(255) NOT NULL DEFAULT "",
+                profile_photo_mime_type VARCHAR(120) NULL,
+                profile_photo_file_size BIGINT UNSIGNED NULL,
                 business_photo_path VARCHAR(255) NOT NULL,
                 business_photo_original_name VARCHAR(255) NOT NULL,
                 business_photo_mime_type VARCHAR(120) NULL,
@@ -696,6 +1139,20 @@ class StageOneRegistrationService
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
         );
 
+        $this->ensureColumn('stage_one_registrations', 'birthdate', 'DATE NULL AFTER complete_address');
+        $this->ensureColumn('stage_one_registrations', 'age', 'TINYINT UNSIGNED NULL AFTER birthdate');
+        $this->ensureColumn('stage_one_registrations', 'gender', 'VARCHAR(40) NULL AFTER age');
+        $this->ensureColumn('stage_one_registrations', 'barangay', 'VARCHAR(120) NULL AFTER gender');
+        $this->ensureColumn('stage_one_registrations', 'is_4ps', 'TINYINT(1) NULL AFTER barangay');
+        $this->ensureColumn('stage_one_registrations', 'educational_attainment', 'VARCHAR(80) NULL AFTER is_4ps');
+        $this->ensureColumn('stage_one_registrations', 'sector', 'VARCHAR(120) NULL AFTER educational_attainment');
+        $this->ensureColumn('stage_one_registrations', 'sector_other_specify', 'VARCHAR(180) NULL AFTER sector');
+        $this->ensureColumn('stage_one_registrations', 'livelihood_type', 'VARCHAR(160) NULL AFTER sector_other_specify');
+        $this->ensureColumn('stage_one_registrations', 'business_name', 'VARCHAR(180) NULL AFTER livelihood_type');
+        $this->ensureColumn('stage_one_registrations', 'profile_photo_path', 'VARCHAR(255) NOT NULL DEFAULT "" AFTER business_name');
+        $this->ensureColumn('stage_one_registrations', 'profile_photo_original_name', 'VARCHAR(255) NOT NULL DEFAULT "" AFTER profile_photo_path');
+        $this->ensureColumn('stage_one_registrations', 'profile_photo_mime_type', 'VARCHAR(120) NULL AFTER profile_photo_original_name');
+        $this->ensureColumn('stage_one_registrations', 'profile_photo_file_size', 'BIGINT UNSIGNED NULL AFTER profile_photo_mime_type');
         $this->ensureNullableDateColumn('stage_one_registrations', 'selection_email_sent_at', 'validated_at');
         $this->ensureNullableDateColumn('stage_one_registrations', 'selection_email_failed_at', 'selection_email_sent_at');
         $this->ensureNullableTextColumn('stage_one_registrations', 'selection_email_error', 'selection_email_failed_at');
@@ -703,7 +1160,20 @@ class StageOneRegistrationService
         $ready = true;
     }
 
-    private function ensureNullableDateColumn(string $table, string $column, string $afterColumn): void
+    private function barangayNameFromAddress(string $address): string
+    {
+        $normalized = strtolower($address);
+        foreach ((new BarangayCatalogService())->all() as $row) {
+            $name = trim((string) ($row['name'] ?? ''));
+            if ($name !== '' && str_contains($normalized, strtolower($name))) {
+                return $name;
+            }
+        }
+
+        return '';
+    }
+
+    private function ensureColumn(string $table, string $column, string $definition): void
     {
         $statement = db()->prepare(
             'SELECT COUNT(*) FROM information_schema.columns
@@ -720,36 +1190,16 @@ class StageOneRegistrationService
             return;
         }
 
-        db()->exec(sprintf(
-            'ALTER TABLE %s ADD COLUMN %s DATETIME NULL AFTER %s',
-            $table,
-            $column,
-            $afterColumn
-        ));
+        db()->exec(sprintf('ALTER TABLE %s ADD COLUMN %s %s', $table, $column, $definition));
+    }
+
+    private function ensureNullableDateColumn(string $table, string $column, string $afterColumn): void
+    {
+        $this->ensureColumn($table, $column, sprintf('DATETIME NULL AFTER %s', $afterColumn));
     }
 
     private function ensureNullableTextColumn(string $table, string $column, string $afterColumn): void
     {
-        $statement = db()->prepare(
-            'SELECT COUNT(*) FROM information_schema.columns
-             WHERE table_schema = DATABASE()
-               AND table_name = :table_name
-               AND column_name = :column_name'
-        );
-        $statement->execute([
-            'table_name' => $table,
-            'column_name' => $column,
-        ]);
-
-        if ((int) $statement->fetchColumn() > 0) {
-            return;
-        }
-
-        db()->exec(sprintf(
-            'ALTER TABLE %s ADD COLUMN %s TEXT NULL AFTER %s',
-            $table,
-            $column,
-            $afterColumn
-        ));
+        $this->ensureColumn($table, $column, sprintf('TEXT NULL AFTER %s', $afterColumn));
     }
 }

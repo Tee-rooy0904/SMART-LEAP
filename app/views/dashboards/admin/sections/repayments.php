@@ -220,6 +220,18 @@
                     </header>
                     <div class="table-wrapper admin-repayment-history-wrapper">
                         <table class="data-table admin-repayment-history-table">
+                            <colgroup>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                                <col>
+                            </colgroup>
                             <thead>
                                 <tr>
                                     <th>Coverage Month</th>
